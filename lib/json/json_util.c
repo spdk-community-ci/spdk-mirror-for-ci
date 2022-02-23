@@ -672,14 +672,13 @@ spdk_json_next(struct spdk_json_val *it)
 		next = spdk_json_next(val);
 		break;
 
-	/* We are in the middle of an array - get to next entry */
 	case SPDK_JSON_VAL_NULL:
 	case SPDK_JSON_VAL_TRUE:
 	case SPDK_JSON_VAL_FALSE:
 	case SPDK_JSON_VAL_NUMBER:
 	case SPDK_JSON_VAL_STRING:
-		val = it + 1;
-		return val;
+		next = it + 1;
+		break;
 
 	case SPDK_JSON_VAL_ARRAY_BEGIN:
 	case SPDK_JSON_VAL_OBJECT_BEGIN:

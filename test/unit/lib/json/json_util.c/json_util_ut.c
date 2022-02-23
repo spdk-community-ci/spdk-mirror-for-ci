@@ -991,6 +991,34 @@ test_iterating(void)
 	free(values);
 }
 
+char ut_json_text_array[] = "{\"array\": [\"item1\", \"item2\"]}";
+static void
+test_iter_str_array(void)
+{
+	struct spdk_json_val *values;
+	struct spdk_json_val *json_array;
+	struct spdk_json_val *it;
+	ssize_t values_cnt;
+	ssize_t rc;
+	char *expect[2] = {"item1", "item2"};
+	int i;
+
+	values_cnt = spdk_json_parse(ut_json_text_array, strlen(ut_json_text_array), NULL, 0, NULL, 0);
+	SPDK_CU_ASSERT_FATAL(values_cnt == 7);
+	values = calloc(values_cnt, sizeof(struct spdk_json_val));
+	SPDK_CU_ASSERT_FATAL(values != NULL);
+	rc = spdk_json_parse(ut_json_text_array, strlen(ut_json_text_array), values, values_cnt, NULL, 0);
+	SPDK_CU_ASSERT_FATAL(values_cnt == rc);
+	rc = spdk_json_find_array(values, "array", NULL, &json_array);
+	CU_ASSERT(rc == 0);
+	i = 0;
+	for (it = spdk_json_array_first(json_array); it != NULL; it = spdk_json_next(it)) {
+		CU_ASSERT(spdk_json_strequal(it, expect[i]));
+		i++;
+	}
+	free(values);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1017,6 +1045,7 @@ main(int argc, char **argv)
 	CU_ADD_TEST(suite, test_find);
 	CU_ADD_TEST(suite, test_find_array);
 	CU_ADD_TEST(suite, test_iterating);
+	CU_ADD_TEST(suite, test_iter_str_array);
 	CU_ADD_TEST(suite, test_free_object);
 
 
