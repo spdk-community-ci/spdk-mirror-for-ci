@@ -62,10 +62,12 @@ typedef void (*spdk_delete_compress_complete)(void *cb_arg, int bdeverrno);
  *
  * \param bdev_name Bdev on which compression bdev will be created.
  * \param pm_path Path to persistent memory.
- * \param lb_size Logical block size for the compressed volume in bytes. Must be 4K or 512.
+ * \param lb_size Logical block size for the compressed volume in bytes. Must be 4K, 512 or 0 (in which case the bdev's blocklen is used)
+ * \param chunk_size Compression unit size. Must be 16K, 32K or 0 (in which case the default (16K) is used).
  * \return 0 on success, other on failure.
  */
-int create_compress_bdev(const char *bdev_name, const char *pm_path, uint32_t lb_size);
+int create_compress_bdev(const char *bdev_name, const char *pm_path, uint32_t lb_size,
+			 uint32_t chunk_size);
 
 /**
  * Delete compress bdev.

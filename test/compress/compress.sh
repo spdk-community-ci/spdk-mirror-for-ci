@@ -41,8 +41,10 @@ function create_vols() {
 	$rpc_py bdev_compress_set_pmd -p "$pmd"
 	if [ -z "$1" ]; then
 		$rpc_py bdev_compress_create -b lvs0/lv0 -p /tmp/pmem
-	else
+	elif [ -z "$2" ]; then
 		$rpc_py bdev_compress_create -b lvs0/lv0 -p /tmp/pmem -l $1
+	else
+		$rpc_py bdev_compress_create -b lvs0/lv0 -p /tmp/pmem -l $1 -c $2
 	fi
 	waitforbdev COMP_lvs0/lv0
 }
@@ -64,7 +66,7 @@ function run_bdevperf() {
 	bdevperf_pid=$!
 	trap 'killprocess $bdevperf_pid; error_cleanup; exit 1' SIGINT SIGTERM EXIT
 	waitforlisten $bdevperf_pid
-	create_vols $4
+	create_vols $4 $5
 	$rootdir/examples/bdev/bdevperf/bdevperf.py perform_tests
 	destroy_vols
 	trap - SIGINT SIGTERM EXIT
@@ -92,6 +94,9 @@ mkdir -p /tmp/pmem
 run_bdevperf 32 4096 3
 run_bdevperf 32 4096 3 512
 run_bdevperf 32 4096 3 4096
+# test valid chunk sizes
+run_bdevperf 32 4096 3 4096 16384
+run_bdevperf 32 4096 3 4096 32768
 run_bdevio
 
 if [ $RUN_NIGHTLY -eq 1 ]; then

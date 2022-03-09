@@ -14,6 +14,12 @@ Protection information is now supported by the malloc bdev module.
 
 A new API `spkd_bdev_part_submit_request_ext` was added to specify a custom completion callback.
 
+### compress
+
+bdev_compress_create now accepts setting the chunk_size (the unit size used for
+compression). This can be set to 16k, 32k or 0, in which case the default (16k)
+is used. Use --chunk-size or -c.
+
 ### scheduler
 
 Changing scheduler from dynamic back to static is no longer possible,

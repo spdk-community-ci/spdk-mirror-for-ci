@@ -116,6 +116,7 @@ struct rpc_construct_compress {
 	char *base_bdev_name;
 	char *pm_path;
 	uint32_t lb_size;
+	uint32_t chunk_size;
 };
 
 /* Free the allocated memory resource after the RPC handling. */
@@ -131,6 +132,7 @@ static const struct spdk_json_object_decoder rpc_construct_compress_decoders[] =
 	{"base_bdev_name", offsetof(struct rpc_construct_compress, base_bdev_name), spdk_json_decode_string},
 	{"pm_path", offsetof(struct rpc_construct_compress, pm_path), spdk_json_decode_string},
 	{"lb_size", offsetof(struct rpc_construct_compress, lb_size), spdk_json_decode_uint32, true},
+	{"chunk_size", offsetof(struct rpc_construct_compress, chunk_size), spdk_json_decode_uint32, true},
 };
 
 /* Decode the parameters for this RPC method and properly construct the compress
@@ -154,7 +156,7 @@ rpc_bdev_compress_create(struct spdk_jsonrpc_request *request,
 		goto cleanup;
 	}
 
-	rc = create_compress_bdev(req.base_bdev_name, req.pm_path, req.lb_size);
+	rc = create_compress_bdev(req.base_bdev_name, req.pm_path, req.lb_size, req.chunk_size);
 	if (rc != 0) {
 		if (rc == -EBUSY) {
 			spdk_jsonrpc_send_error_response(request, rc, "Base bdev already in use for compression.");

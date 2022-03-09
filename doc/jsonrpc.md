@@ -2335,6 +2335,7 @@ Name                    | Optional | Type        | Description
 base_bdev_name          | Required | string      | Name of the base bdev
 pm_path                 | Required | string      | Path to persistent memory
 lb_size                 | Optional | int         | Compressed vol logical block size (512 or 4096)
+chunk_size              | Optional | int         | Compression unit size (16384 or 32768)
 
 #### Result
 
@@ -2349,7 +2350,8 @@ Example request:
   "params": {
     "base_bdev_name": "Nvme0n1",
     "pm_path": "/pm_files",
-    "lb_size": 4096
+    "lb_size": 4096,
+    "chunk_size": 16384,
   },
   "jsonrpc": "2.0",
   "method": "bdev_compress_create",

@@ -174,7 +174,8 @@ static struct rte_comp_xform g_decomp_xform = {
 static void vbdev_compress_examine(struct spdk_bdev *bdev);
 static int vbdev_compress_claim(struct vbdev_compress *comp_bdev);
 static void vbdev_compress_queue_io(struct spdk_bdev_io *bdev_io);
-struct vbdev_compress *_prepare_for_load_init(struct spdk_bdev_desc *bdev_desc, uint32_t lb_size);
+struct vbdev_compress *_prepare_for_load_init(struct spdk_bdev_desc *bdev_desc, uint32_t lb_size,
+		uint32_t chunk_size);
 static void vbdev_compress_submit_request(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_io);
 static void comp_bdev_ch_destroy_cb(void *io_device, void *ctx_buf);
 static void vbdev_compress_delete_done(void *cb_arg, int bdeverrno);
@@ -1067,6 +1068,9 @@ vbdev_compress_dump_info_json(void *ctx, struct spdk_json_write_ctx *w)
 	spdk_json_write_named_string(w, "name", spdk_bdev_get_name(&comp_bdev->comp_bdev));
 	spdk_json_write_named_string(w, "base_bdev_name", spdk_bdev_get_name(comp_bdev->base_bdev));
 	spdk_json_write_named_string(w, "compression_pmd", comp_bdev->drv_name);
+	spdk_json_write_named_uint32(w, "backing_io_unit_size", comp_bdev->params.backing_io_unit_size);
+	spdk_json_write_named_uint32(w, "lb_size", comp_bdev->params.logical_block_size);
+	spdk_json_write_named_uint32(w, "chunk_size", comp_bdev->params.chunk_size);
 	spdk_json_write_object_end(w);
 
 	return 0;
@@ -1288,7 +1292,8 @@ vbdev_compress_base_bdev_event_cb(enum spdk_bdev_event_type type, struct spdk_bd
  * information for reducelib to init or load.
  */
 struct vbdev_compress *
-_prepare_for_load_init(struct spdk_bdev_desc *bdev_desc, uint32_t lb_size)
+_prepare_for_load_init(struct spdk_bdev_desc *bdev_desc, uint32_t lb_size,
+		       uint32_t chunk_size)
 {
 	struct vbdev_compress *meta_ctx;
 	struct spdk_bdev *bdev;
@@ -1313,7 +1318,8 @@ _prepare_for_load_init(struct spdk_bdev_desc *bdev_desc, uint32_t lb_size)
 	meta_ctx->backing_dev.blocklen = bdev->blocklen;
 	meta_ctx->backing_dev.blockcnt = bdev->blockcnt;
 
-	meta_ctx->params.chunk_size = CHUNK_SIZE;
+	meta_ctx->params.chunk_size = chunk_size ? chunk_size : CHUNK_SIZE;
+
 	if (lb_size == 0) {
 		meta_ctx->params.logical_block_size = bdev->blocklen;
 	} else {
@@ -1351,7 +1357,8 @@ _set_pmd(struct vbdev_compress *comp_dev)
 
 /* Call reducelib to initialize a new volume */
 static int
-vbdev_init_reduce(const char *bdev_name, const char *pm_path, uint32_t lb_size)
+vbdev_init_reduce(const char *bdev_name, const char *pm_path, uint32_t lb_size,
+		  uint32_t chunk_size)
 {
 	struct spdk_bdev_desc *bdev_desc = NULL;
 	struct vbdev_compress *meta_ctx;
@@ -1364,7 +1371,7 @@ vbdev_init_reduce(const char *bdev_name, const char *pm_path, uint32_t lb_size)
 		return rc;
 	}
 
-	meta_ctx = _prepare_for_load_init(bdev_desc, lb_size);
+	meta_ctx = _prepare_for_load_init(bdev_desc, lb_size, chunk_size);
 	if (meta_ctx == NULL) {
 		spdk_bdev_close(bdev_desc);
 		return -EINVAL;
@@ -1499,12 +1506,18 @@ comp_bdev_ch_destroy_cb(void *io_device, void *ctx_buf)
 
 /* RPC entry point for compression vbdev creation. */
 int
-create_compress_bdev(const char *bdev_name, const char *pm_path, uint32_t lb_size)
+create_compress_bdev(const char *bdev_name, const char *pm_path, uint32_t lb_size,
+		     uint32_t chunk_size)
 {
 	struct vbdev_compress *comp_bdev = NULL;
 
 	if ((lb_size != 0) && (lb_size != LB_SIZE_4K) && (lb_size != LB_SIZE_512B)) {
 		SPDK_ERRLOG("Logical block size must be 512 or 4096\n");
+		return -EINVAL;
+	}
+
+	if ((chunk_size != 0) && (chunk_size != 16 * 1024) && (chunk_size != 32 * 1024)) {
+		SPDK_ERRLOG("Chunk size must be 16k or 32k\n");
 		return -EINVAL;
 	}
 
@@ -1514,7 +1527,7 @@ create_compress_bdev(const char *bdev_name, const char *pm_path, uint32_t lb_siz
 			return -EBUSY;
 		}
 	}
-	return vbdev_init_reduce(bdev_name, pm_path, lb_size);
+	return vbdev_init_reduce(bdev_name, pm_path, lb_size, chunk_size);
 }
 
 /* On init, just init the compress drivers. All metadata is stored on disk. */
@@ -1847,7 +1860,7 @@ vbdev_compress_examine(struct spdk_bdev *bdev)
 		return;
 	}
 
-	meta_ctx = _prepare_for_load_init(bdev_desc, 0);
+	meta_ctx = _prepare_for_load_init(bdev_desc, 0, 0);
 	if (meta_ctx == NULL) {
 		spdk_bdev_close(bdev_desc);
 		spdk_bdev_module_examine_done(&compress_if);

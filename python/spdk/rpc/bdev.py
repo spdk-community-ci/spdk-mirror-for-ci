@@ -48,13 +48,14 @@ def bdev_wait_for_examine(client):
     return client.call('bdev_wait_for_examine')
 
 
-def bdev_compress_create(client, base_bdev_name, pm_path, lb_size):
+def bdev_compress_create(client, base_bdev_name, pm_path, lb_size, chunk_size):
     """Construct a compress virtual block device.
 
     Args:
         base_bdev_name: name of the underlying base bdev
         pm_path: path to persistent memory
         lb_size: logical block size for the compressed vol in bytes.  Must be 4K or 512.
+        chunk_size: compression size unit. Must be 16K or 32K.
 
     Returns:
         Name of created virtual block device.
@@ -63,6 +64,8 @@ def bdev_compress_create(client, base_bdev_name, pm_path, lb_size):
 
     if lb_size:
         params['lb_size'] = lb_size
+    if chunk_size:
+        params['chunk_size'] = chunk_size
 
     return client.call('bdev_compress_create', params)
 
