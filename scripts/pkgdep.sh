@@ -96,6 +96,9 @@ ID=${ID,,}
 #Link suse related OS to sles
 if [[ $ID == *"suse"* ]]; then
 	ID="sles"
+#Link Deepin related OS to debian
+elif [[ $ID == *"deepin"* || $ID == *"uos"* ]]; then
+	ID="debian"
 fi
 
 for id in $ID $ID_LIKE; do
