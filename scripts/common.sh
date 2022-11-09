@@ -391,3 +391,9 @@ if [[ -e "$CONFIG_WPDK_DIR/bin/wpdk_common.sh" ]]; then
 	# handler before causing a hard stop with TerminateProcess.
 	source "$CONFIG_WPDK_DIR/bin/wpdk_common.sh"
 fi
+
+if [[ -x "${HOME}/.spdk/paths/export.sh" ]]; then
+	# Make sure pkgdep-installed tools are preferred over the same tools
+	# installed in the system.
+	source "${HOME}/.spdk/paths/export.sh" > /dev/null
+fi

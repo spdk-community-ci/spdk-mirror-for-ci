@@ -425,18 +425,12 @@ function get_bash_files() {
 function check_bash_style() {
 	local rc=0
 
-	# find compatible shfmt binary
-	shfmt_bins=$(compgen -c | grep '^shfmt' | uniq || true)
-	for bin in $shfmt_bins; do
-		shfmt_version=$("$bin" --version)
-		if [ $shfmt_version != "v3.1.0" ]; then
-			echo "$bin version $shfmt_version not used (only v3.1.0 is supported)"
-			echo "v3.1.0 can be installed using 'scripts/pkgdep.sh -d'"
-		else
-			shfmt=$bin
-			break
-		fi
-	done
+	shfmt="$(command -v shfmt)"
+	if [[ -z "$shfmt" ]] || [[ "$($shfmt --version)" != "v3.1.0" ]]; then
+		echo "shfmt v3.1.0 not found, other versions are not supported."
+		echo "v3.1.0 can be installed using 'scripts/pkgdep.sh -d'"
+		shfmt=""
+	fi
 
 	if [ -n "$shfmt" ]; then
 		shfmt_cmdline=() sh_files=()
@@ -453,7 +447,7 @@ function check_bash_style() {
 			shfmt_cmdline+=(-d)       # diffOut - print diff of the changes and exit with != 0
 			shfmt_cmdline+=(-sr)      # redirect operators will be followed by a space
 
-			diff=${output_dir:-$PWD}/$shfmt.patch
+			diff="${output_dir:-$PWD}/shfmt.patch"
 
 			# Explicitly tell shfmt to not look for .editorconfig. .editorconfig is also not looked up
 			# in case any formatting arguments has been passed on its cmdline.

@@ -63,7 +63,8 @@ install_shfmt() {
 	local err
 	if err=$(curl -f -Lo"$shfmt_dir/$shfmt" "$shfmt_url" 2>&1); then
 		chmod +x "$shfmt_dir/$shfmt"
-		ln -sf "$shfmt_dir/$shfmt" "$shfmt_dir_out"
+		ln -sf "$shfmt_dir/$shfmt" "$shfmt_dir/shfmt"
+		pkgdep_toolpath shfmt "${shfmt_dir}"
 	else
 		cat <<- CURL_ERR
 
