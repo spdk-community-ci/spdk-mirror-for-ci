@@ -48,7 +48,11 @@ DEFINE_STUB_V(nvme_ctrlr_disable, (struct spdk_nvme_ctrlr *ctrlr));
 
 DEFINE_STUB(nvme_ctrlr_disable_poll, int, (struct spdk_nvme_ctrlr *ctrlr), 0);
 
-DEFINE_STUB_V(nvme_transport_ctrlr_disconnect_qpair_done, (struct spdk_nvme_qpair *qpair));
+void
+nvme_transport_ctrlr_disconnect_qpair_done(struct spdk_nvme_qpair *qpair)
+{
+	nvme_qpair_set_state(qpair, NVME_QPAIR_DISCONNECTED);
+}
 
 int
 nvme_qpair_init(struct spdk_nvme_qpair *qpair, uint16_t id,
@@ -287,6 +291,182 @@ test_nvme_pcie_ctrlr_cmd_create_delete_io_queue(void)
 
 	rc = nvme_pcie_ctrlr_cmd_delete_io_sq(&ctrlr, &pqpair.qpair, NULL, NULL);
 	CU_ASSERT(rc == -ENOMEM);
+}
+
+static void
+_disconnected_qpair_cb(struct spdk_nvme_qpair *qpair, void *poll_group_ctx)
+{
+	if (poll_group_ctx) {
+		*(bool *)poll_group_ctx = true;
+	}
+}
+
+static void
+test_nvme_pcie_ctrlr_disconnect_qpair(void)
+{
+	struct nvme_pcie_ctrlr	pctrlr = {};
+	struct nvme_pcie_qpair	pqpair = {};
+	struct spdk_nvme_cpl cpl = {};
+	struct spdk_nvme_qpair adminq = {};
+	struct nvme_request req[2] = {};
+	struct spdk_nvme_transport_poll_group *tgroup = NULL;
+	struct spdk_nvme_poll_group group;
+	bool disconnected = true;
+	int rc = 0;
+
+	pqpair.cpl = &cpl;
+	pqpair.qpair.ctrlr = &pctrlr.ctrlr;
+	pqpair.qpair.id = 1;
+	pqpair.stat = NULL;
+	pqpair.qpair.async = 1;
+	pctrlr.ctrlr.page_size = 4096;
+
+	/* Shadow doorbell available */
+	pctrlr.ctrlr.shadow_doorbell = spdk_zmalloc(pctrlr.ctrlr.page_size, pctrlr.ctrlr.page_size,
+				       NULL, SPDK_ENV_LCORE_ID_ANY,
+				       SPDK_MALLOC_DMA | SPDK_MALLOC_SHARE);
+	pctrlr.ctrlr.eventidx = spdk_zmalloc(pctrlr.ctrlr.page_size, pctrlr.ctrlr.page_size,
+					     NULL, SPDK_ENV_LCORE_ID_ANY,
+					     SPDK_MALLOC_DMA | SPDK_MALLOC_SHARE);
+	pctrlr.ctrlr.adminq = &adminq;
+	STAILQ_INIT(&pctrlr.ctrlr.adminq->free_req);
+
+	STAILQ_INSERT_TAIL(&pctrlr.ctrlr.adminq->free_req, &req[0], stailq);
+	STAILQ_INSERT_TAIL(&pctrlr.ctrlr.adminq->free_req, &req[1], stailq);
+	rc = nvme_pcie_ctrlr_connect_qpair(&pctrlr.ctrlr, &pqpair.qpair);
+	CU_ASSERT(rc == 0);
+	req[0].cb_fn(req[0].cb_arg, &cpl);
+	req[1].cb_fn(req[1].cb_arg, &cpl);
+	CU_ASSERT(pqpair.pcie_state == NVME_PCIE_QPAIR_READY);
+	STAILQ_INSERT_TAIL(&pctrlr.ctrlr.adminq->free_req, &req[0], stailq);
+	STAILQ_INSERT_TAIL(&pctrlr.ctrlr.adminq->free_req, &req[1], stailq);
+	/* Set qpair state to disconnecting */
+	nvme_qpair_set_state(&pqpair.qpair, NVME_QPAIR_DISCONNECTING);
+	nvme_pcie_ctrlr_disconnect_qpair(&pctrlr.ctrlr, &pqpair.qpair);
+	/* Process delete SQ command */
+	CU_ASSERT(pqpair.pcie_state == NVME_PCIE_QPAIR_WAIT_FOR_DELETE_SQ);
+	req[0].cb_fn(req[0].cb_arg, &cpl);
+	/* Deleting SQ is done, now start deleting CQ */
+	CU_ASSERT(pqpair.pcie_state == NVME_PCIE_QPAIR_DELETE_SQ_DONE);
+	nvme_pcie_qpair_process_completions(&pqpair.qpair, 0);
+	CU_ASSERT(pqpair.pcie_state == NVME_PCIE_QPAIR_DELETE_CQ);
+	nvme_pcie_qpair_process_completions(&pqpair.qpair, 0);
+	/* Process delete CQ command */
+	CU_ASSERT(pqpair.pcie_state == NVME_PCIE_QPAIR_WAIT_FOR_DELETE_CQ);
+	req[1].cb_fn(req[1].cb_arg, &cpl);
+	/* Now CQ is also deleted and nvme_pcie_qpair_process_completions return -ENXIO */
+	CU_ASSERT(pqpair.pcie_state == NVME_PCIE_QPAIR_EXITED);
+	CU_ASSERT(nvme_pcie_qpair_process_completions(&pqpair.qpair, 0) == -ENXIO);
+
+	/* Now test async detach with poll groups */
+	STAILQ_INSERT_TAIL(&pctrlr.ctrlr.adminq->free_req, &req[0], stailq);
+	STAILQ_INSERT_TAIL(&pctrlr.ctrlr.adminq->free_req, &req[1], stailq);
+	rc = nvme_pcie_ctrlr_connect_qpair(&pctrlr.ctrlr, &pqpair.qpair);
+	CU_ASSERT(rc == 0);
+	req[0].cb_fn(req[0].cb_arg, &cpl);
+	req[1].cb_fn(req[1].cb_arg, &cpl);
+	CU_ASSERT(pqpair.pcie_state == NVME_PCIE_QPAIR_READY);
+	tgroup = nvme_pcie_poll_group_create();
+	CU_ASSERT(tgroup != NULL);
+	group.ctx = &disconnected;
+	tgroup->group = &group;
+	/* This test tries to check if disconnected_qpair_cb is called after qpair exited,
+	 * first sets appropriate states */
+	nvme_qpair_set_state(&pqpair.qpair, NVME_QPAIR_DISCONNECTING);
+	pqpair.pcie_state = NVME_PCIE_QPAIR_EXITED;
+	/* Add qpair to disconnected list */
+	STAILQ_INIT(&tgroup->disconnected_qpairs);
+	STAILQ_INSERT_TAIL(&tgroup->disconnected_qpairs, &pqpair.qpair, poll_group_stailq);
+	disconnected = false;
+	nvme_pcie_poll_group_process_completions(tgroup, 0, _disconnected_qpair_cb);
+	CU_ASSERT_EQUAL(disconnected, true);
+	CU_ASSERT(nvme_qpair_get_state(&pqpair.qpair) == NVME_QPAIR_DISCONNECTED);
+
+	/* Check what happen when disconnect failed, to delete SQ */
+	STAILQ_INSERT_TAIL(&pctrlr.ctrlr.adminq->free_req, &req[0], stailq);
+	STAILQ_INSERT_TAIL(&pctrlr.ctrlr.adminq->free_req, &req[1], stailq);
+	rc = nvme_pcie_ctrlr_connect_qpair(&pctrlr.ctrlr, &pqpair.qpair);
+	CU_ASSERT(rc == 0);
+	req[0].cb_fn(req[0].cb_arg, &cpl);
+	req[1].cb_fn(req[1].cb_arg, &cpl);
+	CU_ASSERT(pqpair.pcie_state == NVME_PCIE_QPAIR_READY);
+	STAILQ_INSERT_TAIL(&pctrlr.ctrlr.adminq->free_req, &req[0], stailq);
+	/* Set qpair state to disconnecting */
+	nvme_qpair_set_state(&pqpair.qpair, NVME_QPAIR_DISCONNECTING);
+	nvme_pcie_ctrlr_disconnect_qpair(&pctrlr.ctrlr, &pqpair.qpair);
+	/* Process delete SQ command */
+	CU_ASSERT(pqpair.pcie_state == NVME_PCIE_QPAIR_WAIT_FOR_DELETE_SQ);
+	/* Set cpl to mimic failed operation */
+	pqpair.cpl->status.sc = SPDK_NVME_SC_INVALID_OPCODE;
+	pqpair.cpl->status.sct = SPDK_NVME_SCT_GENERIC;
+	req[0].cb_fn(req[0].cb_arg, &cpl);
+	/* Deleting SQ failed */
+	CU_ASSERT(pqpair.pcie_state == NVME_PCIE_QPAIR_FAILED);
+	nvme_pcie_qpair_process_completions(&pqpair.qpair, 0);
+	/* qpair state is set disconnected even if operation failed */
+	CU_ASSERT(nvme_qpair_get_state(&pqpair.qpair) == NVME_QPAIR_DISCONNECTED);
+	/* Reset cpl status */
+	pqpair.cpl->status.sc = SPDK_NVME_SC_SUCCESS;
+	pqpair.cpl->status.sct = SPDK_NVME_SCT_GENERIC;
+
+	/* Fail deleting CQ */
+	STAILQ_INSERT_TAIL(&pctrlr.ctrlr.adminq->free_req, &req[0], stailq);
+	STAILQ_INSERT_TAIL(&pctrlr.ctrlr.adminq->free_req, &req[1], stailq);
+	rc = nvme_pcie_ctrlr_connect_qpair(&pctrlr.ctrlr, &pqpair.qpair);
+	CU_ASSERT(rc == 0);
+	req[0].cb_fn(req[0].cb_arg, &cpl);
+	req[1].cb_fn(req[1].cb_arg, &cpl);
+	CU_ASSERT(pqpair.pcie_state == NVME_PCIE_QPAIR_READY);
+	STAILQ_INSERT_TAIL(&pctrlr.ctrlr.adminq->free_req, &req[0], stailq);
+	STAILQ_INSERT_TAIL(&pctrlr.ctrlr.adminq->free_req, &req[1], stailq);
+	nvme_qpair_set_state(&pqpair.qpair, NVME_QPAIR_DISCONNECTING);
+	nvme_pcie_ctrlr_disconnect_qpair(&pctrlr.ctrlr, &pqpair.qpair);
+	CU_ASSERT(pqpair.pcie_state == NVME_PCIE_QPAIR_WAIT_FOR_DELETE_SQ);
+	req[0].cb_fn(req[0].cb_arg, &cpl);
+	nvme_pcie_qpair_process_completions(&pqpair.qpair, 0);
+	CU_ASSERT(pqpair.pcie_state == NVME_PCIE_QPAIR_DELETE_CQ);
+	nvme_pcie_qpair_process_completions(&pqpair.qpair, 0);
+	CU_ASSERT(pqpair.pcie_state == NVME_PCIE_QPAIR_WAIT_FOR_DELETE_CQ);
+	/* Set cpl to mimic failed operation */
+	pqpair.cpl->status.sc = SPDK_NVME_SC_INVALID_OPCODE;
+	pqpair.cpl->status.sct = SPDK_NVME_SCT_GENERIC;
+	req[1].cb_fn(req[1].cb_arg, &cpl);
+	/* Deleting CQ failed */
+	CU_ASSERT(pqpair.pcie_state == NVME_PCIE_QPAIR_FAILED);
+	nvme_pcie_qpair_process_completions(&pqpair.qpair, 0);
+	/* qpair state is set disconnected even if operation failed */
+	CU_ASSERT(nvme_qpair_get_state(&pqpair.qpair) == NVME_QPAIR_DISCONNECTED);
+	/* Reset cpl status */
+	pqpair.cpl->status.sc = SPDK_NVME_SC_SUCCESS;
+	pqpair.cpl->status.sct = SPDK_NVME_SCT_GENERIC;
+
+	/* Fail submitting delete CQ request */
+	STAILQ_INSERT_TAIL(&pctrlr.ctrlr.adminq->free_req, &req[0], stailq);
+	STAILQ_INSERT_TAIL(&pctrlr.ctrlr.adminq->free_req, &req[1], stailq);
+	rc = nvme_pcie_ctrlr_connect_qpair(&pctrlr.ctrlr, &pqpair.qpair);
+	CU_ASSERT(rc == 0);
+	req[0].cb_fn(req[0].cb_arg, &cpl);
+	req[1].cb_fn(req[1].cb_arg, &cpl);
+	CU_ASSERT(pqpair.pcie_state == NVME_PCIE_QPAIR_READY);
+	STAILQ_INSERT_TAIL(&pctrlr.ctrlr.adminq->free_req, &req[0], stailq);
+	nvme_qpair_set_state(&pqpair.qpair, NVME_QPAIR_DISCONNECTING);
+	nvme_pcie_ctrlr_disconnect_qpair(&pctrlr.ctrlr, &pqpair.qpair);
+	CU_ASSERT(pqpair.pcie_state == NVME_PCIE_QPAIR_WAIT_FOR_DELETE_SQ);
+	req[0].cb_fn(req[0].cb_arg, &cpl);
+	nvme_pcie_qpair_process_completions(&pqpair.qpair, 0);
+	CU_ASSERT(pqpair.pcie_state == NVME_PCIE_QPAIR_DELETE_CQ);
+	/* Fail ctrlr to prevent sending request to delete_io_cq */
+	pctrlr.ctrlr.is_failed = true;
+	nvme_pcie_qpair_process_completions(&pqpair.qpair, 0);
+	CU_ASSERT(pqpair.pcie_state == NVME_PCIE_QPAIR_FAILED);
+	nvme_pcie_qpair_process_completions(&pqpair.qpair, 0);
+	/* qpair state is set disconnected even if operation failed */
+	CU_ASSERT(nvme_qpair_get_state(&pqpair.qpair) == NVME_QPAIR_DISCONNECTED);
+
+	spdk_free(pctrlr.ctrlr.shadow_doorbell);
+	spdk_free(pctrlr.ctrlr.eventidx);
+	free(pqpair.stat);
+	free(tgroup);
 }
 
 static void
@@ -589,6 +769,7 @@ main(int argc, char **argv)
 	CU_ADD_TEST(suite, test_nvme_pcie_qpair_construct_destroy);
 	CU_ADD_TEST(suite, test_nvme_pcie_ctrlr_cmd_create_delete_io_queue);
 	CU_ADD_TEST(suite, test_nvme_pcie_ctrlr_connect_qpair);
+	CU_ADD_TEST(suite, test_nvme_pcie_ctrlr_disconnect_qpair);
 	CU_ADD_TEST(suite, test_nvme_pcie_ctrlr_construct_admin_qpair);
 	CU_ADD_TEST(suite, test_nvme_pcie_poll_group_get_stats);
 

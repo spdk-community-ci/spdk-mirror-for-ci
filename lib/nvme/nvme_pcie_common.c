@@ -571,12 +571,58 @@ nvme_pcie_ctrlr_connect_qpair(struct spdk_nvme_ctrlr *ctrlr, struct spdk_nvme_qp
 	return rc;
 }
 
+static void
+nvme_completion_delete_sq_cb(void *arg, const struct spdk_nvme_cpl *cpl)
+{
+	struct spdk_nvme_qpair *qpair = arg;
+	struct nvme_pcie_qpair *pqpair = nvme_pcie_qpair(qpair);
+
+	if (spdk_nvme_cpl_is_error(cpl)) {
+		SPDK_ERRLOG("delete_io_sq failed!\n");
+		pqpair->pcie_state = NVME_PCIE_QPAIR_FAILED;
+		return;
+	}
+
+	if (!qpair->ctrlr || qpair->ctrlr->is_removed) {
+		SPDK_ERRLOG("ctrlr is removed before qpair!\n");
+		pqpair->pcie_state = NVME_PCIE_QPAIR_FAILED;
+		return;
+	}
+
+	pqpair->pcie_state = NVME_PCIE_QPAIR_DELETE_SQ_DONE;
+}
+
 void
 nvme_pcie_ctrlr_disconnect_qpair(struct spdk_nvme_ctrlr *ctrlr, struct spdk_nvme_qpair *qpair)
 {
+	struct nvme_pcie_qpair *pqpair = nvme_pcie_qpair(qpair);
+	int rc;
+
+	assert(ctrlr != NULL);
+
 	if (!nvme_qpair_is_admin_queue(qpair) || !ctrlr->is_disconnecting) {
-		nvme_transport_ctrlr_disconnect_qpair_done(qpair);
+		if (nvme_qpair_is_admin_queue(qpair) || ctrlr->is_removed) {
+			pqpair->pcie_state = NVME_PCIE_QPAIR_EXITED;
+			return;
+		}
+
+		pqpair->pcie_state = NVME_PCIE_QPAIR_WAIT_FOR_DELETE_SQ;
+
+		rc = nvme_pcie_ctrlr_cmd_delete_io_sq(ctrlr, qpair,
+						      nvme_completion_delete_sq_cb, qpair);
+		if (rc != 0) {
+			SPDK_ERRLOG("Failed to send request to delete_io_sq with rc=%d\n", rc);
+			pqpair->pcie_state = NVME_PCIE_QPAIR_FAILED;
+			return;
+		}
+
+		if (qpair->async && !qpair->destroy_in_progress) {
+			return;
+		}
+		/* Blocking path, wait for delete qpair */
+		while (nvme_pcie_qpair_process_completions(qpair, 0) != -ENXIO) {}
 	} else {
+		pqpair->pcie_state = NVME_PCIE_QPAIR_EXITED;
 		/* If this function is called for the admin qpair via spdk_nvme_ctrlr_reset()
 		 * or spdk_nvme_ctrlr_disconnect(), initiate a Controller Level Reset.
 		 * Then we can abort trackers safely because the Controller Level Reset deletes
@@ -825,6 +871,21 @@ nvme_pcie_qpair_check_timeout(struct spdk_nvme_qpair *qpair)
 	}
 }
 
+static void
+nvme_completion_delete_cq_cb(void *arg, const struct spdk_nvme_cpl *cpl)
+{
+	struct spdk_nvme_qpair *qpair = arg;
+	struct nvme_pcie_qpair *pqpair = nvme_pcie_qpair(qpair);
+
+	if (spdk_nvme_cpl_is_error(cpl)) {
+		SPDK_ERRLOG("delete_io_cq failed!\n");
+		pqpair->pcie_state = NVME_PCIE_QPAIR_FAILED;
+		return;
+	}
+
+	pqpair->pcie_state = NVME_PCIE_QPAIR_EXITED;
+}
+
 int32_t
 nvme_pcie_qpair_process_completions(struct spdk_nvme_qpair *qpair, uint32_t max_completions)
 {
@@ -837,6 +898,44 @@ nvme_pcie_qpair_process_completions(struct spdk_nvme_qpair *qpair, uint32_t max_
 	uint8_t			 next_phase;
 	bool			 next_is_valid = false;
 	int			 rc;
+
+	if (spdk_unlikely(nvme_qpair_get_state(qpair) == NVME_QPAIR_DISCONNECTING)) {
+		switch (pqpair->pcie_state) {
+		case NVME_PCIE_QPAIR_DELETE_SQ_DONE:
+			/* Now that the submission queue is deleted, the device is supposed to have
+			 * completed any outstanding I/O. Try to complete them one more time before,
+			 * they get aborted */
+			if (qpair->active_proc == nvme_ctrlr_get_current_process(qpair->ctrlr)) {
+				pqpair->pcie_state = NVME_PCIE_QPAIR_DELETE_CQ;
+				/* Exiting the state machine allows for the completion of any
+				 * outstanding I/O, possible only if qpair is not foreign
+				 * (i.e. one that this process did create) */
+				break;
+			}
+		/* Fallthrough */
+		case NVME_PCIE_QPAIR_DELETE_CQ:
+			pqpair->pcie_state = NVME_PCIE_QPAIR_WAIT_FOR_DELETE_CQ;
+			rc = nvme_pcie_ctrlr_cmd_delete_io_cq(qpair->ctrlr, qpair,
+							      nvme_completion_delete_cq_cb, qpair);
+			if (rc != 0) {
+				SPDK_ERRLOG("Failed to send request to delete_io_cq with rc=%d\n",
+					    rc);
+				pqpair->pcie_state = NVME_PCIE_QPAIR_FAILED;
+			}
+			return 0;
+		case NVME_PCIE_QPAIR_WAIT_FOR_DELETE_SQ:
+		case NVME_PCIE_QPAIR_WAIT_FOR_DELETE_CQ:
+			spdk_nvme_qpair_process_completions(ctrlr->adminq, 0);
+			return 0;
+		case NVME_PCIE_QPAIR_EXITED:
+		case NVME_PCIE_QPAIR_FAILED:
+			nvme_transport_ctrlr_disconnect_qpair_done(qpair);
+			return -ENXIO;
+		default:
+			SPDK_ERRLOG("Incorrect pcie state: %d\n", pqpair->pcie_state);
+			assert(0);
+		}
+	}
 
 	if (spdk_unlikely(pqpair->pcie_state == NVME_PCIE_QPAIR_FAILED)) {
 		return -ENXIO;
@@ -1074,8 +1173,6 @@ int
 nvme_pcie_ctrlr_delete_io_qpair(struct spdk_nvme_ctrlr *ctrlr, struct spdk_nvme_qpair *qpair)
 {
 	struct nvme_pcie_qpair *pqpair = nvme_pcie_qpair(qpair);
-	struct nvme_completion_poll_status *status;
-	int rc;
 
 	assert(ctrlr != NULL);
 
@@ -1083,68 +1180,17 @@ nvme_pcie_ctrlr_delete_io_qpair(struct spdk_nvme_ctrlr *ctrlr, struct spdk_nvme_
 		goto free;
 	}
 
+	if (pqpair->pcie_state != NVME_PCIE_QPAIR_EXITED &&
+	    pqpair->pcie_state != NVME_PCIE_QPAIR_FAILED) {
+		SPDK_ERRLOG("pcie qpair was not disconnected properly");
+	}
+
 	if (ctrlr->prepare_for_reset) {
 		if (nvme_qpair_get_state(qpair) == NVME_QPAIR_CONNECTING) {
 			pqpair->flags.defer_destruction = true;
 		}
-		goto clear_shadow_doorbells;
 	}
 
-	/* If attempting to delete a qpair that's still being connected, we have to wait until it's
-	 * finished, so that we don't free it while it's waiting for the create cq/sq callbacks.
-	 */
-	while (pqpair->pcie_state == NVME_PCIE_QPAIR_WAIT_FOR_CQ ||
-	       pqpair->pcie_state == NVME_PCIE_QPAIR_WAIT_FOR_SQ) {
-		rc = spdk_nvme_qpair_process_completions(ctrlr->adminq, 0);
-		if (rc < 0) {
-			break;
-		}
-	}
-
-	status = calloc(1, sizeof(*status));
-	if (!status) {
-		SPDK_ERRLOG("Failed to allocate status tracker\n");
-		goto free;
-	}
-
-	/* Delete the I/O submission queue */
-	rc = nvme_pcie_ctrlr_cmd_delete_io_sq(ctrlr, qpair, nvme_completion_poll_cb, status);
-	if (rc != 0) {
-		SPDK_ERRLOG("Failed to send request to delete_io_sq with rc=%d\n", rc);
-		free(status);
-		goto free;
-	}
-	if (nvme_wait_for_completion(ctrlr->adminq, status)) {
-		if (!status->timed_out) {
-			free(status);
-		}
-		goto free;
-	}
-
-	/* Now that the submission queue is deleted, the device is supposed to have
-	 * completed any outstanding I/O. Try to complete them. If they don't complete,
-	 * they'll be marked as aborted and completed below. */
-	if (qpair->active_proc == nvme_ctrlr_get_current_process(ctrlr)) {
-		nvme_pcie_qpair_process_completions(qpair, 0);
-	}
-
-	memset(status, 0, sizeof(*status));
-	/* Delete the completion queue */
-	rc = nvme_pcie_ctrlr_cmd_delete_io_cq(ctrlr, qpair, nvme_completion_poll_cb, status);
-	if (rc != 0) {
-		SPDK_ERRLOG("Failed to send request to delete_io_cq with rc=%d\n", rc);
-		free(status);
-		goto free;
-	}
-	if (nvme_wait_for_completion(ctrlr->adminq, status)) {
-		if (!status->timed_out) {
-			free(status);
-		}
-		goto free;
-	}
-	free(status);
-
-clear_shadow_doorbells:
 	if (pqpair->flags.has_shadow_doorbell && ctrlr->shadow_doorbell) {
 		*pqpair->shadow_doorbell.sq_tdbl = 0;
 		*pqpair->shadow_doorbell.cq_hdbl = 0;
@@ -1160,6 +1206,7 @@ free:
 	if (!pqpair->flags.defer_destruction) {
 		nvme_pcie_qpair_destroy(qpair);
 	}
+
 	return 0;
 }
 
@@ -1765,7 +1812,9 @@ nvme_pcie_poll_group_process_completions(struct spdk_nvme_transport_poll_group *
 	int64_t total_completions = 0;
 
 	STAILQ_FOREACH_SAFE(qpair, &tgroup->disconnected_qpairs, poll_group_stailq, tmp_qpair) {
-		disconnected_qpair_cb(qpair, tgroup->group->ctx);
+		if (nvme_pcie_qpair_process_completions(qpair, 0) == -ENXIO) {
+			disconnected_qpair_cb(qpair, tgroup->group->ctx);
+		}
 	}
 
 	STAILQ_FOREACH_SAFE(qpair, &tgroup->connected_qpairs, poll_group_stailq, tmp_qpair) {
