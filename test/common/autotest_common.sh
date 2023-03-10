@@ -383,137 +383,29 @@ function set_test_storage() {
 
 function get_config_params() {
 	xtrace_disable
-	config_params='--enable-debug --enable-werror'
+	local filter
+	filter=()
 
-	# for options with dependencies but no test flag, set them here
-	if [ -f /usr/include/infiniband/verbs.h ]; then
-		config_params+=' --with-rdma'
+	if [[ -f /etc/os-release ]]; then
+		source /etc/os-release
 	fi
 
-	if [ $SPDK_TEST_USDT -eq 1 ]; then
-		config_params+=" --with-usdt"
+	# Ideally we'd like to build all "--with" flags with
+	# but there are some exceptions
+
+	if ((SPDK_RUN_VALGRIND == 1)); then
+		# ASAN needs to be disabled to run Valgrind tets
+		filter+=("enable-asan")
 	fi
 
-	if [ $(uname -s) == "FreeBSD" ]; then
-		intel="hw.model: Intel"
-		cpu_vendor=$(sysctl -a | grep hw.model | cut -c 1-15)
-	else
-		intel="GenuineIntel"
-		cpu_vendor=$(grep -i 'vendor' /proc/cpuinfo --max-count=1)
-	fi
-	if [[ "$cpu_vendor" != *"$intel"* ]]; then
-		config_params+=" --without-idxd"
-	else
-		config_params+=" --with-idxd"
+	if [[ "$ID" == "centos" ]] && ((VERSION_ID == "7")); then
+		filter+=("with-crypto")
 	fi
 
-	if [[ -d $CONFIG_FIO_SOURCE_DIR ]]; then
-		config_params+=" --with-fio=$CONFIG_FIO_SOURCE_DIR"
-	fi
+	filter=$(printf "%s|" "${filter[@]}")
+	filter=${filter::-1}
+	eval "$rootdir/test/common/check-config.sh $* ${filter:+|grep -vE \$filter}"
 
-	if [ -d ${DEPENDENCY_DIR}/vtune_codes ]; then
-		config_params+=' --with-vtune='${DEPENDENCY_DIR}'/vtune_codes'
-	fi
-
-	if [ -d /usr/include/iscsi ]; then
-		[[ $(< /usr/include/iscsi/iscsi.h) =~ "define LIBISCSI_API_VERSION ("([0-9]+)")" ]] \
-			&& libiscsi_version=${BASH_REMATCH[1]}
-		if ((libiscsi_version >= 20150621)); then
-			config_params+=' --with-iscsi-initiator'
-		fi
-	fi
-
-	if [[ $SPDK_TEST_UNITTEST -eq 0 && \
-		$SPDK_TEST_SCANBUILD -eq 0 && -z \
-		${SPDK_TEST_AUTOBUILD:-} ]]; then
-		config_params+=' --disable-unit-tests'
-	fi
-
-	if [ -f /usr/include/libpmem.h ] && [ $SPDK_TEST_VBDEV_COMPRESS -eq 1 ]; then
-		if ge "$(nasm --version | awk '{print $3}')" 2.14 && [[ $SPDK_TEST_ISAL -eq 1 ]]; then
-			config_params+=' --with-vbdev-compress --with-dpdk-compressdev'
-		fi
-	fi
-
-	if [ -d /usr/include/rbd ] && [ -d /usr/include/rados ] && [ $SPDK_TEST_RBD -eq 1 ]; then
-		config_params+=' --with-rbd'
-	fi
-
-	# for options with no required dependencies, just test flags, set them here
-	if [ $SPDK_TEST_CRYPTO -eq 1 ]; then
-		config_params+=' --with-crypto'
-	fi
-
-	if [ $SPDK_TEST_OCF -eq 1 ]; then
-		config_params+=" --with-ocf"
-	fi
-
-	if [ $SPDK_RUN_UBSAN -eq 1 ]; then
-		config_params+=' --enable-ubsan'
-	fi
-
-	if [ $SPDK_RUN_ASAN -eq 1 ]; then
-		config_params+=' --enable-asan'
-	fi
-
-	if [ "$(uname -s)" = "Linux" ]; then
-		config_params+=' --enable-coverage'
-	fi
-
-	if [ $SPDK_TEST_BLOBFS -eq 1 ]; then
-		if [[ -d /usr/include/fuse3 ]] || [[ -d /usr/local/include/fuse3 ]]; then
-			config_params+=' --with-fuse'
-		fi
-	fi
-
-	if [[ -f /usr/include/liburing/io_uring.h && -f /usr/include/linux/ublk_cmd.h ]]; then
-		config_params+=' --with-ublk'
-	fi
-
-	if [ $SPDK_TEST_RAID5 -eq 1 ]; then
-		config_params+=' --with-raid5f'
-	fi
-
-	if [ $SPDK_TEST_VFIOUSER -eq 1 ] || [ $SPDK_TEST_VFIOUSER_QEMU -eq 1 ] || [ $SPDK_TEST_SMA -eq 1 ]; then
-		config_params+=' --with-vfio-user'
-	fi
-
-	# Check whether liburing library header exists
-	if [ -f /usr/include/liburing/io_uring.h ] && [ $SPDK_TEST_URING -eq 1 ]; then
-		config_params+=' --with-uring'
-	fi
-
-	if [ -n "${SPDK_RUN_EXTERNAL_DPDK:-}" ]; then
-		config_params+=" --with-dpdk=$SPDK_RUN_EXTERNAL_DPDK"
-	fi
-
-	if [[ $SPDK_TEST_SMA -eq 1 ]]; then
-		config_params+=' --with-sma'
-		config_params+=' --with-crypto'
-	fi
-
-	if [ -f /usr/include/daos.h ] && [ $SPDK_TEST_DAOS -eq 1 ]; then
-		config_params+=' --with-daos'
-	fi
-
-	# Make the xnvme module available for the tests
-	if [[ $SPDK_TEST_XNVME -eq 1 ]]; then
-		config_params+=' --with-xnvme'
-	fi
-
-	if [[ $SPDK_TEST_FUZZER -eq 1 ]]; then
-		config_params+=" $(get_fuzzer_target_config)"
-	fi
-
-	if [[ $SPDK_TEST_NVMF_MDNS -eq 1 ]]; then
-		config_params+=' --with-avahi'
-	fi
-
-	if [[ $SPDK_JSONRPC_GO_CLIENT -eq 1 ]]; then
-		config_params+=' --with-golang'
-	fi
-
-	echo "$config_params"
 	xtrace_restore
 }
 
