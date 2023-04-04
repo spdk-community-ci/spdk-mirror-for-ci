@@ -770,7 +770,8 @@ class Initiator(Server):
             ConfigField(name='fio_bin', default='/usr/src/fio/fio'),
             ConfigField(name='nvmecli_bin', default='nvme'),
             ConfigField(name='cpu_frequency', default=None),
-            ConfigField(name='allow_cpu_sharing', default=True)
+            ConfigField(name='allow_cpu_sharing', default=True),
+            ConfigField(name='num_cores', default=0)
         ]
 
         self.read_config(config_fields, initiator_config)
@@ -796,6 +797,16 @@ class Initiator(Server):
         if self.enable_adq:
             self.configure_adq()
         self.sys_config()
+
+    def set_num_cores(self):
+        if self.cpus_allowed:
+            self.num_cores = len(self.get_core_list_from_mask(self.cpus_allowed))
+            self.log.info(f"Setting initiator num_cores to {self.num_cores} according to 'cpus_allowed' option")
+        elif self.num_cores:
+            self.log.info(f"Setting initiator num_cores to {self.num_cores} according to 'num_cores' option")
+        else:
+            self.num_cores = len(self.subsystem_info_list)
+            self.log.info(f"Setting initiator num_cores to {self.num_cores} according to number of connected subsytems")
 
     def set_local_nic_info_helper(self):
         return json.loads(self.exec_cmd(["lshw", "-json"]))
@@ -956,17 +967,7 @@ class Initiator(Server):
             rate_iops={rate_iops}
         """)
 
-        if self.cpus_allowed is not None:
-            self.log.info("Limiting FIO workload execution on specific cores %s" % self.cpus_allowed)
-            self.num_cores = len(self.get_core_list_from_mask(self.cpus_allowed))
-            threads = range(0, self.num_cores)
-        elif hasattr(self, 'num_cores'):
-            self.log.info("Limiting FIO workload execution to %s cores" % self.num_cores)
-            threads = range(0, int(self.num_cores))
-        else:
-            self.num_cores = len(self.subsystem_info_list)
-            threads = range(0, len(self.subsystem_info_list))
-
+        threads = range(self.num_cores)
         filename_section = self.gen_fio_filename_conf(self.subsystem_info_list, threads, io_depth, fio_settings["num_jobs"],
                                                       fio_settings["offset"], fio_settings["offset_inc"], fio_settings["numa_align"])
 
@@ -987,7 +988,7 @@ class Initiator(Server):
         fio_config = "\n".join([fio_config, filename_section])
 
         fio_config_filename = "%s_%s_%s_m_%s" % (block_size, io_depth, rw, fio_settings["rw_mix_read"])
-        if hasattr(self, "num_cores"):
+        if self.num_cores:
             fio_config_filename += "_%sCPU" % self.num_cores
         fio_config_filename += ".fio"
 
@@ -1427,9 +1428,6 @@ class KernelInitiator(Initiator):
         self.ioengine = "libaio"
         self.spdk_conf = ""
 
-        if "num_cores" in initiator_config:
-            self.num_cores = initiator_config["num_cores"]
-
         if "kernel_engine" in initiator_config:
             self.ioengine = initiator_config["kernel_engine"]
             if "io_uring" in self.ioengine:
@@ -1704,6 +1702,7 @@ class SPDKInitiator(Initiator):
 def initiators_match_subsystems(initiators, target_obj):
     for i in initiators:
         i.match_subsystems(target_obj.subsystem_info_list)
+        i.set_num_cores()
         if i.enable_adq:
             i.adq_configure_tc()
 
