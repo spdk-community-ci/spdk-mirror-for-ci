@@ -1702,6 +1702,18 @@ if __name__ == "__main__":
                 power_daemon = None
                 measurements_prefix = "%s_%s_%s_m_%s_run_%s" % (block_size, io_depth, rw, fio_rw_mix_read, run_no)
 
+                perf_results_folder = "/tmp/perf_results"
+                if not os.path.exists(perf_results_folder):
+                    os.makedirs(perf_results_folder)
+
+                perf_file_prefix = measurements_prefix + "_perf"
+                perf_file = os.path.join(perf_results_folder, perf_file_prefix + "_perf.txt")
+                cmd = "perf record -a -o {} sleep {}".format(perf_file, fio_ramp_time + fio_run_time)
+                perf_process = subprocess.Popen(cmd, shell=True)
+
+                logging.info("Started perf tool measurement: %s", cmd)
+                logging.info("Saving perf tool results to: %s", perf_file)
+
                 for i, cfg in zip(initiators, configs):
                     t = threading.Thread(target=i.run_fio, args=(cfg, run_no))
                     threads.append(t)
@@ -1745,6 +1757,8 @@ if __name__ == "__main__":
                     t.start()
                 for t in threads:
                     t.join()
+
+                perf_process.terminate()
 
             for i in initiators:
                 i.init_disconnect()
