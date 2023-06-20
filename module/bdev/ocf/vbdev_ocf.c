@@ -1042,7 +1042,8 @@ create_management_queue(struct vbdev_ocf *vbdev)
 	struct spdk_poller *mngt_poller;
 	int rc;
 
-	rc = vbdev_ocf_queue_create(vbdev->ocf_cache, &vbdev->cache_ctx->mngt_queue, &mngt_queue_ops);
+	rc = vbdev_ocf_queue_create_mngt(vbdev->ocf_cache,
+					 &vbdev->cache_ctx->mngt_queue, &mngt_queue_ops);
 	if (rc) {
 		SPDK_ERRLOG("Unable to create mngt_queue: %d\n", rc);
 		return rc;
@@ -1055,7 +1056,6 @@ create_management_queue(struct vbdev_ocf *vbdev)
 	}
 
 	ocf_queue_set_priv(vbdev->cache_ctx->mngt_queue, mngt_poller);
-	ocf_mngt_cache_set_mngt_queue(vbdev->ocf_cache, vbdev->cache_ctx->mngt_queue);
 
 	return 0;
 }
@@ -1100,7 +1100,6 @@ start_cache(struct vbdev_ocf *vbdev)
 	}
 
 	vbdev_ocf_cache_ctx_get(vbdev->cache_ctx);
-	pthread_mutex_init(&vbdev->cache_ctx->lock, NULL);
 
 	rc = ocf_mngt_cache_start(vbdev_ocf_ctx, &vbdev->ocf_cache, &vbdev->cfg.cache, NULL);
 	if (rc) {
