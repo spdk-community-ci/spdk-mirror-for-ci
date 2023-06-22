@@ -107,11 +107,13 @@ SPDK_RPC_REGISTER("bdev_nvme_set_options", rpc_bdev_nvme_set_options,
 
 struct rpc_bdev_nvme_hotplug {
 	bool enabled;
+	bool cuse_auto_register;
 	uint64_t period_us;
 };
 
 static const struct spdk_json_object_decoder rpc_bdev_nvme_hotplug_decoders[] = {
 	{"enable", offsetof(struct rpc_bdev_nvme_hotplug, enabled), spdk_json_decode_bool, false},
+	{"cuse_auto_register", offsetof(struct rpc_bdev_nvme_hotplug, cuse_auto_register), spdk_json_decode_bool, false},
 	{"period_us", offsetof(struct rpc_bdev_nvme_hotplug, period_us), spdk_json_decode_uint64, true},
 };
 
@@ -127,7 +129,7 @@ static void
 rpc_bdev_nvme_set_hotplug(struct spdk_jsonrpc_request *request,
 			  const struct spdk_json_val *params)
 {
-	struct rpc_bdev_nvme_hotplug req = {false, 0};
+	struct rpc_bdev_nvme_hotplug req = {false, false, 0};
 	int rc;
 
 	if (spdk_json_decode_object(params, rpc_bdev_nvme_hotplug_decoders,
@@ -137,7 +139,8 @@ rpc_bdev_nvme_set_hotplug(struct spdk_jsonrpc_request *request,
 		goto invalid;
 	}
 
-	rc = bdev_nvme_set_hotplug(req.enabled, req.period_us, rpc_bdev_nvme_set_hotplug_done,
+	rc = bdev_nvme_set_hotplug(req.enabled, req.cuse_auto_register, req.period_us,
+				   rpc_bdev_nvme_set_hotplug_done,
 				   request);
 	if (rc) {
 		goto invalid;

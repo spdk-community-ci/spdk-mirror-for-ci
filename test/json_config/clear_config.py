@@ -69,7 +69,7 @@ def clear_bdev_subsystem(args, bdev_config):
         args.client.call('bdev_nvme_detach_controller', {'name': ctrlr['name']})
 
     ''' Disable and reset hotplug '''
-    rpc.bdev.bdev_nvme_set_hotplug(args.client, False)
+    rpc.bdev.bdev_nvme_set_hotplug(args.client, False, False)
 
 
 def get_nvmf_destroy_method(nvmf):

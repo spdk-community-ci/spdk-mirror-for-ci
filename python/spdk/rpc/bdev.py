@@ -696,14 +696,16 @@ def bdev_nvme_set_options(client, action_on_timeout=None, timeout_us=None, timeo
     return client.call('bdev_nvme_set_options', params)
 
 
-def bdev_nvme_set_hotplug(client, enable, period_us=None):
+def bdev_nvme_set_hotplug(client, enable, cuse_auto_register, period_us=None):
     """Set options for the bdev nvme. This is startup command.
 
     Args:
        enable: True to enable hotplug, False to disable.
        period_us: how often the hotplug is processed for insert and remove events. Set 0 to reset to default. (optional)
+       cuse_auto_register: True to enable auto registering of cuse, False to disable.
     """
-    params = {'enable': enable}
+    params = {'enable': enable,
+              'cuse_auto_register': cuse_auto_register}
 
     if period_us:
         params['period_us'] = period_us

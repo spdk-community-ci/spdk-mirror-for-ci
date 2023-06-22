@@ -118,6 +118,43 @@ tgt_run_hotplug() {
 	killprocess $spdk_tgt_pid
 }
 
+# SPDK target hotplug
+tgt_run_cuse_hotplug() {
+	local i=0
+	local dev
+
+	$SPDK_BIN_DIR/spdk_tgt &
+	spdk_tgt_pid=$!
+
+	trap 'killprocess ${spdk_tgt_pid}; echo 1 > /sys/bus/pci/rescan; exit 1' SIGINT SIGTERM EXIT
+	waitforlisten $spdk_tgt_pid
+	modprobe cuse
+
+	for dev in "${nvmes[@]}"; do
+		rpc_cmd bdev_nvme_attach_controller -b "Nvme0$i" -t PCIe -a $dev
+		rpc_cmd bdev_nvme_cuse_register -n Nvme0$i
+		waitforbdev "Nvme0${i}n1" "$hotplug_wait"
+		((i = i + 1))
+	done
+
+	rpc_cmd bdev_nvme_set_hotplug -e -c
+	sleep "$hotplug_wait"
+
+	for dev in "${nvmes[@]}"; do
+		echo 1 > "/sys/bus/pci/devices/$dev/remove"
+		sleep "$hotplug_wait"
+		rpc_cmd bdev_nvme_get_controllers | jq ".[] | .ctrlrs[] | select(.trid | .traddr | contains (\"$dev\"))" | NOT grep cuse_device
+		echo 1 > "/sys/bus/pci/rescan"
+		"$rootdir/scripts/setup.sh"
+		sleep "$hotplug_wait"
+		rpc_cmd bdev_nvme_get_controllers | jq ".[] | .ctrlrs[] | select(.trid | .traddr | contains (\"$dev\"))" | grep cuse_device
+	done
+
+	trap - SIGINT SIGTERM EXIT
+	killprocess $spdk_tgt_pid
+	rmmod cuse
+}
+
 # Preparation
 "$rootdir/scripts/setup.sh"
 
@@ -135,3 +172,8 @@ run_hotplug
 
 # Run SPDK target based hotplug
 tgt_run_hotplug
+
+# Run SPDK target based hotplug with cuse-rebuild
+if [[ $SPDK_TEST_NVME_CUSE -eq 1 ]]; then
+	tgt_run_cuse_hotplug
+fi

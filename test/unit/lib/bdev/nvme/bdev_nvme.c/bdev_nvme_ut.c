@@ -155,6 +155,8 @@ DEFINE_STUB(spdk_nvme_ns_get_optimal_io_boundary, uint32_t, (struct spdk_nvme_ns
 DEFINE_STUB(spdk_nvme_cuse_get_ns_name, int, (struct spdk_nvme_ctrlr *ctrlr, uint32_t nsid,
 		char *name, size_t *size), 0);
 
+DEFINE_STUB(spdk_nvme_cuse_register, int, (struct spdk_nvme_ctrlr *ctrlr), 0);
+
 DEFINE_STUB(spdk_nvme_zns_ns_get_zone_size_sectors, uint64_t,
 	    (struct spdk_nvme_ns *ns), 0);
 

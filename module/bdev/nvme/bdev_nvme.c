@@ -137,6 +137,7 @@ static struct spdk_bdev_nvme_opts g_opts = {
 static int g_hot_insert_nvme_controller_index = 0;
 static uint64_t g_nvme_hotplug_poll_period_us = NVME_HOTPLUG_POLL_PERIOD_DEFAULT;
 static bool g_nvme_hotplug_enabled = false;
+static bool g_nvme_hotplug_cuse_auto_register = false;
 struct spdk_thread *g_bdev_nvme_init_thread;
 static struct spdk_poller *g_hotplug_poller;
 static struct spdk_poller *g_hotplug_probe_poller;
@@ -5374,6 +5375,14 @@ attach_cb(void *cb_ctx, const struct spdk_nvme_transport_id *trid,
 
 	if (nvme_ctrlr_create(ctrlr, name, trid, NULL) == 0) {
 		SPDK_DEBUGLOG(bdev_nvme, "Attached to %s (%s)\n", trid->traddr, name);
+#ifdef SPDK_CONFIG_NVME_CUSE
+		if (g_nvme_hotplug_cuse_auto_register) {
+			int rc = spdk_nvme_cuse_register(ctrlr);
+			if (rc) {
+				SPDK_ERRLOG("Failed to create CUSE Device: spdk_nvme_cuse_register failed with (%d)\n", rc);
+			}
+		}
+#endif
 	} else {
 		SPDK_ERRLOG("Failed to attach to %s (%s)\n", trid->traddr, name);
 	}
@@ -5550,6 +5559,7 @@ bdev_nvme_set_opts(const struct spdk_bdev_nvme_opts *opts)
 struct set_nvme_hotplug_ctx {
 	uint64_t period_us;
 	bool enabled;
+	bool cuse_auto_register;
 	spdk_msg_fn fn;
 	void *fn_ctx;
 };
@@ -5566,6 +5576,7 @@ set_nvme_hotplug_period_cb(void *_ctx)
 
 	g_nvme_hotplug_poll_period_us = ctx->period_us;
 	g_nvme_hotplug_enabled = ctx->enabled;
+	g_nvme_hotplug_cuse_auto_register = ctx->cuse_auto_register;
 	if (ctx->fn) {
 		ctx->fn(ctx->fn_ctx);
 	}
@@ -5574,7 +5585,8 @@ set_nvme_hotplug_period_cb(void *_ctx)
 }
 
 int
-bdev_nvme_set_hotplug(bool enabled, uint64_t period_us, spdk_msg_fn cb, void *cb_ctx)
+bdev_nvme_set_hotplug(bool enabled, bool cuse_auto_register, uint64_t period_us, spdk_msg_fn cb,
+		      void *cb_ctx)
 {
 	struct set_nvme_hotplug_ctx *ctx;
 
@@ -5590,6 +5602,7 @@ bdev_nvme_set_hotplug(bool enabled, uint64_t period_us, spdk_msg_fn cb, void *cb
 	period_us = period_us == 0 ? NVME_HOTPLUG_POLL_PERIOD_DEFAULT : period_us;
 	ctx->period_us = spdk_min(period_us, NVME_HOTPLUG_POLL_PERIOD_MAX);
 	ctx->enabled = enabled;
+	ctx->cuse_auto_register = cuse_auto_register;
 	ctx->fn = cb;
 	ctx->fn_ctx = cb_ctx;
 
@@ -7963,6 +7976,7 @@ bdev_nvme_hotplug_config_json(struct spdk_json_write_ctx *w)
 	spdk_json_write_named_object_begin(w, "params");
 	spdk_json_write_named_uint64(w, "period_us", g_nvme_hotplug_poll_period_us);
 	spdk_json_write_named_bool(w, "enable", g_nvme_hotplug_enabled);
+	spdk_json_write_named_bool(w, "cuse_auto_register", g_nvme_hotplug_cuse_auto_register);
 	spdk_json_write_object_end(w);
 
 	spdk_json_write_object_end(w);
