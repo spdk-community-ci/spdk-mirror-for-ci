@@ -993,7 +993,7 @@ accel_mlx5_configure_crypto_req(struct spdk_mempool *mp, void *cb_arg, void *_re
 		.pd = ctx->pd,
 		.max_entries = ACCEL_MLX5_MAX_SGE, /* This MKEY refers to N base MKEYs/buffers */
 		.create_flags = MLX5DV_MKEY_INIT_ATTR_FLAGS_INDIRECT | /* This MKEY refers to another MKEYs */
-		MLX5DV_MKEY_INIT_ATTR_FLAGS_CRYPTO
+				MLX5DV_MKEY_INIT_ATTR_FLAGS_CRYPTO
 	};
 
 	memset(req, 0, sizeof(*req));

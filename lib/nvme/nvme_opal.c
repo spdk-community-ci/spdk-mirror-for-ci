@@ -1823,7 +1823,7 @@ end:
 }
 
 struct spdk_opal_dev *
-	spdk_opal_dev_construct(struct spdk_nvme_ctrlr *ctrlr)
+spdk_opal_dev_construct(struct spdk_nvme_ctrlr *ctrlr)
 {
 	struct spdk_opal_dev *dev;
 	void *payload;

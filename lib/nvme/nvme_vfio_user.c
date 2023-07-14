@@ -142,7 +142,7 @@ nvme_vfio_setup_bar0(struct nvme_vfio_ctrlr *vctrlr)
 }
 
 static struct spdk_nvme_ctrlr *
-	nvme_vfio_ctrlr_construct(const struct spdk_nvme_transport_id *trid,
+nvme_vfio_ctrlr_construct(const struct spdk_nvme_transport_id *trid,
 			  const struct spdk_nvme_ctrlr_opts *opts,
 			  void *devhandle)
 {
