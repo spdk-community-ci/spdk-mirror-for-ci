@@ -25,3 +25,6 @@ lineend=linux # LF line endings
 # General options
 suffix=none
 formatted
+
+# Do not squeeze-lines, since 3.4 there is default set on 1
+squeeze-lines=100
