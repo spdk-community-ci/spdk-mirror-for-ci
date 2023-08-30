@@ -1798,6 +1798,13 @@ class CpuThrottlingError(Exception):
         super().__init__(message)
 
 
+def server_factory(server_type, instance_name, config):
+    modes = {'spdk': 'SPDK', 'kernel': 'Kernel'}
+    mode_name = config[instance_name]['mode']
+    class_name = modes[mode_name] + server_type
+    return globals()[class_name](instance_name, config['general'], config[instance_name])
+
+
 if __name__ == "__main__":
     exit_code = 0
 
@@ -1836,15 +1843,9 @@ if __name__ == "__main__":
     for k, v in data.items():
         if "target" in k:
             v.update({"results_dir": args.results})
-            if data[k]["mode"] == "spdk":
-                target_obj = SPDKTarget(k, data["general"], v)
-            elif data[k]["mode"] == "kernel":
-                target_obj = KernelTarget(k, data["general"], v)
+            target_obj = server_factory('Target', k, data)
         elif "initiator" in k:
-            if data[k]["mode"] == "spdk":
-                init_obj = SPDKInitiator(k, data["general"], v)
-            elif data[k]["mode"] == "kernel":
-                init_obj = KernelInitiator(k, data["general"], v)
+            init_obj = server_factory('Initiator', k, data)
             initiators.append(init_obj)
         elif "fio" in k:
             fio_settings = {
