@@ -89,32 +89,37 @@ struct spdk_accel_task {
 	uint64_t			nbytes;
 	union {
 		struct {
-			struct iovec		*iovs; /* iovs passed by the caller */
-			uint32_t		iovcnt; /* iovcnt passed by the caller */
+			struct iovec	*iovs; /* iovs passed by the caller */
+			uint32_t	iovcnt; /* iovcnt passed by the caller */
 		} s;
 		struct {
-			void			**srcs;
-			uint32_t		cnt;
+			void		**srcs;
+			uint32_t	cnt;
 		} nsrcs;
 	};
 	union {
 		struct {
-			struct iovec		*iovs; /* iovs passed by the caller */
-			uint32_t		iovcnt; /* iovcnt passed by the caller */
+			struct iovec	*iovs; /* iovs passed by the caller */
+			uint32_t	iovcnt; /* iovcnt passed by the caller */
 		} d;
 		struct {
-			struct iovec		*iovs;
-			uint32_t		iovcnt;
+			struct iovec	*iovs;
+			uint32_t	iovcnt;
 		} s2;
 	};
 	union {
 		struct {
-			struct iovec		*iovs;
-			uint32_t		iovcnt;
+			struct iovec	*iovs;
+			uint32_t	iovcnt;
 		} d2;
-		uint32_t			seed;
-		uint64_t			fill_pattern;
-		struct spdk_accel_crypto_key	*crypto_key;
+		uint32_t		seed;
+		uint64_t		fill_pattern;
+		struct spdk_accel_crypto_key *crypto_key;
+		struct {
+			const struct	spdk_dif_ctx *ctx;
+			struct		spdk_dif_error *error;
+			uint32_t	num_blocks;
+		} dif;
 	};
 	union {
 		uint32_t		*crc_dst;

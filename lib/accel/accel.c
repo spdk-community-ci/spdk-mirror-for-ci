@@ -76,7 +76,7 @@ static struct spdk_spinlock g_stats_lock;
 
 static const char *g_opcode_strings[SPDK_ACCEL_OPC_LAST] = {
 	"copy", "fill", "dualcast", "compare", "crc32c", "copy_crc32c",
-	"compress", "decompress", "encrypt", "decrypt", "xor"
+	"compress", "decompress", "encrypt", "decrypt", "xor", "dif_verify", "dif_generate_copy"
 };
 
 enum accel_sequence_state {
@@ -272,7 +272,7 @@ spdk_accel_assign_opc(enum spdk_accel_opcode opcode, const char *name)
 void
 spdk_accel_task_complete(struct spdk_accel_task *accel_task, int status)
 {
-	struct accel_io_channel *accel_ch = accel_task->accel_ch;
+	struct accel_io_channel		*accel_ch = accel_task->accel_ch;
 	spdk_accel_completion_cb	cb_fn = accel_task->cb_fn;
 	void				*cb_arg = accel_task->cb_arg;
 
@@ -287,6 +287,16 @@ spdk_accel_task_complete(struct spdk_accel_task *accel_task, int status)
 	accel_update_task_stats(accel_ch, accel_task, num_bytes, accel_task->nbytes);
 	if (spdk_unlikely(status != 0)) {
 		accel_update_task_stats(accel_ch, accel_task, failed, 1);
+
+		if (accel_task->op_code == SPDK_ACCEL_OPC_DIF_VERIFY &&
+		    spdk_unlikely(status == -EIO)) {
+			spdk_dif_verify(accel_task->s.iovs, accel_task->s.iovcnt, accel_task->dif.num_blocks,
+					accel_task->dif.ctx, accel_task->dif.error);
+			SPDK_NOTICELOG("Data miscompare, "
+				       "err_type %u, expected %lx, actual %lx, err_offset %x\n",
+				       accel_task->dif.error->err_type, accel_task->dif.error->expected,
+				       accel_task->dif.error->actual, accel_task->dif.error->err_offset);
+		}
 	}
 
 	cb_fn(cb_arg, status);
@@ -775,6 +785,63 @@ spdk_accel_submit_xor(struct spdk_io_channel *ch, void *dst, void **sources, uin
 	accel_task->d.iovcnt = 1;
 	accel_task->nbytes = nbytes;
 	accel_task->op_code = SPDK_ACCEL_OPC_XOR;
+	accel_task->src_domain = NULL;
+	accel_task->dst_domain = NULL;
+	accel_task->step_cb_fn = NULL;
+
+	return accel_submit_task(accel_ch, accel_task);
+}
+
+int
+spdk_accel_submit_dif_verify(struct spdk_io_channel *ch,
+			     struct iovec *iovs, size_t iovcnt, uint32_t num_blocks,
+			     const struct spdk_dif_ctx *ctx, struct spdk_dif_error *error,
+			     spdk_accel_completion_cb cb_fn, void *cb_arg)
+{
+	struct accel_io_channel *accel_ch = spdk_io_channel_get_ctx(ch);
+	struct spdk_accel_task *accel_task;
+
+	accel_task = _get_task(accel_ch, cb_fn, cb_arg);
+	if (accel_task == NULL) {
+		return -ENOMEM;
+	}
+
+	accel_task->s.iovs = iovs;
+	accel_task->s.iovcnt = iovcnt;
+	accel_task->dif.ctx = ctx;
+	accel_task->dif.error = error;
+	accel_task->dif.num_blocks = num_blocks;
+	accel_task->nbytes = num_blocks * ctx->block_size;
+	accel_task->op_code = SPDK_ACCEL_OPC_DIF_VERIFY;
+	accel_task->src_domain = NULL;
+	accel_task->dst_domain = NULL;
+	accel_task->step_cb_fn = NULL;
+
+	return accel_submit_task(accel_ch, accel_task);
+}
+
+int
+spdk_accel_submit_dif_generate_copy(struct spdk_io_channel *ch, struct iovec *dst_iovs,
+				    size_t dst_iovcnt, struct iovec *src_iovs, size_t src_iovcnt,
+				    uint32_t num_blocks, const struct spdk_dif_ctx *ctx,
+				    spdk_accel_completion_cb cb_fn, void *cb_arg)
+{
+	struct accel_io_channel *accel_ch = spdk_io_channel_get_ctx(ch);
+	struct spdk_accel_task *accel_task;
+
+	accel_task = _get_task(accel_ch, cb_fn, cb_arg);
+	if (accel_task == NULL) {
+		return -ENOMEM;
+	}
+
+	accel_task->s.iovs = src_iovs;
+	accel_task->s.iovcnt = src_iovcnt;
+	accel_task->d.iovs = dst_iovs;
+	accel_task->d.iovcnt = dst_iovcnt;
+	accel_task->dif.ctx = ctx;
+	accel_task->dif.num_blocks = num_blocks;
+	accel_task->nbytes = num_blocks * ctx->block_size;
+	accel_task->op_code = SPDK_ACCEL_OPC_DIF_GENERATE_COPY;
 	accel_task->src_domain = NULL;
 	accel_task->dst_domain = NULL;
 	accel_task->step_cb_fn = NULL;
