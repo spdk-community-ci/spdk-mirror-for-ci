@@ -22,6 +22,14 @@
 /* The max number of completions processed per poll */
 #define IDXD_MAX_COMPLETIONS      128
 
+#define DATA_BLOCK_SIZE_512 512
+#define DATA_BLOCK_SIZE_520 520
+#define DATA_BLOCK_SIZE_4096 4096
+#define DATA_BLOCK_SIZE_4104 4104
+
+#define METADATA_SIZE_8 8
+#define METADATA_SIZE_16 16
+
 static STAILQ_HEAD(, spdk_idxd_impl) g_idxd_impls = STAILQ_HEAD_INITIALIZER(g_idxd_impls);
 static struct spdk_idxd_impl *g_idxd_impl;
 
@@ -1283,6 +1291,277 @@ spdk_idxd_submit_decompress(struct spdk_idxd_io_channel *chan,
 	return -EINVAL;
 }
 
+static inline int
+idxd_get_dif_flags(const struct spdk_dif_ctx *ctx, uint8_t *flags)
+{
+	if (flags == NULL) {
+		SPDK_ERRLOG("Unsupported block size (%d) and metadata size (%d) values",
+			    ctx->block_size, ctx->md_size);
+		return -EINVAL;
+	}
+
+	switch (ctx->guard_interval) {
+	case DATA_BLOCK_SIZE_512:
+		*flags = IDXD_DIF_FLAG_DIF_BLOCK_SIZE_512;
+		break;
+	case DATA_BLOCK_SIZE_520:
+		*flags = IDXD_DIF_FLAG_DIF_BLOCK_SIZE_520;
+		break;
+	case DATA_BLOCK_SIZE_4096:
+		*flags = IDXD_DIF_FLAG_DIF_BLOCK_SIZE_4096;
+		break;
+	case DATA_BLOCK_SIZE_4104:
+		*flags = IDXD_DIF_FLAG_DIF_BLOCK_SIZE_4104;
+		break;
+	default:
+		SPDK_ERRLOG("Invalid DIF block size %d\n", ctx->block_size - ctx->md_size);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static inline int
+idxd_get_source_dif_flags(const struct spdk_dif_ctx *ctx, uint8_t *flags)
+{
+	if (flags == NULL) {
+		SPDK_ERRLOG("Unsupported block size (%d) and metadata size (%d) values",
+			    ctx->block_size, ctx->md_size);
+		return -EINVAL;
+	}
+
+	*flags = 0;
+
+	if (!(ctx->dif_flags & SPDK_DIF_FLAGS_GUARD_CHECK)) {
+		*flags |= IDXD_DIF_SOURCE_FLAG_GUARD_CHECK_DISABLE;
+	}
+
+	if (!(ctx->dif_flags & SPDK_DIF_FLAGS_REFTAG_CHECK)) {
+		*flags |= IDXD_DIF_SOURCE_FLAG_REF_TAG_CHECK_DISABLE;
+	}
+
+	if (!(ctx->dif_flags & SPDK_DIF_FLAGS_APPTAG_CHECK))  {
+		SPDK_ERRLOG("DIF Application Tag Check flag must be set.\n");
+		return -EINVAL;
+	}
+
+	switch (ctx->dif_type) {
+	case SPDK_DIF_TYPE1:
+	case SPDK_DIF_TYPE2:
+		/* If Type 1 or 2 is used, then all DIF checks are disabled when
+		 * the Application Tag is 0xFFFF.
+		 */
+		*flags |= IDXD_DIF_SOURCE_FLAG_APP_TAG_F_DETECT;
+		break;
+	case SPDK_DIF_TYPE3:
+		/* If Type 3 is used, then all DIF checks are disabled when the
+		 * Application Tag is 0xFFFF and the Reference Tag is 0xFFFFFFFF
+		 * (for PI 8 bytes format).
+		 */
+		*flags |= IDXD_DIF_SOURCE_FLAG_APP_AND_REF_TAG_F_DETECT;
+		break;
+	default:
+		SPDK_ERRLOG("Invalid DIF type %d\n", ctx->dif_type);
+		return -EINVAL;
+	}
+	return 0;
+}
+
+static inline int
+idxd_validate_dif_common_params(const struct spdk_dif_ctx *ctx)
+{
+	/* Check byte offset from the start of the whole data buffer */
+	if (ctx->data_offset != 0) {
+		SPDK_ERRLOG("Byte offset from the start of the whole data buffer must be set to 0.");
+		return -EINVAL;
+	}
+
+	/* Check seed value for guard computation */
+	if (ctx->guard_seed != 0) {
+		SPDK_ERRLOG("Seed value for guard computation must be set to 0.");
+		return -EINVAL;
+	}
+
+	/* Check for supported metadata sizes */
+	if (ctx->md_size != METADATA_SIZE_8 && ctx->md_size != METADATA_SIZE_16)  {
+		SPDK_ERRLOG("Metadata size %d is not supported.\n", ctx->md_size);
+		return -EINVAL;
+	}
+
+	/* Check for supported DIF PI formats */
+	if (ctx->dif_pi_format != SPDK_DIF_PI_FORMAT_16) {
+		SPDK_ERRLOG("DIF PI format %d is not supported.\n", ctx->dif_pi_format);
+		return -EINVAL;
+	}
+
+	/* Check for supported metadata locations */
+	if (ctx->md_interleave == false) {
+		SPDK_ERRLOG("Separated metadata location is not supported.\n");
+		return -EINVAL;
+	}
+
+	/* Check for supported DIF alignments */
+	if (ctx->md_size == METADATA_SIZE_16 &&
+	    (ctx->guard_interval == DATA_BLOCK_SIZE_512 ||
+	     ctx->guard_interval == DATA_BLOCK_SIZE_4096)) {
+		SPDK_ERRLOG("DIF left alignment in metadata is not supported.\n");
+		return -EINVAL;
+	}
+
+	/* Check for supported DIF block sizes */
+	if ((ctx->block_size - ctx->md_size) != DATA_BLOCK_SIZE_512 &&
+	    (ctx->block_size - ctx->md_size) != DATA_BLOCK_SIZE_4096) {
+		SPDK_ERRLOG("DIF block size %d is not supported.\n", ctx->block_size - ctx->md_size);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static inline int
+idxd_validate_dif_check_params(const struct spdk_dif_ctx *ctx)
+{
+	/* Validate common parameters */
+	int rc = idxd_validate_dif_common_params(ctx);
+	if (rc) {
+		return rc;
+	}
+
+	return 0;
+}
+
+static inline int
+idxd_validate_dif_check_buf_align(const struct spdk_dif_ctx *ctx, const uint64_t len)
+{
+	/* DSA can only process contiguous memory buffers, multiple of the block size */
+	if (len % ctx->block_size != 0) {
+		SPDK_ERRLOG("The memory buffer length (%ld) is not a multiple of block size with metadata (%d).\n",
+			    len, ctx->block_size);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+int
+spdk_idxd_submit_dif_check(struct spdk_idxd_io_channel *chan,
+			   struct iovec *siov, size_t siovcnt,
+			   uint32_t num_blocks, const struct spdk_dif_ctx *ctx, int flags,
+			   spdk_idxd_req_cb cb_fn, void *cb_arg)
+{
+	struct idxd_hw_desc *desc;
+	struct idxd_ops *first_op, *op;
+	uint64_t src_addr;
+	int rc, count;
+	uint64_t len, seg_len;
+	void *src;
+	size_t i;
+	uint32_t num_blocks_left;
+	uint8_t dif_flags, src_dif_flags;
+
+	assert(ctx != NULL);
+	assert(chan != NULL);
+	assert(siov != NULL);
+
+	/* Validate DIF check parameters */
+	rc = idxd_validate_dif_check_params(ctx);
+	if (rc) {
+		return rc;
+	}
+
+	/* Set DIF flags */
+	rc = idxd_get_dif_flags(ctx, &dif_flags);
+	if (rc) {
+		return rc;
+	}
+
+	/* Set source DIF flags */
+	rc = idxd_get_source_dif_flags(ctx, &src_dif_flags);
+	if (rc) {
+		return rc;
+	}
+
+	rc = _idxd_setup_batch(chan);
+	if (rc) {
+		return rc;
+	}
+
+	count = 0;
+	op = NULL;
+	first_op = NULL;
+	num_blocks_left = num_blocks;
+	for (i = 0; i < siovcnt; i++) {
+		len = siov[i].iov_len;
+		src = siov[i].iov_base;
+
+		/* Validate the memory buffer alignment */
+		rc = idxd_validate_dif_check_buf_align(ctx, len);
+		if (rc) {
+			goto error;
+		}
+
+		while (len > 0 && num_blocks_left > 0) {
+			if (first_op == NULL) {
+				rc = _idxd_prep_batch_cmd(chan, cb_fn, cb_arg, flags, &desc, &op);
+				if (rc) {
+					goto error;
+				}
+
+				first_op = op;
+			} else {
+				rc = _idxd_prep_batch_cmd(chan, NULL, NULL, flags, &desc, &op);
+				if (rc) {
+					goto error;
+				}
+
+				first_op->count++;
+				op->parent = first_op;
+			}
+
+			count++;
+
+			seg_len = len;
+			if (chan->pasid_enabled) {
+				src_addr = (uint64_t)src;
+			} else {
+				src_addr = spdk_vtophys(src, &seg_len);
+				if (src_addr == SPDK_VTOPHYS_ERROR) {
+					SPDK_ERRLOG("Error translating address\n");
+					rc = -EFAULT;
+					goto error;
+				}
+			}
+
+			seg_len = spdk_min(seg_len, len);
+
+			/* Validate the memory buffer segment alignment */
+			rc = idxd_validate_dif_check_buf_align(ctx, seg_len);
+			if (rc) {
+				goto error;
+			}
+
+			desc->opcode = IDXD_OPCODE_DIF_CHECK;
+			desc->src_addr = src_addr;
+			desc->xfer_size = seg_len;
+			desc->dif_chk.flags = dif_flags;
+			desc->dif_chk.src_flags = src_dif_flags;
+			desc->dif_chk.app_tag_seed = ctx->app_tag;
+			desc->dif_chk.app_tag_mask = ~ctx->apptag_mask;
+			desc->dif_chk.ref_tag_seed = (uint32_t)ctx->init_ref_tag;
+
+			len -= seg_len;
+			src += seg_len;
+			num_blocks_left -= (seg_len / ctx->block_size);
+		}
+	}
+
+	return _idxd_flush_batch(chan);
+
+error:
+	chan->batch->index -= count;
+	return rc;
+}
+
 int
 spdk_idxd_submit_raw_desc(struct spdk_idxd_io_channel *chan,
 			  struct idxd_hw_desc *_desc,
@@ -1323,6 +1602,8 @@ _dump_sw_error_reg(struct spdk_idxd_io_channel *chan)
 	assert(idxd != NULL);
 	idxd->impl->dump_sw_error(idxd, chan->portal);
 }
+
+#define HW_STATUS_DIF_ERROR 0x9
 
 /* TODO: more performance experiments. */
 #define IDXD_COMPLETION(x) ((x) > (0) ? (1) : (0))
@@ -1378,6 +1659,11 @@ spdk_idxd_process_events(struct spdk_idxd_io_channel *chan)
 		case IDXD_OPCODE_COMPRESS:
 			if (spdk_likely(status == 0 && op->output_size != NULL)) {
 				*op->output_size = op->iaa_hw.output_size;
+			}
+			break;
+		case IDXD_OPCODE_DIF_CHECK:
+			if (spdk_likely(op->hw.status == HW_STATUS_DIF_ERROR)) {
+				status = -EIO;
 			}
 			break;
 		}
