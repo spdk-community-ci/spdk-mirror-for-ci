@@ -80,7 +80,7 @@ ftl_mngt_init_md(struct spdk_ftl_dev *dev, struct ftl_mngt_process *mngt)
 		}
 		md_flags = is_buffer_needed(i) ? ftl_md_create_region_flags(dev,
 				region->type) : FTL_MD_CREATE_NO_MEM;
-		layout->md[i] = ftl_md_create(dev, region->current.blocks, region->vss_blksz, region->name,
+		layout->md[i] = ftl_md_create(dev, region->current.blocks, region->name,
 					      md_flags, region);
 		if (NULL == layout->md[i]) {
 			ftl_mngt_fail_step(mngt);
@@ -103,9 +103,6 @@ ftl_mngt_init_md(struct spdk_ftl_dev *dev, struct ftl_mngt_process *mngt)
 			md_mirror->dev = md->dev;
 			md_mirror->data_blocks = md->data_blocks;
 			md_mirror->data = md->data;
-			if (md_mirror->region->vss_blksz == md->region->vss_blksz) {
-				md_mirror->vss_data = md->vss_data;
-			}
 			md_mirror->region = ftl_layout_region_get(dev, region->mirror_type);
 			ftl_bug(md_mirror->region == NULL);
 			md_mirror->is_mirror = true;
@@ -574,8 +571,7 @@ shm_retry:
 	/* Allocate md buf */
 	dev->sb_shm = NULL;
 	dev->sb_shm_md = ftl_md_create(dev, spdk_divide_round_up(sizeof(*dev->sb_shm), FTL_BLOCK_SIZE),
-				       0, "sb_shm",
-				       md_create_flags, NULL);
+				       "sb_shm", md_create_flags, NULL);
 	if (dev->sb_shm_md == NULL) {
 		/* The first attempt may fail when trying to open SHM - try to create new */
 		if ((md_create_flags & FTL_MD_CREATE_SHM_NEW) == 0) {
@@ -598,8 +594,7 @@ shm_retry:
 
 	/* Allocate md buf */
 	layout->md[FTL_LAYOUT_REGION_TYPE_SB] = ftl_md_create(dev, region->current.blocks,
-						region->vss_blksz, region->name,
-						md_create_flags, region);
+						region->name, md_create_flags, region);
 	if (NULL == layout->md[FTL_LAYOUT_REGION_TYPE_SB]) {
 		/* The first attempt may fail when trying to open SHM - try to create new */
 		if ((md_create_flags & FTL_MD_CREATE_SHM_NEW) == 0) {
@@ -621,8 +616,8 @@ shm_retry:
 
 	/* Setup superblock mirror to QLC */
 	region = &layout->region[FTL_LAYOUT_REGION_TYPE_SB_BASE];
-	layout->md[FTL_LAYOUT_REGION_TYPE_SB_BASE] = ftl_md_create(dev, region->current.blocks,
-			region->vss_blksz, NULL, FTL_MD_CREATE_NO_MEM, region);
+	layout->md[FTL_LAYOUT_REGION_TYPE_SB_BASE] = ftl_md_create(dev, region->current.blocks, NULL,
+			FTL_MD_CREATE_NO_MEM, region);
 	if (NULL == layout->md[FTL_LAYOUT_REGION_TYPE_SB_BASE]) {
 		ftl_mngt_fail_step(mngt);
 		return;

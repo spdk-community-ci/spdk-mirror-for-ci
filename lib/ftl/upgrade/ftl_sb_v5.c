@@ -565,7 +565,6 @@ layout_fixup_base(struct spdk_ftl_dev *dev)
 
 		region->bdev_desc = dev->base_bdev_desc;
 		region->ioch = dev->base_ioch;
-		region->vss_blksz = 0;
 	}
 
 	return 0;
@@ -633,7 +632,6 @@ layout_fixup_nvc(struct spdk_ftl_dev *dev)
 
 		region->bdev_desc = dev->nv_cache.bdev_desc;
 		region->ioch = dev->nv_cache.cache_ioch;
-		region->vss_blksz = dev->nv_cache.md_size;
 	}
 
 	return 0;

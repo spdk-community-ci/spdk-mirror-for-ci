@@ -71,7 +71,7 @@ ftl_p2l_wipe_md_region(struct spdk_ftl_dev *dev, struct ftl_mngt_p2l_md_ctx *ctx
 
 	md->owner.cb_ctx = ctx;
 	md->cb = ftl_p2l_wipe_md_region_cb;
-	ftl_md_clear(md, 0, NULL);
+	ftl_md_clear(md, 0);
 }
 
 static void

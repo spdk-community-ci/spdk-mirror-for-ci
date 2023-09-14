@@ -132,7 +132,7 @@ ftl_mngt_recovery_init(struct spdk_ftl_dev *dev, struct ftl_mngt_process *mngt)
 	md_flags = FTL_MD_CREATE_SHM | FTL_MD_CREATE_SHM_NEW;
 
 	/* Initialize snippet of L2P metadata */
-	ctx->l2p_snippet.md = ftl_md_create(dev, md_blocks, 0, "l2p_recovery", md_flags,
+	ctx->l2p_snippet.md = ftl_md_create(dev, md_blocks, "l2p_recovery", md_flags,
 					    &ctx->l2p_snippet.region);
 	if (!ctx->l2p_snippet.md) {
 		ftl_mngt_fail_step(mngt);

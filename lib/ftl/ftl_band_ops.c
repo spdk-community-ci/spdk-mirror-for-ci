@@ -308,7 +308,7 @@ ftl_band_open(struct ftl_band *band, enum ftl_band_type type)
 		ftl_abort();
 	}
 
-	ftl_md_persist_entries(md, band->id, 1, p2l_map->band_dma_md, NULL,
+	ftl_md_persist_entries(md, band->id, 1, p2l_map->band_dma_md,
 			       band_open_cb, band, &band->md_persist_entry_ctx);
 }
 
@@ -348,7 +348,7 @@ band_map_write_cb(struct ftl_basic_rq *brq)
 		p2l_map->band_dma_md->state = FTL_BAND_STATE_CLOSED;
 		p2l_map->band_dma_md->p2l_map_checksum = band_map_crc;
 
-		ftl_md_persist_entries(md, band->id, 1, p2l_map->band_dma_md, NULL,
+		ftl_md_persist_entries(md, band->id, 1, p2l_map->band_dma_md,
 				       band_close_cb, band, &band->md_persist_entry_ctx);
 	} else {
 #ifdef SPDK_FTL_RETRY_ON_ERROR
@@ -410,7 +410,7 @@ ftl_band_free(struct ftl_band *band)
 	p2l_map->band_dma_md->close_seq_id = 0;
 	p2l_map->band_dma_md->p2l_map_checksum = 0;
 
-	ftl_md_persist_entries(md, band->id, 1, p2l_map->band_dma_md, NULL,
+	ftl_md_persist_entries(md, band->id, 1, p2l_map->band_dma_md,
 			       band_free_cb, band, &band->md_persist_entry_ctx);
 
 	/* TODO: The whole band erase code should probably be done here instead */

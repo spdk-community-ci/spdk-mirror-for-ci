@@ -87,7 +87,7 @@ DEFINE_STUB_V(ftl_mngt_persist_bands_p2l, (struct ftl_mngt_process *mngt));
 DEFINE_STUB_V(ftl_band_init_gc_iter, (struct spdk_ftl_dev *dev));
 DEFINE_STUB(ftl_md_create_region_flags, int, (struct spdk_ftl_dev *dev, int region_type), 0);
 DEFINE_STUB(ftl_md_create, struct ftl_md *, (struct spdk_ftl_dev *dev, uint64_t blocks,
-		uint64_t vss_blksz, const char *name, int flags, const struct ftl_layout_region *region), NULL);
+		const char *name, int flags, const struct ftl_layout_region *region), NULL);
 DEFINE_STUB(ftl_md_destroy_region_flags, int, (struct spdk_ftl_dev *dev, int region_type), 0);
 DEFINE_STUB(ftl_md_destroy_shm_flags, int, (struct spdk_ftl_dev *dev), 0);
 DEFINE_STUB_V(ftl_md_destroy, (struct ftl_md *md, int flags));

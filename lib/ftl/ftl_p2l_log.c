@@ -186,8 +186,7 @@ p2l_log_page_io(struct ftl_p2l_log *p2l, struct ftl_p2l_log_page_ctrl *ctrl)
 {
 	ctrl->page.hdr.p2l_ckpt.p2l_checksum = p2l_log_page_crc(&ctrl->page);
 
-	ftl_md_persist_entries(p2l->md, ctrl->page.hdr.p2l_ckpt.idx, 1, &ctrl->page, NULL,
-			       p2l_log_page_io_cb,
+	ftl_md_persist_entries(p2l->md, ctrl->page.hdr.p2l_ckpt.idx, 1, &ctrl->page, p2l_log_page_io_cb,
 			       ctrl, &ctrl->md_ctx);
 }
 
@@ -489,7 +488,7 @@ ftl_p2l_log_read_process(struct ftl_p2l_log *p2l)
 		ftl_bug(p2l->read_ctx.idx > p2l->entry_max);
 
 		p2l->read_ctx.qd++;
-		ftl_md_read_entry(p2l->md, ctrl->entry_idx, &ctrl->page, NULL,
+		ftl_md_read_entry(p2l->md, ctrl->entry_idx, &ctrl->page,
 				  ftl_p2l_log_read_cb, ctrl, &ctrl->md_ctx);
 	}
 

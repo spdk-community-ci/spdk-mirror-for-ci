@@ -590,7 +590,7 @@ ftl_trim_log_persist(struct ftl_io *io, ftl_md_io_entry_cb cb)
 	struct spdk_ftl_dev *dev = io->dev;
 	struct ftl_md *trim_log = dev->layout.md[FTL_LAYOUT_REGION_TYPE_TRIM_LOG];
 
-	ftl_md_persist_entries(trim_log, 0, 1, ftl_md_get_buffer(trim_log), NULL,
+	ftl_md_persist_entries(trim_log, 0, 1, ftl_md_get_buffer(trim_log),
 			       cb, io, &dev->trim_md_io_entry_ctx);
 }
 
@@ -633,7 +633,7 @@ ftl_trim_log_open_cb(int status, void *cb_arg)
 	buffer = (char *)ftl_md_get_buffer(trim_md) + (FTL_BLOCK_SIZE * first);
 
 	/* Persist the trim metadata snippet which corresponds to the trim IO */
-	ftl_md_persist_entries(trim_md, first, entries, buffer, NULL,
+	ftl_md_persist_entries(trim_md, first, entries, buffer,
 			       ftl_trim_md_cb, io, &dev->trim_md_io_entry_ctx);
 }
 

@@ -95,7 +95,7 @@ v2_upgrade_setup_ctx(struct spdk_ftl_dev *dev, struct ftl_layout_upgrade_ctx *lc
 		return -1;
 	}
 
-	ctx->md = ftl_md_create(dev, lctx->reg->current.blocks, 0, ctx->reg.name, FTL_MD_CREATE_HEAP,
+	ctx->md = ftl_md_create(dev, lctx->reg->current.blocks, ctx->reg.name, FTL_MD_CREATE_HEAP,
 				lctx->reg);
 	if (!ctx->md) {
 		return -1;

@@ -17,7 +17,6 @@
 
 struct ftl_p2l_ckpt {
 	TAILQ_ENTRY(ftl_p2l_ckpt)	link;
-	union ftl_md_vss		*vss_md_page;
 	struct ftl_md			*md;
 	struct ftl_layout_region	*layout_region;
 	uint64_t			num_pages;
@@ -45,13 +44,6 @@ ftl_p2l_ckpt_new(struct spdk_ftl_dev *dev, int region_type)
 	ckpt->md = dev->layout.md[region_type];
 	ckpt->pages_per_xfer = dev->layout.p2l.pages_per_xfer;
 	ckpt->num_pages = dev->layout.p2l.ckpt_pages;
-	if (dev->nv_cache.md_size) {
-		ckpt->vss_md_page = ftl_md_vss_buf_alloc(region, region->num_entries);
-		if (!ckpt->vss_md_page) {
-			free(ckpt);
-			return NULL;
-		}
-	}
 
 #if defined(DEBUG)
 	/* The bitmap size must be a multiple of word size (8b) - round up */
@@ -73,7 +65,6 @@ ftl_p2l_ckpt_destroy(struct ftl_p2l_ckpt *ckpt)
 	ftl_bitmap_destroy(ckpt->bmp);
 	free(ckpt->dbg_bmp);
 #endif
-	spdk_dma_free(ckpt->vss_md_page);
 	free(ckpt);
 }
 
@@ -212,7 +203,7 @@ ftl_p2l_ckpt_issue(struct ftl_rq *rq)
 						       FTL_NUM_P2L_ENTRIES_NO_VSS * sizeof(struct ftl_p2l_map_entry), 0);
 	}
 	/* Save the P2L map entry */
-	ftl_md_persist_entries(ckpt->md, p2l_map_page_no, ckpt->pages_per_xfer, map_page, NULL,
+	ftl_md_persist_entries(ckpt->md, p2l_map_page_no, ckpt->pages_per_xfer, map_page,
 			       ftl_p2l_ckpt_issue_end, rq, &rq->md_persist_entry_ctx);
 }
 
@@ -335,8 +326,7 @@ ftl_mngt_persist_band_p2l(struct ftl_mngt_process *mngt, struct ftl_p2l_sync_ctx
 	assert(lbas_synced == dev->xfer_size);
 	/* Save the P2L map entry */
 	ftl_md_persist_entries(ckpt->md, ctx->xfer_start * ckpt->pages_per_xfer, ckpt->pages_per_xfer,
-			       map_page, NULL,
-			       ftl_p2l_ckpt_persist_end, mngt, &band->md_persist_entry_ctx);
+			       map_page, ftl_p2l_ckpt_persist_end, mngt, &band->md_persist_entry_ctx);
 }
 
 void

@@ -52,16 +52,9 @@ struct ftl_md {
 	/* Size of buffer in FTL block size unit */
 	uint64_t data_blocks;
 
-	/* Pointer to VSS metadata data */
-	void *vss_data;
-
-	/* Default DMA buffer for VSS of a single entry. Used by ftl_md_persist_entry(). */
-	void *entry_vss_dma_buf;
-
 	/* Fields for doing IO */
 	struct {
 		void *data;
-		void *md;
 		uint64_t address;
 		uint64_t remaining;
 		uint64_t data_offset;
@@ -109,7 +102,6 @@ struct ftl_md_io_entry_ctx {
 	uint64_t start_entry;
 	uint64_t num_entries;
 	void *buffer;
-	void *vss_buffer;
 	struct spdk_bdev_io_wait_entry bdev_io_wait;
 };
 
@@ -166,7 +158,6 @@ enum ftl_md_create_flags {
  *
  * @param dev The FTL device
  * @param blocks Size of buffer in FTL block size unit
- * @param vss_blksz Size of VSS MD
  * @param name Name of the object being created
  * @param flags Bit flags of ftl_md_create_flags type
  * @param region Region associated with FTL metadata
@@ -176,7 +167,7 @@ enum ftl_md_create_flags {
  * @return FTL metadata
  */
 struct ftl_md *ftl_md_create(struct spdk_ftl_dev *dev, uint64_t blocks,
-			     uint64_t vss_blksz, const char *name, int flags,
+			     const char *name, int flags,
 			     const struct ftl_layout_region *region);
 
 /**
@@ -255,29 +246,6 @@ void *ftl_md_get_buffer(struct ftl_md *md);
 uint64_t ftl_md_get_buffer_size(struct ftl_md *md);
 
 /**
- * @brief Heap allocate and initialize a vss buffer for MD region.
- *
- * The buffer is aligned to FTL_BLOCK_SIZE.
- * The buffer is zeroed.
- * The VSS version is inherited from the MD region.
- *
- * @param region The MD region
- * @param count Number of VSS items to allocate
- *
- * @return VSS buffer
- */
-union ftl_md_vss *ftl_md_vss_buf_alloc(struct ftl_layout_region *region, uint32_t count);
-
-/**
- * @brief Get the VSS metadata data buffer
- *
- * @param md The FTL metadata
- *
- * @return VSS metadata data buffer
- */
-union ftl_md_vss *ftl_md_get_vss_buffer(struct ftl_md *md);
-
-/**
  * Restores metadata from the region which is set
  *
  * @param md Metadata to be restored
@@ -298,14 +266,12 @@ void ftl_md_persist(struct ftl_md *md);
  * @param start_entry Starting index of entry to be persisted
  * @param num_entries Number of entries to be persisted
  * @param buffer DMA buffer for writing the entry to the device
- * @param vss_buffer DMA buffer for writing the entry VSS to the device
  * @param cb Completion called on persist entry end
  * @param cb_arg Context returned on completion
  * @param ctx Operation context structure
  */
 void ftl_md_persist_entries(struct ftl_md *md, uint64_t start_entry, uint64_t num_entries,
-			    void *buffer,
-			    void *vss_buffer, ftl_md_io_entry_cb cb, void *cb_arg,
+			    void *buffer, ftl_md_io_entry_cb cb, void *cb_arg,
 			    struct ftl_md_io_entry_ctx *ctx);
 
 /**
@@ -321,12 +287,11 @@ void ftl_md_persist_entry_retry(struct ftl_md_io_entry_ctx *ctx);
  * @param md Metadata to be read
  * @param start_entry Starting index of entry to be read
  * @param buffer DMA buffer for reading the entry from the device
- * @param vss_buffer DMA buffer for reading the entry VSS from the device
  * @param cb Completion called on read entry end
  * @param cb_arg Context returned on completion
  * @param ctx Operation context structure
  */
-void ftl_md_read_entry(struct ftl_md *md, uint64_t start_entry, void *buffer, void *vss_buffer,
+void ftl_md_read_entry(struct ftl_md *md, uint64_t start_entry, void *buffer,
 		       ftl_md_io_entry_cb cb, void *cb_arg, struct ftl_md_io_entry_ctx *ctx);
 
 /**
@@ -334,11 +299,10 @@ void ftl_md_read_entry(struct ftl_md *md, uint64_t start_entry, void *buffer, vo
  *
  * @param md Metadata to be cleared
  * @param pattern Pattern used to initialize metadata
- * @param vss_pattern Pattern used to initialize metadata VSS
  *
  * @note size of pattern needs to be aligned to FTL device transfer size
  */
-void ftl_md_clear(struct ftl_md *md, int pattern, union ftl_md_vss *vss_pattern);
+void ftl_md_clear(struct ftl_md *md, int pattern);
 
 /**
  * @brief Gets the number of blocks that are transferred in a single IO operation

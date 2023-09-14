@@ -67,7 +67,7 @@ v1_to_v2_upgrade_setup_ctx(struct spdk_ftl_dev *dev, struct ftl_layout_upgrade_c
 				dev->layout.nvc.chunk_count, &ctx->reg_v2)) {
 		return -1;
 	}
-	ctx->md_v2 = ftl_md_create(dev, ctx->reg_v2.current.blocks, 0, ctx->reg_v2.name, FTL_MD_CREATE_HEAP,
+	ctx->md_v2 = ftl_md_create(dev, ctx->reg_v2.current.blocks, ctx->reg_v2.name, FTL_MD_CREATE_HEAP,
 				   &ctx->reg_v2);
 	if (!ctx->md_v2) {
 		return -1;

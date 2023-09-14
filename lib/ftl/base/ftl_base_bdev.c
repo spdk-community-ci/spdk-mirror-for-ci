@@ -25,7 +25,6 @@ md_region_setup(struct spdk_ftl_dev *dev, enum ftl_layout_region_type reg_type,
 
 	region->bdev_desc = dev->base_bdev_desc;
 	region->ioch = dev->base_ioch;
-	region->vss_blksz = 0;
 }
 
 static int

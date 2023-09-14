@@ -30,7 +30,7 @@ init_p2l_map_pool(struct spdk_ftl_dev *dev)
 	size_t p2l_pool_buf_blks = P2L_MEMPOOL_SIZE * p2l_pool_el_blks;
 	void *p2l_pool_buf;
 
-	dev->p2l_pool_md = ftl_md_create(dev, p2l_pool_buf_blks, 0, "p2l_pool",
+	dev->p2l_pool_md = ftl_md_create(dev, p2l_pool_buf_blks, "p2l_pool",
 					 ftl_md_create_shm_flags(dev), NULL);
 	if (!dev->p2l_pool_md) {
 		return -ENOMEM;
@@ -267,10 +267,7 @@ ftl_mngt_init_trim_map(struct spdk_ftl_dev *dev, struct ftl_mngt_process *mngt)
 	uint64_t num_l2p_pages = spdk_divide_round_up(dev->num_lbas, dev->layout.l2p.lbas_in_page);
 	uint64_t map_blocks = ftl_bitmap_bits_to_blocks(num_l2p_pages);
 
-	dev->trim_map_md = ftl_md_create(dev,
-					 map_blocks,
-					 0,
-					 "trim_bitmap",
+	dev->trim_map_md = ftl_md_create(dev, map_blocks, "trim_bitmap",
 					 ftl_md_create_shm_flags(dev), NULL);
 
 	if (!dev->trim_map_md) {
@@ -310,7 +307,7 @@ ftl_mngt_trim_metadata_clear(struct spdk_ftl_dev *dev, struct ftl_mngt_process *
 
 	md->cb = trim_clear_cb;
 	md->owner.cb_ctx = mngt;
-	ftl_md_clear(md, 0, NULL);
+	ftl_md_clear(md, 0);
 }
 
 void
@@ -320,7 +317,7 @@ ftl_mngt_trim_log_clear(struct spdk_ftl_dev *dev, struct ftl_mngt_process *mngt)
 
 	md->cb = trim_clear_cb;
 	md->owner.cb_ctx = mngt;
-	ftl_md_clear(md, 0, NULL);
+	ftl_md_clear(md, 0);
 }
 
 void

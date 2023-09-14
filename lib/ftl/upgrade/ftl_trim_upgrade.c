@@ -53,8 +53,7 @@ v0_to_v1_upgrade_setup_ctx(struct spdk_ftl_dev *dev, struct ftl_layout_upgrade_c
 				&ctx->reg)) {
 		return -1;
 	}
-	ctx->md = ftl_md_create(dev, ctx->reg.current.blocks, 0, ctx->reg.name, FTL_MD_CREATE_HEAP,
-				&ctx->reg);
+	ctx->md = ftl_md_create(dev, ctx->reg.current.blocks, ctx->reg.name, FTL_MD_CREATE_HEAP, &ctx->reg);
 	if (!ctx->md) {
 		return -1;
 	}
@@ -73,7 +72,7 @@ v0_to_v1_upgrade(struct spdk_ftl_dev *dev, struct ftl_layout_upgrade_ctx *lctx)
 	if (v0_to_v1_upgrade_setup_ctx(dev, lctx, lctx->reg->type)) {
 		goto error;
 	}
-	ftl_md_clear(ctx->md, 0, NULL);
+	ftl_md_clear(ctx->md, 0);
 	return 0;
 
 error:

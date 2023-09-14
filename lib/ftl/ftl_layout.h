@@ -117,9 +117,6 @@ struct ftl_layout_region {
 	/* Number of entries */
 	uint64_t num_entries;
 
-	/* VSS MD size or 0:disable VSS MD */
-	uint64_t vss_blksz;
-
 	/* Device of region */
 	struct spdk_bdev_desc *bdev_desc;
 

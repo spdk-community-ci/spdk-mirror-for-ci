@@ -26,9 +26,8 @@ DEFINE_STUB_V(ftl_band_set_p2l, (struct ftl_band *band, uint64_t lba, ftl_addr a
 				 uint64_t seq_id));
 DEFINE_STUB_V(ftl_md_persist, (struct ftl_md *md));
 DEFINE_STUB_V(ftl_md_persist_entries, (struct ftl_md *md, uint64_t start_entry,
-				       uint64_t num_entries, void *buffer,
-				       void *vss_buffer, ftl_md_io_entry_cb cb, void *cb_arg,
-				       struct ftl_md_io_entry_ctx *ctx));
+				       uint64_t num_entries, void *buffer, ftl_md_io_entry_cb cb,
+				       void *cb_arg, struct ftl_md_io_entry_ctx *ctx));
 DEFINE_STUB(ftl_mngt_get_step_ctx, void *, (struct ftl_mngt_process *mngt), NULL);
 DEFINE_STUB_V(ftl_mngt_continue_step, (struct ftl_mngt_process *mngt));
 DEFINE_STUB_V(ftl_mngt_next_step, (struct ftl_mngt_process *mngt));

@@ -390,8 +390,7 @@ _ftl_l2p_cache_init(struct spdk_ftl_dev *dev, size_t addr_size, uint64_t l2p_siz
 	}
 	cache->dev = dev;
 
-	cache->l2_md = ftl_md_create(dev,
-				     spdk_divide_round_up(l2_size, FTL_BLOCK_SIZE), 0,
+	cache->l2_md = ftl_md_create(dev, spdk_divide_round_up(l2_size, FTL_BLOCK_SIZE),
 				     FTL_L2P_CACHE_MD_NAME_L2,
 				     ftl_md_create_shm_flags(dev), NULL);
 
@@ -463,7 +462,7 @@ ftl_l2p_cache_init(struct spdk_ftl_dev *dev)
 
 	cache->l2_ctx_md = ftl_md_create(dev,
 					 spdk_divide_round_up(max_resident_pgs * SPDK_ALIGN_CEIL(sizeof(struct ftl_l2p_page), 64),
-							 FTL_BLOCK_SIZE), 0, FTL_L2P_CACHE_MD_NAME_L2_CTX, ftl_md_create_shm_flags(dev), NULL);
+							 FTL_BLOCK_SIZE), FTL_L2P_CACHE_MD_NAME_L2_CTX, ftl_md_create_shm_flags(dev), NULL);
 
 	if (cache->l2_ctx_md == NULL) {
 		return -1;
@@ -489,9 +488,7 @@ ftl_l2p_cache_init(struct spdk_ftl_dev *dev)
 		ftl_mempool_initialize_ext(cache->l2_ctx_pool);
 	}
 
-	cache->l1_md = ftl_md_create(dev,
-				     max_resident_pgs, 0,
-				     FTL_L2P_CACHE_MD_NAME_L1,
+	cache->l1_md = ftl_md_create(dev, max_resident_pgs, FTL_L2P_CACHE_MD_NAME_L1,
 				     ftl_md_create_shm_flags(dev), NULL);
 
 	if (cache->l1_md == NULL) {
@@ -587,7 +584,7 @@ process_page_in(struct ftl_l2p_page *page, spdk_bdev_io_completion_cb cb)
 
 	rc = ftl_nv_cache_bdev_read_blocks_with_md(cache->dev, ftl_l2p_cache_get_bdev_desc(cache),
 			ftl_l2p_cache_get_bdev_iochannel(cache),
-			page->page_buffer, NULL, ftl_l2p_cache_page_get_bdev_offset(cache, page),
+			page->page_buffer, ftl_l2p_cache_page_get_bdev_offset(cache, page),
 			1, cb, page);
 
 	if (rc) {
@@ -637,7 +634,7 @@ process_page_out(struct ftl_l2p_page *page, spdk_bdev_io_completion_cb cb)
 
 	rc = ftl_nv_cache_bdev_write_blocks_with_md(dev, ftl_l2p_cache_get_bdev_desc(cache),
 			ftl_l2p_cache_get_bdev_iochannel(cache),
-			page->page_buffer, NULL, ftl_l2p_cache_page_get_bdev_offset(cache, page),
+			page->page_buffer, ftl_l2p_cache_page_get_bdev_offset(cache, page),
 			1, cb, page);
 
 	if (spdk_likely(0 == rc)) {
@@ -781,11 +778,11 @@ ftl_l2p_cache_clear(struct spdk_ftl_dev *dev, ftl_l2p_cb cb, void *cb_ctx)
 	struct ftl_md *md = dev->layout.md[FTL_LAYOUT_REGION_TYPE_L2P];
 	ftl_addr invalid_addr = FTL_ADDR_INVALID;
 
-	md->cb =  clear_cb;
+	md->cb = clear_cb;
 	md->owner.cb_ctx = cb_ctx;
 	md->owner.private = cb;
 
-	ftl_md_clear(md, invalid_addr, NULL);
+	ftl_md_clear(md, invalid_addr);
 }
 
 static void
@@ -1255,7 +1252,7 @@ page_in_io(struct spdk_ftl_dev *dev, struct ftl_l2p_cache *cache, struct ftl_l2p
 
 	rc = ftl_nv_cache_bdev_read_blocks_with_md(cache->dev, ftl_l2p_cache_get_bdev_desc(cache),
 			ftl_l2p_cache_get_bdev_iochannel(cache),
-			page->page_buffer, NULL, ftl_l2p_cache_page_get_bdev_offset(cache, page),
+			page->page_buffer, ftl_l2p_cache_page_get_bdev_offset(cache, page),
 			1, page_in_io_cb, page);
 	cache->ios_in_flight++;
 	if (spdk_likely(0 == rc)) {
@@ -1440,7 +1437,7 @@ page_out_io(struct spdk_ftl_dev *dev, struct ftl_l2p_cache *cache,
 
 	rc = ftl_nv_cache_bdev_write_blocks_with_md(dev, ftl_l2p_cache_get_bdev_desc(cache),
 			ftl_l2p_cache_get_bdev_iochannel(cache),
-			page->page_buffer, NULL, ftl_l2p_cache_page_get_bdev_offset(cache, page),
+			page->page_buffer, ftl_l2p_cache_page_get_bdev_offset(cache, page),
 			1, page_out_io_cb, page);
 
 	cache->l2_pgs_evicting++;
