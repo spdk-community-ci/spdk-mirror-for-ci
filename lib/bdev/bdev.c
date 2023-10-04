@@ -2988,7 +2988,7 @@ bdev_io_split_submit(struct spdk_bdev_io *bdev_io, struct iovec *iov, int iovcnt
 	current_offset = *offset;
 	current_remaining = *remaining;
 
-	bdev_io->u.bdev.split_outstanding++;
+	bdev_io->internal.split_outstanding++;
 
 	io_wait_fn = _bdev_rw_split;
 	switch (bdev_io->type) {
@@ -3044,20 +3044,20 @@ bdev_io_split_submit(struct spdk_bdev_io *bdev_io, struct iovec *iov, int iovcnt
 	if (rc == 0) {
 		current_offset += num_blocks;
 		current_remaining -= num_blocks;
-		bdev_io->u.bdev.split_current_offset_blocks = current_offset;
-		bdev_io->u.bdev.split_remaining_num_blocks = current_remaining;
+		bdev_io->internal.split_current_offset_blocks = current_offset;
+		bdev_io->internal.split_remaining_num_blocks = current_remaining;
 		*offset = current_offset;
 		*remaining = current_remaining;
 	} else {
-		bdev_io->u.bdev.split_outstanding--;
+		bdev_io->internal.split_outstanding--;
 		if (rc == -ENOMEM) {
-			if (bdev_io->u.bdev.split_outstanding == 0) {
+			if (bdev_io->internal.split_outstanding == 0) {
 				/* No I/O is outstanding. Hence we should wait here. */
 				bdev_queue_io_wait_with_cb(bdev_io, io_wait_fn);
 			}
 		} else {
 			bdev_io->internal.status = SPDK_BDEV_IO_STATUS_FAILED;
-			if (bdev_io->u.bdev.split_outstanding == 0) {
+			if (bdev_io->internal.split_outstanding == 0) {
 				spdk_trace_record(TRACE_BDEV_IO_DONE, 0, 0, (uintptr_t)bdev_io, bdev_io->internal.caller_ctx);
 				TAILQ_REMOVE(&bdev_io->internal.ch->io_submitted, bdev_io, internal.ch_link);
 				bdev_io->internal.cb(bdev_io, false, bdev_io->internal.caller_ctx);
@@ -3099,8 +3099,8 @@ _bdev_rw_split(void *_bdev_io)
 		io_boundary = UINT32_MAX;
 	}
 
-	remaining = bdev_io->u.bdev.split_remaining_num_blocks;
-	current_offset = bdev_io->u.bdev.split_current_offset_blocks;
+	remaining = bdev_io->internal.split_remaining_num_blocks;
+	current_offset = bdev_io->internal.split_current_offset_blocks;
 	parent_offset = bdev_io->u.bdev.offset_blocks;
 	parent_iov_offset = (current_offset - parent_offset) * blocklen;
 	parent_iovcnt = bdev_io->u.bdev.iovcnt;
@@ -3181,7 +3181,7 @@ _bdev_rw_split(void *_bdev_io)
 							 * If the first child IO of any split round is less than
 							 * a block size, an error exit.
 							 */
-							if (bdev_io->u.bdev.split_outstanding == 0) {
+							if (bdev_io->internal.split_outstanding == 0) {
 								SPDK_ERRLOG("The first child io was less than a block size\n");
 								bdev_io->internal.status = SPDK_BDEV_IO_STATUS_FAILED;
 								spdk_trace_record(TRACE_BDEV_IO_DONE, 0, 0, (uintptr_t)bdev_io, bdev_io->internal.caller_ctx);
@@ -3222,8 +3222,8 @@ bdev_unmap_split(struct spdk_bdev_io *bdev_io)
 	uint32_t num_children_reqs = 0;
 	int rc;
 
-	offset = bdev_io->u.bdev.split_current_offset_blocks;
-	remaining = bdev_io->u.bdev.split_remaining_num_blocks;
+	offset = bdev_io->internal.split_current_offset_blocks;
+	remaining = bdev_io->internal.split_remaining_num_blocks;
 	max_unmap_blocks = bdev_io->bdev->max_unmap * bdev_io->bdev->max_unmap_segments;
 
 	while (remaining && (num_children_reqs < SPDK_BDEV_MAX_CHILDREN_UNMAP_WRITE_ZEROES_REQS)) {
@@ -3246,8 +3246,8 @@ bdev_write_zeroes_split(struct spdk_bdev_io *bdev_io)
 	uint32_t num_children_reqs = 0;
 	int rc;
 
-	offset = bdev_io->u.bdev.split_current_offset_blocks;
-	remaining = bdev_io->u.bdev.split_remaining_num_blocks;
+	offset = bdev_io->internal.split_current_offset_blocks;
+	remaining = bdev_io->internal.split_remaining_num_blocks;
 
 	while (remaining && (num_children_reqs < SPDK_BDEV_MAX_CHILDREN_UNMAP_WRITE_ZEROES_REQS)) {
 		write_zeroes_blocks = spdk_min(remaining, bdev_io->bdev->max_write_zeroes);
@@ -3269,8 +3269,8 @@ bdev_copy_split(struct spdk_bdev_io *bdev_io)
 	uint32_t num_children_reqs = 0;
 	int rc;
 
-	offset = bdev_io->u.bdev.split_current_offset_blocks;
-	remaining = bdev_io->u.bdev.split_remaining_num_blocks;
+	offset = bdev_io->internal.split_current_offset_blocks;
+	remaining = bdev_io->internal.split_remaining_num_blocks;
 
 	assert(bdev_io->bdev->max_copy != 0);
 	while (remaining && (num_children_reqs < SPDK_BDEV_MAX_CHILDREN_COPY_REQS)) {
@@ -3326,18 +3326,18 @@ bdev_io_split_done(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
 	if (!success) {
 		parent_io->internal.status = SPDK_BDEV_IO_STATUS_FAILED;
 		/* If any child I/O failed, stop further splitting process. */
-		parent_io->u.bdev.split_current_offset_blocks += parent_io->u.bdev.split_remaining_num_blocks;
-		parent_io->u.bdev.split_remaining_num_blocks = 0;
+		parent_io->internal.split_current_offset_blocks += parent_io->internal.split_remaining_num_blocks;
+		parent_io->internal.split_remaining_num_blocks = 0;
 	}
-	parent_io->u.bdev.split_outstanding--;
-	if (parent_io->u.bdev.split_outstanding != 0) {
+	parent_io->internal.split_outstanding--;
+	if (parent_io->internal.split_outstanding != 0) {
 		return;
 	}
 
 	/*
 	 * Parent I/O finishes when all blocks are consumed.
 	 */
-	if (parent_io->u.bdev.split_remaining_num_blocks == 0) {
+	if (parent_io->internal.split_remaining_num_blocks == 0) {
 		assert(parent_io->internal.cb != bdev_io_split_done);
 		spdk_trace_record(TRACE_BDEV_IO_DONE, 0, 0, (uintptr_t)parent_io, bdev_io->internal.caller_ctx);
 		TAILQ_REMOVE(&parent_io->internal.ch->io_submitted, parent_io, internal.ch_link);
@@ -3390,9 +3390,9 @@ bdev_io_split(struct spdk_bdev_io *bdev_io)
 {
 	assert(bdev_io_should_split(bdev_io));
 
-	bdev_io->u.bdev.split_current_offset_blocks = bdev_io->u.bdev.offset_blocks;
-	bdev_io->u.bdev.split_remaining_num_blocks = bdev_io->u.bdev.num_blocks;
-	bdev_io->u.bdev.split_outstanding = 0;
+	bdev_io->internal.split_current_offset_blocks = bdev_io->u.bdev.offset_blocks;
+	bdev_io->internal.split_remaining_num_blocks = bdev_io->u.bdev.num_blocks;
+	bdev_io->internal.split_outstanding = 0;
 	bdev_io->internal.status = SPDK_BDEV_IO_STATUS_SUCCESS;
 
 	switch (bdev_io->type) {
@@ -6821,8 +6821,8 @@ bdev_abort_io_done(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
 		}
 	}
 
-	parent_io->u.bdev.split_outstanding--;
-	if (parent_io->u.bdev.split_outstanding == 0) {
+	parent_io->internal.split_outstanding--;
+	if (parent_io->internal.split_outstanding == 0) {
 		if (parent_io->internal.status == SPDK_BDEV_IO_STATUS_NOMEM) {
 			bdev_abort_retry(parent_io);
 		} else {
@@ -6970,7 +6970,7 @@ bdev_abort_retry(void *ctx)
 	}
 
 	/* Use split_outstanding to manage the progress of aborting I/Os. */
-	parent_io->u.bdev.split_outstanding = matched_ios;
+	parent_io->internal.split_outstanding = matched_ios;
 }
 
 static void
@@ -6992,7 +6992,7 @@ bdev_abort(struct spdk_bdev_io *parent_io)
 	}
 
 	/* Use split_outstanding to manage the progress of aborting I/Os. */
-	parent_io->u.bdev.split_outstanding = matched_ios;
+	parent_io->internal.split_outstanding = matched_ios;
 }
 
 int
