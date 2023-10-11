@@ -21,6 +21,7 @@ run_test "accel_compare" $SPDK_EXAMPLE_DIR/accel_perf -t 1 -w compare -y
 run_test "accel_xor" $SPDK_EXAMPLE_DIR/accel_perf -t 1 -w xor -y
 run_test "accel_xor" $SPDK_EXAMPLE_DIR/accel_perf -t 1 -w xor -y -x 3
 run_test "accel_dif_check" $SPDK_EXAMPLE_DIR/accel_perf -t 1 -w dif_verify
+run_test "accel_dif_generate_copy" $SPDK_EXAMPLE_DIR/accel_perf -t 1 -w dif_generate_copy
 # do not run compress/decompress unless ISAL is installed
 if [[ $CONFIG_ISAL == y ]]; then
 	run_test "accel_comp" $SPDK_EXAMPLE_DIR/accel_perf -t 1 -w compress -l $testdir/bib
