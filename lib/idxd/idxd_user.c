@@ -208,7 +208,7 @@ idxd_wq_config(struct spdk_user_idxd_device *user_idxd)
 	/* Spread the channels we allow per device based on the total number of WQE to try
 	 * and achieve optimal performance for common cases.
 	 */
-	idxd->chan_per_device = (idxd->total_wq_size >= 128) ? 8 : 4;
+	idxd->chan_per_device = (idxd->total_wq_size >= 128) ? 32 : 16;
 
 	table_offsets.raw[0] = spdk_mmio_read_8(&user_idxd->registers->offsets.raw[0]);
 	table_offsets.raw[1] = spdk_mmio_read_8(&user_idxd->registers->offsets.raw[1]);
