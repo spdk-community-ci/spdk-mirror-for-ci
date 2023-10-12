@@ -262,6 +262,11 @@ nvmf_transport_create(const char *transport_name, struct spdk_nvmf_transport_opt
 		ctx->opts.max_aq_depth = SPDK_NVMF_MIN_ADMIN_MAX_SQ_SIZE;
 	}
 
+	if (ctx->opts.io_unit_size == 0) {
+		SPDK_ERRLOG("io_unit_size cannot be equal to 0\n");
+		goto err;
+	}
+
 	spdk_iobuf_get_opts(&opts_iobuf);
 	if (ctx->opts.io_unit_size > opts_iobuf.large_bufsize) {
 		SPDK_ERRLOG("io_unit_size %u is larger than iobuf pool large buffer size %d\n",
