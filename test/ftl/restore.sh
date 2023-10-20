@@ -41,7 +41,7 @@ svcpid=$!
 waitforlisten $svcpid
 
 split_bdev=$(create_base_bdev nvme0 $device $((1024 * 101)))
-if [ -n "$nv_cache" ]; then
+if [[ -n "$nv_cache" ]]; then
 	nvc_bdev=$(create_nv_cache_bdev nvc0 $nv_cache $split_bdev)
 fi
 
@@ -51,7 +51,7 @@ ftl_construct_args="bdev_ftl_create -b ftl0 -d $split_bdev --l2p_dram_limit $l2p
 [ -n "$uuid" ] && ftl_construct_args+=" -u $uuid"
 [ -n "$nv_cache" ] && ftl_construct_args+=" -c $nvc_bdev"
 
-if [ "$fast_shutdown" -eq "1" ]; then
+if [[ "$fast_shutdown" -eq "1" ]]; then
 	ftl_construct_args+=" --fast-shutdown"
 fi
 

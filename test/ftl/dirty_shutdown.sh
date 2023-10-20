@@ -48,7 +48,7 @@ waitforlisten $svcpid
 
 split_bdev=$(create_base_bdev nvme0 $device $((1024 * 101)))
 
-if [ -n "$nv_cache" ]; then
+if [[ -n "$nv_cache" ]]; then
 	nvc_bdev=$(create_nv_cache_bdev nvc0 $nv_cache $split_bdev)
 fi
 
