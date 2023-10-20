@@ -2437,7 +2437,7 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     def bdev_ftl_get_stats(args):
         print_dict(rpc.bdev.bdev_ftl_get_stats(args.client, name=args.name))
 
-    p = subparsers.add_parser('bdev_ftl_get_stats', help='print ftl stats')
+    p = subparsers.add_parser('bdev_ftl_get_stats', help='Print FTL stats')
     p.add_argument('-b', '--name', help="Name of the bdev", required=True)
     p.set_defaults(func=bdev_ftl_get_stats)
 

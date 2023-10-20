@@ -1495,7 +1495,8 @@ def bdev_ftl_unmap(client, name, lba, num_blocks):
 
 
 def bdev_ftl_get_stats(client, name):
-    """get FTL stats
+    """Get FTL stats
+
     Args:
         name: name of the bdev
     """
