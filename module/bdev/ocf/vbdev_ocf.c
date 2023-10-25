@@ -119,10 +119,10 @@ is_ocf_cache_running(struct vbdev_ocf *vbdev)
 }
 
 static bool
-is_ocf_cache_initializing(struct vbdev_ocf *vbdev)
+is_ocf_cache_detached(struct vbdev_ocf *vbdev)
 {
 	if (vbdev->cache.attached && vbdev->ocf_cache) {
-		return ocf_cache_is_initializing(vbdev->ocf_cache);
+		return ocf_cache_is_detached(vbdev->ocf_cache);
 	}
 	return false;
 }
@@ -141,7 +141,7 @@ get_other_cache_instance(struct vbdev_ocf *vbdev)
 		if (strcmp(cmp->cache.name, vbdev->cache.name)) {
 			continue;
 		}
-		if (is_ocf_cache_running(cmp) || is_ocf_cache_initializing(cmp)) {
+		if (is_ocf_cache_running(cmp) || is_ocf_cache_detached(cmp)) {
 			return cmp->ocf_cache;
 		}
 	}
@@ -1009,6 +1009,7 @@ static void
 start_cache_cmpl(ocf_cache_t cache, void *priv, int error)
 {
 	struct vbdev_ocf *vbdev = priv;
+	uint64_t volume_size;
 	uint64_t mem_needed;
 
 	ocf_mngt_cache_unlock(cache);
@@ -1018,14 +1019,14 @@ start_cache_cmpl(ocf_cache_t cache, void *priv, int error)
 			    error, vbdev->name);
 
 		if (error == -OCF_ERR_NO_MEM) {
-			ocf_mngt_get_ram_needed(cache, &vbdev->cfg.attach.device, &mem_needed);
+			volume_size = vbdev->cache.bdev->blockcnt * vbdev->cache.bdev->blocklen;
+			mem_needed = ocf_mngt_get_ram_needed(cache, volume_size);
 
 			SPDK_NOTICELOG("Try to increase hugepage memory size or cache line size. "
 				       "For your configuration:\nDevice size: %"PRIu64" bytes\n"
 				       "Cache line size: %"PRIu64" bytes\nFree memory needed to start "
-				       "cache: %"PRIu64" bytes\n", vbdev->cache.bdev->blockcnt *
-				       vbdev->cache.bdev->blocklen, vbdev->cfg.cache.cache_line_size,
-				       mem_needed);
+				       "cache: %"PRIu64" bytes\n",
+				       volume_size, vbdev->cfg.cache.cache_line_size, mem_needed);
 		}
 
 		vbdev_ocf_mngt_exit(vbdev, unregister_path_dirty, error);
