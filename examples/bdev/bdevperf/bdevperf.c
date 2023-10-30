@@ -59,7 +59,6 @@ static int g_run_rc = 0;
 static bool g_shutdown = false;
 static uint64_t g_start_tsc;
 static uint64_t g_shutdown_tsc;
-static bool g_zcopy = false;
 static struct spdk_thread *g_main_thread;
 static int g_time_in_sec = 0;
 static bool g_mix_specified = false;
@@ -461,25 +460,6 @@ generate_data(struct bdevperf_job *job, void *buf, void *md_buf, bool unique)
 		md_buf += md_offset;
 		offset_blocks++;
 	}
-}
-
-static bool
-copy_data(void *wr_buf, int wr_buf_len, void *rd_buf, int rd_buf_len, int block_size,
-	  void *wr_md_buf, void *rd_md_buf, int md_size, int num_blocks)
-{
-	if (wr_buf_len < num_blocks * block_size || rd_buf_len < num_blocks * block_size) {
-		return false;
-	}
-
-	assert((wr_md_buf != NULL) == (rd_md_buf != NULL));
-
-	memcpy(wr_buf, rd_buf, block_size * num_blocks);
-
-	if (wr_md_buf != NULL) {
-		memcpy(wr_md_buf, rd_md_buf, md_size * num_blocks);
-	}
-
-	return true;
 }
 
 static bool
@@ -1001,17 +981,6 @@ bdevperf_verify_write_complete(struct spdk_bdev_io *bdev_io, bool success,
 	}
 }
 
-static void
-bdevperf_zcopy_populate_complete(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
-{
-	if (!success) {
-		bdevperf_complete(bdev_io, success, cb_arg);
-		return;
-	}
-
-	spdk_bdev_zcopy_end(bdev_io, false, bdevperf_complete, cb_arg);
-}
-
 static int
 bdevperf_generate_dif(struct bdevperf_task *task)
 {
@@ -1076,16 +1045,11 @@ bdevperf_submit_task(void *arg)
 		if (rc == 0) {
 			cb_fn = (job->verify || job->reset) ? bdevperf_verify_write_complete : bdevperf_complete;
 
-			if (g_zcopy) {
-				spdk_bdev_zcopy_end(task->bdev_io, true, cb_fn, task);
-				return;
-			} else {
-				rc = spdk_bdev_writev_blocks_with_md(desc, ch, &task->iov, 1,
-								     task->md_buf,
-								     task->offset_blocks,
-								     job->io_size_blocks,
-								     cb_fn, task);
-			}
+			rc = spdk_bdev_writev_blocks_with_md(desc, ch, &task->iov, 1,
+							     task->md_buf,
+							     task->offset_blocks,
+							     job->io_size_blocks,
+							     cb_fn, task);
 		}
 		break;
 	case SPDK_BDEV_IO_TYPE_FLUSH:
@@ -1101,16 +1065,11 @@ bdevperf_submit_task(void *arg)
 						   job->io_size_blocks, bdevperf_complete, task);
 		break;
 	case SPDK_BDEV_IO_TYPE_READ:
-		if (g_zcopy) {
-			rc = spdk_bdev_zcopy_start(desc, ch, NULL, 0, task->offset_blocks, job->io_size_blocks,
-						   true, bdevperf_zcopy_populate_complete, task);
-		} else {
-			rc = spdk_bdev_readv_blocks_with_md(desc, ch, &task->iov, 1,
-							    task->md_buf,
-							    task->offset_blocks,
-							    job->io_size_blocks,
-							    bdevperf_complete, task);
-		}
+		rc = spdk_bdev_readv_blocks_with_md(desc, ch, &task->iov, 1,
+						    task->md_buf,
+						    task->offset_blocks,
+						    job->io_size_blocks,
+						    bdevperf_complete, task);
 		break;
 	case SPDK_BDEV_IO_TYPE_ABORT:
 		rc = spdk_bdev_abort(desc, ch, task->task_to_abort, bdevperf_abort_complete, task);
@@ -1135,62 +1094,6 @@ bdevperf_submit_task(void *arg)
 		}
 		bdevperf_job_drain(job);
 		g_run_rc = rc;
-		return;
-	}
-
-	job->current_queue_depth++;
-}
-
-static void
-bdevperf_zcopy_get_buf_complete(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
-{
-	struct bdevperf_task	*task = cb_arg;
-	struct bdevperf_job	*job = task->job;
-	struct iovec		*iovs;
-	int			iovcnt;
-
-	if (!success) {
-		bdevperf_job_drain(job);
-		g_run_rc = -1;
-		return;
-	}
-
-	task->bdev_io = bdev_io;
-	task->io_type = SPDK_BDEV_IO_TYPE_WRITE;
-
-	if (job->verify || job->reset) {
-		/* When job->verify or job->reset is enabled, task->buf is used for
-		 *  verification of read after write.  For write I/O, when zcopy APIs
-		 *  are used, task->buf cannot be used, and data must be written to
-		 *  the data buffer allocated underneath bdev layer instead.
-		 *  Hence we copy task->buf to the allocated data buffer here.
-		 */
-		spdk_bdev_io_get_iovec(bdev_io, &iovs, &iovcnt);
-		assert(iovcnt == 1);
-		assert(iovs != NULL);
-
-		copy_data(iovs[0].iov_base, iovs[0].iov_len, task->buf, job->buf_size,
-			  spdk_bdev_get_block_size(job->bdev),
-			  spdk_bdev_io_get_md_buf(bdev_io), task->md_buf,
-			  spdk_bdev_get_md_size(job->bdev), job->io_size_blocks);
-	}
-
-	bdevperf_submit_task(task);
-}
-
-static void
-bdevperf_prep_zcopy_write_task(void *arg)
-{
-	struct bdevperf_task	*task = arg;
-	struct bdevperf_job	*job = task->job;
-	int			rc;
-
-	rc = spdk_bdev_zcopy_start(job->bdev_desc, job->ch, NULL, 0,
-				   task->offset_blocks, job->io_size_blocks,
-				   false, bdevperf_zcopy_get_buf_complete, task);
-	if (rc != 0) {
-		assert(rc == -ENOMEM);
-		bdevperf_queue_io_wait_with_cb(task, bdevperf_prep_zcopy_write_task);
 		return;
 	}
 
@@ -1292,17 +1195,11 @@ bdevperf_submit_single(struct bdevperf_job *job, struct bdevperf_task *task)
 		   (job->rw_percentage != 0 && ((rand_r(&job->seed) % 100) < job->rw_percentage))) {
 		assert(!job->verify);
 		task->io_type = SPDK_BDEV_IO_TYPE_READ;
-		if (!g_zcopy) {
-			task->iov.iov_base = task->buf;
-			task->iov.iov_len = job->buf_size;
-		}
+		task->iov.iov_base = task->buf;
+		task->iov.iov_len = job->buf_size;
 	} else {
 		if (job->verify || job->reset || g_unique_writes) {
 			generate_data(job, task->buf, task->md_buf, g_unique_writes);
-		}
-		if (g_zcopy) {
-			bdevperf_prep_zcopy_write_task(task);
-			return;
 		} else {
 			task->iov.iov_base = task->buf;
 			task->iov.iov_len = job->buf_size;
@@ -1662,14 +1559,6 @@ _bdevperf_construct_job(void *ctx)
 		SPDK_ERRLOG("Could not open leaf bdev %s, error=%d\n", spdk_bdev_get_name(job->bdev), rc);
 		g_run_rc = -EINVAL;
 		goto end;
-	}
-
-	if (g_zcopy) {
-		if (!spdk_bdev_io_type_supported(job->bdev, SPDK_BDEV_IO_TYPE_ZCOPY)) {
-			printf("Test requires ZCOPY but bdev module does not support ZCOPY\n");
-			g_run_rc = -ENOTSUP;
-			goto end;
-		}
 	}
 
 	job->ch = spdk_bdev_get_io_channel(job->bdev_desc);
@@ -2639,8 +2528,6 @@ bdevperf_parse_arg(int ch, char *arg)
 		g_job_bdev_name = arg;
 	} else if (ch == 'z') {
 		g_wait_for_tests = true;
-	} else if (ch == 'Z') {
-		g_zcopy = true;
 	} else if (ch == 'X') {
 		g_abort = true;
 	} else if (ch == 'C') {
@@ -2731,10 +2618,8 @@ bdevperf_usage(void)
 	printf(" -T <bdev>                 bdev to run against. Default: all available bdevs.\n");
 	printf(" -f                        continue processing I/O even after failures\n");
 	printf(" -F <zipf theta>           use zipf distribution for random I/O\n");
-	printf(" -Z                        enable using zcopy bdev API for read or write I/O\n");
 	printf(" -z                        start bdevperf, but wait for perform_tests RPC to start tests\n");
 	printf("                           (See examples/bdev/bdevperf/bdevperf.py)\n");
-	printf(" -X                        abort timed out I/O\n");
 	printf(" -C                        enable every core to send I/Os to each bdev\n");
 	printf(" -j <filename>             use job config file\n");
 	printf(" -l                        display latency histogram, default: disable. -l display summary, -ll display details\n");
@@ -2788,13 +2673,6 @@ verify_test_params(void)
 	if (g_show_performance_ema_period > 0 && g_summarize_performance) {
 		fprintf(stderr, "-P option must be specified with -S option\n");
 		return 1;
-	}
-
-	if (g_io_size > SPDK_BDEV_LARGE_BUF_MAX_SIZE) {
-		printf("I/O size of %d is greater than zero copy threshold (%d).\n",
-		       g_io_size, SPDK_BDEV_LARGE_BUF_MAX_SIZE);
-		printf("Zero copy mechanism will not be used.\n");
-		g_zcopy = false;
 	}
 
 	if (g_bdevperf_conf_file) {
