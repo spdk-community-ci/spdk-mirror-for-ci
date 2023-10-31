@@ -269,6 +269,8 @@ parse_args(int argc, char *argv)
 			g_workload_selection = SPDK_ACCEL_OPC_DIF_VERIFY;
 		} else if (!strcmp(g_workload_type, "dif_generate_copy")) {
 			g_workload_selection = SPDK_ACCEL_OPC_DIF_GENERATE_COPY;
+		} else if (!strcmp(g_workload_type, "dif_strip")) {
+			g_workload_selection = SPDK_ACCEL_OPC_DIF_STRIP;
 		} else {
 			usage();
 			return 1;
@@ -406,6 +408,67 @@ _get_task_data_bufs(struct ap_task *task)
 		}
 	}
 
+	if (g_workload_selection == SPDK_ACCEL_OPC_DIF_STRIP) {
+		/* Allocate source buffers */
+		task->src_iovcnt = g_chained_count;
+		task->src_iovs = calloc(task->src_iovcnt, sizeof(struct iovec));
+		if (!task->src_iovs) {
+			fprintf(stderr, "cannot allocate task->src_iovs for task=%p\n", task);
+			return -ENOMEM;
+		}
+
+		num_blocks = g_xfer_size_bytes / g_block_size_bytes;
+		/* Add bytes for each block for metadata */
+		transfer_size_with_md = g_xfer_size_bytes + (num_blocks * g_md_size_bytes);
+		task->num_blocks = num_blocks;
+
+		for (i = 0; i < task->src_iovcnt; i++) {
+			task->src_iovs[i].iov_base = spdk_dma_zmalloc(transfer_size_with_md, 0, NULL);
+			if (task->src_iovs[i].iov_base == NULL) {
+				return -ENOMEM;
+			}
+			memset(task->src_iovs[i].iov_base, DATA_PATTERN, transfer_size_with_md);
+			task->src_iovs[i].iov_len = transfer_size_with_md;
+		}
+
+		/* Allocate destination buffers */
+		task->dst_iovcnt = g_chained_count;
+		task->dst_iovs = calloc(task->dst_iovcnt, sizeof(struct iovec));
+		if (!task->dst_iovs) {
+			fprintf(stderr, "cannot allocated task->dst_iovs fot task=%p\n", task);
+			return -ENOMEM;
+		}
+
+		for (i = 0; i < task->dst_iovcnt; i++) {
+			task->dst_iovs[i].iov_base = spdk_dma_zmalloc(dst_buff_len, 0, NULL);
+			if (task->dst_iovs[i].iov_base == NULL) {
+				return -ENOMEM;
+			}
+			task->dst_iovs[i].iov_len = dst_buff_len;
+		}
+
+		dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
+		dif_opts.dif_pi_format = SPDK_DIF_PI_FORMAT_16;
+
+		/* Init DIF ctx */
+		rc = spdk_dif_ctx_init(&task->dif_ctx,
+				       g_block_size_bytes + g_md_size_bytes,
+				       g_md_size_bytes, true, true,
+				       SPDK_DIF_TYPE1,
+				       SPDK_DIF_FLAGS_GUARD_CHECK | SPDK_DIF_FLAGS_APPTAG_CHECK | SPDK_DIF_FLAGS_REFTAG_CHECK,
+				       0x123, 0xFFFF, 0x234, 0, 0, &dif_opts);
+		if (rc != 0) {
+			fprintf(stderr, "Initialization of DIF context failed\n");
+			return rc;
+		}
+
+		rc = spdk_dif_generate(task->src_iovs, task->src_iovcnt, task->num_blocks, &task->dif_ctx);
+		if (rc != 0) {
+			fprintf(stderr, "Generation of DIF failed, error (%d)\n", rc);
+			return rc;
+		}
+	}
+
 	if (g_workload_selection == SPDK_ACCEL_OPC_CRC32C ||
 	    g_workload_selection == SPDK_ACCEL_OPC_COPY_CRC32C ||
 	    g_workload_selection == SPDK_ACCEL_OPC_DIF_VERIFY ||
@@ -465,7 +528,8 @@ _get_task_data_bufs(struct ap_task *task)
 
 	if (g_workload_selection != SPDK_ACCEL_OPC_CRC32C &&
 	    g_workload_selection != SPDK_ACCEL_OPC_DIF_VERIFY &&
-	    g_workload_selection != SPDK_ACCEL_OPC_DIF_GENERATE_COPY) {
+	    g_workload_selection != SPDK_ACCEL_OPC_DIF_GENERATE_COPY &&
+		g_workload_selection != SPDK_ACCEL_OPC_DIF_STRIP) {
 		task->dst = spdk_dma_zmalloc(dst_buff_len, align, NULL);
 		if (task->dst == NULL) {
 			fprintf(stderr, "Unable to alloc dst buffer\n");
@@ -605,6 +669,11 @@ _submit_single(struct worker_thread *worker, struct ap_task *task)
 				task->src_iovs, task->src_iovcnt,
 				task->num_blocks, &task->dif_ctx, accel_done, task);
 		break;
+	case SPDK_ACCEL_OPC_DIF_STRIP:
+		rc = spdk_accel_submit_dif_strip(worker->ch, task->dst_iovs, task->dst_iovcnt,
+				task->src_iovs, task->src_iovcnt,
+				task->num_blocks, &task->dif_ctx, accel_done, task);
+		break;
 	default:
 		assert(false);
 		break;
@@ -661,6 +730,26 @@ _free_task_buffers(struct ap_task *task)
 				}
 			}
 			free(task->dst_iovs);
+		}
+	}
+
+	if (g_workload_selection == SPDK_ACCEL_OPC_DIF_STRIP) {
+		if (task->dst_iovs) {
+			for (i = 0; i < task->dst_iovcnt; i++) {
+				if (task->dst_iovs[i].iov_base) {
+					spdk_dma_free(task->dst_iovs[i].iov_base);
+				}
+			}
+			free(task->dst_iovs);
+		}
+
+		if (task->src_iovs) {
+			for (i = 0; i < task->src_iovcnt; i++) {
+				if (task->src_iovs[i].iov_base) {
+					spdk_dma_free(task->src_iovs[i].iov_base);
+				}
+			}
+			free(task->src_iovs);
 		}
 	}
 }
@@ -1300,7 +1389,8 @@ main(int argc, char **argv)
 	    (g_workload_selection != SPDK_ACCEL_OPC_DUALCAST) &&
 	    (g_workload_selection != SPDK_ACCEL_OPC_XOR) &&
 	    (g_workload_selection != SPDK_ACCEL_OPC_DIF_VERIFY) &&
-	    (g_workload_selection != SPDK_ACCEL_OPC_DIF_GENERATE_COPY)) {
+	    (g_workload_selection != SPDK_ACCEL_OPC_DIF_GENERATE_COPY) &&
+		(g_workload_selection != SPDK_ACCEL_OPC_DIF_STRIP)) {
 		usage();
 		g_rc = -1;
 		goto cleanup;

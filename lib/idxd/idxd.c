@@ -1746,6 +1746,158 @@ error:
 	return rc;
 }
 
+static inline int
+idxd_validate_dif_strip_buf_align(const struct spdk_dif_ctx *ctx,
+				   const uint64_t src_len, const uint64_t dst_len)
+{
+	/* DSA can only process contiguous memory buffers, multiple of the block size */
+	if (src_len % ctx->block_size != 0) {
+		SPDK_ERRLOG("The memory source buffer length (%ld) is not a multiple of block size with metadata (%d).\n",
+			    src_len, ctx->block_size - ctx->md_size);
+		return -EINVAL;
+	}
+	if (dst_len % (ctx->block_size - 8) != 0) {
+		SPDK_ERRLOG("The memory destination buffer length (%ld) is not a multiple of block size without metadata (%d).\n",
+			    dst_len, (ctx->block_size - 8));
+		return -EINVAL;
+	}
+	/* The memory source and destiantion must hold the same number of blocks. */
+	if (src_len / ctx->block_size != (dst_len / (ctx->block_size - 8))) {
+		SPDK_ERRLOG("The memory source (%ld) and destiantion (%ld) must hold the same number of blocks.\n",
+			    src_len / (ctx->block_size - ctx->md_size), (dst_len / ctx->block_size));
+		return -EINVAL;
+	}
+	return 0;
+}
+
+int
+spdk_idxd_submit_dif_strip(struct spdk_idxd_io_channel *chan,
+			    struct iovec *diov, size_t diovcnt,
+			    struct iovec *siov, size_t siovcnt,
+			    uint32_t num_blocks, const struct spdk_dif_ctx *ctx, int flags,
+			    spdk_idxd_req_cb cb_fn, void *cb_arg)
+{
+	struct idxd_hw_desc *desc;
+	struct idxd_ops *first_op, *op;
+	uint64_t src_addr, dst_addr;
+	int rc, count;
+	uint64_t src_len, src_seg_len, dst_len, dst_seg_len;
+	void *src, *dst;
+	size_t i;
+	uint32_t num_blocks_left;
+	uint8_t dif_flags;
+
+	assert(ctx != NULL);
+	assert(chan != NULL);
+	assert(siov != NULL);
+
+	/* TODO Validate DIF parameters */
+
+	/* Set DIF flags */
+	rc = idxd_get_dif_flags(ctx, &dif_flags);
+	if (rc) {
+		return rc;
+	}
+
+	rc = _idxd_setup_batch(chan);
+	if (rc) {
+		return rc;
+	}
+
+	count = 0;
+	op = NULL;
+	first_op = NULL;
+	num_blocks_left = num_blocks;
+	for (i = 0; i < siovcnt; i++) {
+		src_len = siov[i].iov_len;
+		src = siov[i].iov_base;
+		dst_len = diov[i].iov_len;
+		dst = diov[i].iov_base;
+
+		/* Validate the memory buffer alignment */
+		rc = idxd_validate_dif_strip_buf_align(ctx, src_len, dst_len);
+		if (rc) {
+			goto error;
+		}
+
+		while (src_len > 0 && num_blocks_left > 0) {
+			if (first_op == NULL) {
+				rc = _idxd_prep_batch_cmd(chan, cb_fn, cb_arg, flags, &desc, &op);
+				if (rc) {
+					goto error;
+				}
+
+				first_op = op;
+			} else {
+				rc = _idxd_prep_batch_cmd(chan, NULL, NULL, flags, &desc, &op);
+				if (rc) {
+					goto error;
+				}
+
+				first_op->count++;
+				op->parent = first_op;
+			}
+
+			count++;
+
+			src_seg_len = src_len;
+			if (chan->pasid_enabled) {
+				src_addr = (uint64_t)src;
+			} else {
+				src_addr = spdk_vtophys(src, &src_seg_len);
+				if (src_addr == SPDK_VTOPHYS_ERROR) {
+					SPDK_ERRLOG("Error translating address\n");
+					rc = -EFAULT;
+					goto error;
+				}
+			}
+
+			src_seg_len = spdk_min(src_seg_len, src_len);
+
+			dst_seg_len = dst_len;
+			if (chan->pasid_enabled) {
+				dst_addr = (uint64_t)dst;
+			} else {
+				dst_addr = spdk_vtophys(dst, &dst_seg_len);
+				if (dst_addr == SPDK_VTOPHYS_ERROR) {
+					SPDK_ERRLOG("Error translating address\n");
+					rc = -EFAULT;
+					goto error;
+				}
+			}
+
+			dst_seg_len = spdk_min(dst_seg_len, dst_len);
+
+			/* Validate the memory buffer segment alignment */
+			rc = idxd_validate_dif_strip_buf_align(ctx, src_seg_len, dst_seg_len);
+			if (rc) {
+				goto error;
+			}
+
+			desc->opcode = IDXD_OPCODE_DIF_STRP;
+			desc->src_addr = src_addr;
+			desc->dst_addr = dst_addr;
+			desc->xfer_size = src_seg_len;
+			desc->dif_strip.flags = dif_flags;
+			desc->dif_strip.app_tag_seed = ctx->app_tag;
+			desc->dif_strip.app_tag_mask = ~ctx->apptag_mask;
+			desc->dif_strip.ref_tag_seed = (uint32_t)ctx->init_ref_tag;
+
+			src_len -= src_seg_len;
+			dst_len -= dst_seg_len;
+			src += src_seg_len;
+			dst += dst_seg_len;
+			num_blocks_left -= src_seg_len / (ctx->block_size - ctx->md_size);
+		}
+	}
+
+	return _idxd_flush_batch(chan);
+
+error:
+	chan->batch->index -= count;
+	return rc;
+}
+
 int
 spdk_idxd_submit_raw_desc(struct spdk_idxd_io_channel *chan,
 			  struct idxd_hw_desc *_desc,

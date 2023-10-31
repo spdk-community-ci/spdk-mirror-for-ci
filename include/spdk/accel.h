@@ -47,7 +47,8 @@ enum spdk_accel_opcode {
 	SPDK_ACCEL_OPC_XOR			= 10,
 	SPDK_ACCEL_OPC_DIF_VERIFY		= 11,
 	SPDK_ACCEL_OPC_DIF_GENERATE_COPY	= 12,
-	SPDK_ACCEL_OPC_LAST			= 13,
+	SPDK_ACCEL_OPC_DIF_STRIP	= 13,
+	SPDK_ACCEL_OPC_LAST			= 14,
 };
 
 enum spdk_accel_cipher {
@@ -437,6 +438,13 @@ int spdk_accel_submit_dif_generate_copy(struct spdk_io_channel *ch, struct iovec
 					size_t dst_iovcnt, struct iovec *src_iovs, size_t src_iovcnt,
 					uint32_t num_blocks, const struct spdk_dif_ctx *ctx,
 					spdk_accel_completion_cb cb_fn, void *cb_arg);
+
+
+int
+spdk_accel_submit_dif_strip(struct spdk_io_channel *ch, struct iovec *dst_iovs,
+				    size_t dst_iovcnt, struct iovec *src_iovs, size_t src_iovcnt,
+				    uint32_t num_blocks, const struct spdk_dif_ctx *ctx,
+				    spdk_accel_completion_cb cb_fn, void *cb_arg);
 
 /** Object grouping multiple accel operations to be executed at the same point in time */
 struct spdk_accel_sequence;
