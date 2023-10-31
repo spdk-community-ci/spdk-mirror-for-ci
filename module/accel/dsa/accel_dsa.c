@@ -32,6 +32,11 @@ enum channel_state {
 
 static bool g_dsa_initialized = false;
 
+struct sw_task_compl_ctx {
+	struct spdk_accel_task *accel_task;
+	int status;
+};
+
 struct idxd_device {
 	struct				spdk_idxd_device *dsa;
 	TAILQ_ENTRY(idxd_device)	tailq;
@@ -158,6 +163,47 @@ idxd_submit_dualcast(struct idxd_io_channel *ch, struct idxd_task *idxd_task, in
 }
 
 static int
+dif_strip_overlapp_bufs_check(struct spdk_accel_task *task)
+{
+	uint64_t src_seg_addr_end_ext;
+	uint64_t dst_seg_addr_end_ext;
+	size_t i;
+	int rc = 0;
+
+	if (task->d.iovcnt != task->s.iovcnt) {
+		SPDK_ERRLOG("Unmatching number of elements in src (%d) and dst (%d) iovecs.\n",
+			    task->s.iovcnt, task->d.iovcnt);
+		return -EINVAL;
+	}
+
+	for (i = 0; i < task->s.iovcnt; i++) {
+		src_seg_addr_end_ext = (uint64_t)task->s.iovs[i].iov_base +
+				       task->s.iovs[i].iov_len;
+		/* Check if the destination-base-address + source-buffer-length overlap with
+		 * source buffer due to DSA issue: 'DIF Strip Operations Do Not Properly Check
+		 * For Overlapping Buffers' */
+		dst_seg_addr_end_ext = (uint64_t)task->d.iovs[i].iov_base +
+				       task->s.iovs[i].iov_len;
+
+		if ((dst_seg_addr_end_ext >= (uint64_t)task->s.iovs[i].iov_base) &&
+		    (dst_seg_addr_end_ext <= src_seg_addr_end_ext)) {
+			rc = -EFAULT;
+		}
+	}
+	return rc;
+}
+
+static void
+spdk_accel_sw_task_complete(void *ctx)
+{
+	struct sw_task_compl_ctx *t_ctx = (struct sw_task_compl_ctx *)ctx;
+	if (t_ctx != NULL) {
+		spdk_accel_task_complete(t_ctx->accel_task, t_ctx->status);
+		free(t_ctx);
+	}
+}
+
+static int
 _process_single_task(struct spdk_io_channel *ch, struct spdk_accel_task *task)
 {
 	struct idxd_io_channel *chan = spdk_io_channel_get_ctx(ch);
@@ -206,6 +252,34 @@ _process_single_task(struct spdk_io_channel *ch, struct spdk_accel_task *task)
 						 task->s.iovs, task->s.iovcnt,
 						 task->dif.num_blocks, task->dif.ctx, flags,
 						 dsa_done, idxd_task);
+		break;
+	case SPDK_ACCEL_OPC_DIF_VERIFY_COPY:
+		rc = dif_strip_overlapp_bufs_check(task);
+		if (rc == 0) {
+			rc = spdk_idxd_submit_dif_strip(chan->chan,
+							task->d.iovs, task->d.iovcnt,
+							task->s.iovs, task->s.iovcnt,
+							task->dif.num_blocks, task->dif.ctx, flags,
+							dsa_done, idxd_task);
+		} else if (rc == -EFAULT) {
+			rc = spdk_dif_verify_copy(task->d.iovs,
+						  task->d.iovcnt,
+						  task->s.iovs,
+						  task->s.iovcnt,
+						  task->dif.num_blocks,
+						  task->dif.ctx,
+						  task->dif.err);
+
+			struct sw_task_compl_ctx *t_ctx =
+				malloc(sizeof(struct sw_task_compl_ctx));
+			if (t_ctx == NULL) {
+				return -ENOMEM;
+			}
+
+			t_ctx->accel_task = &idxd_task->task;
+			t_ctx->status = rc;
+			spdk_thread_send_msg(spdk_get_thread(), spdk_accel_sw_task_complete, (void *)t_ctx);
+		}
 		break;
 	default:
 		assert(false);
@@ -319,6 +393,7 @@ dsa_supports_opcode(enum spdk_accel_opcode opc)
 		return true;
 	case SPDK_ACCEL_OPC_DIF_VERIFY:
 	case SPDK_ACCEL_OPC_DIF_GENERATE_COPY:
+	case SPDK_ACCEL_OPC_DIF_VERIFY_COPY:
 		/* Supported only if the IOMMU is enabled */
 		return spdk_iommu_is_enabled();
 	default:
