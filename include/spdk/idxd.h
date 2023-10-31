@@ -354,6 +354,13 @@ int spdk_idxd_submit_dif_insert(struct spdk_idxd_io_channel *chan,
 				uint32_t num_blocks, const struct spdk_dif_ctx *ctx, int flags,
 				spdk_idxd_req_cb cb_fn, void *cb_arg);
 
+int
+spdk_idxd_submit_dif_strip(struct spdk_idxd_io_channel *chan,
+			    struct iovec *diov, size_t diovcnt,
+			    struct iovec *siov, size_t siovcnt,
+			    uint32_t num_blocks, const struct spdk_dif_ctx *ctx, int flags,
+			    spdk_idxd_req_cb cb_fn, void *cb_arg);
+
 /**
  * Build and submit a DIF strip request.
  *
