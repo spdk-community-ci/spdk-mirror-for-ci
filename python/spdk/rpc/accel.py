@@ -57,15 +57,21 @@ def accel_crypto_key_create(client, cipher, key, key2, tweak_mode, name):
     return client.call('accel_crypto_key_create', params)
 
 
-def accel_crypto_key_destroy(client, key_name):
+def accel_crypto_key_destroy(client, key_name=None, name=None):
     """Destroy Data Encryption Key.
 
     Args:
-        key_name: key name
+        name: key name
+        key_name: key name (deprecated, please use name)
     """
-    params = {
-        'key_name': key_name
-    }
+    params = {}
+
+    if key_name is not None:
+        print("WARNING: key_name is deprecated, please use name.")
+        params['key_name'] = key_name
+
+    if name is not None:
+        params['name'] = name
 
     return client.call('accel_crypto_key_destroy', params)
 

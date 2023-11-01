@@ -229,6 +229,7 @@ cleanup:
 SPDK_RPC_REGISTER("accel_crypto_key_create", rpc_accel_crypto_key_create, SPDK_RPC_RUNTIME)
 
 struct rpc_accel_crypto_keys_get_ctx {
+	char *name;
 	char *key_name;
 };
 
@@ -277,8 +278,13 @@ rpc_accel_crypto_keys_get(struct spdk_jsonrpc_request *request,
 SPDK_RPC_REGISTER("accel_crypto_keys_get", rpc_accel_crypto_keys_get, SPDK_RPC_RUNTIME)
 
 static const struct spdk_json_object_decoder rpc_accel_crypto_key_destroy_decoders[] = {
-	{"key_name", offsetof(struct rpc_accel_crypto_keys_get_ctx, key_name), spdk_json_decode_string},
+	{"key_name", offsetof(struct rpc_accel_crypto_keys_get_ctx, key_name), spdk_json_decode_string, true},
+	{"name", offsetof(struct rpc_accel_crypto_keys_get_ctx, name), spdk_json_decode_string, true},
 };
+
+SPDK_LOG_DEPRECATION_REGISTER(rpc_accel_crypto_key_destroy,
+			      "key_name is deprecated in favor of name",
+			      "v24.05", 0);
 
 static void
 rpc_accel_crypto_key_destroy(struct spdk_jsonrpc_request *request,
@@ -293,18 +299,27 @@ rpc_accel_crypto_key_destroy(struct spdk_jsonrpc_request *request,
 				    &req)) {
 		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_PARSE_ERROR,
 						 "spdk_json_decode_object failed");
-		free(req.key_name);
-		return;
+		goto out;
 	}
 
-	key = spdk_accel_crypto_key_get(req.key_name);
+	if (req.key_name) {
+		SPDK_LOG_DEPRECATED(rpc_accel_crypto_key_destroy);
+	}
+
+	if (!req.name && !req.key_name) {
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_PARSE_ERROR,
+						 "Required field (either name or key_name) is missing");
+		goto out;
+	}
+
+	key = spdk_accel_crypto_key_get(req.name ? req.name : req.key_name);
 	if (!key) {
 		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
 						 "No key object found");
-		free(req.key_name);
-		return;
+		goto out;
 
 	}
+
 	rc = spdk_accel_crypto_key_destroy(key);
 	if (rc) {
 		spdk_jsonrpc_send_error_response_fmt(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
@@ -313,6 +328,8 @@ rpc_accel_crypto_key_destroy(struct spdk_jsonrpc_request *request,
 		spdk_jsonrpc_send_bool_response(request, true);
 	}
 
+out:
+	free(req.name);
 	free(req.key_name);
 }
 SPDK_RPC_REGISTER("accel_crypto_key_destroy", rpc_accel_crypto_key_destroy, SPDK_RPC_RUNTIME)
