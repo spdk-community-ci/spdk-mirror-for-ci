@@ -1,0 +1,13 @@
+dsa_scan_accel_module
+iobuf_set_options --large-pool-count 4096
+accel_assign_opc -o copy -m software
+framework_start_init
+nvmf_create_transport -t TCP -u 10240 -c 8192 -m 128
+bdev_nvme_attach_controller --name NVMe0 --trtype pcie --traddr 0000:d0:00.0
+bdev_dif_create -b NVMe0n1 -p Dif1 -f
+nvmf_create_subsystem nqn.2016-06.io.spdk:cnode1 -a -s SPDK00000000000001 -d SPDK_Controller1
+nvmf_subsystem_add_ns nqn.2016-06.io.spdk:cnode1 Dif1
+
+nvmf_subsystem_add_listener discovery -t tcp -a 127.0.0.1 -s 4410
+
+nvmf_subsystem_add_listener nqn.2016-06.io.spdk:cnode1 -t tcp -a 127.0.0.1 -s 4420

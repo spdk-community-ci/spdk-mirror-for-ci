@@ -1,0 +1,21 @@
+framework_start_init
+nvmf_create_transport -t TCP -u 10240 -c 8192 -m 128
+bdev_nvme_attach_controller --name NVMe0 --trtype pcie --traddr 0000:d0:00.0
+bdev_nvme_attach_controller --name NVMe1 --trtype pcie --traddr 0000:50:00.0
+bdev_nvme_attach_controller --name NVMe2 --trtype pcie --traddr 0000:51:00.0
+bdev_nvme_attach_controller --name NVMe3 --trtype pcie --traddr 0000:cf:00.0
+bdev_nvme_attach_controller --name NVMe4 --trtype pcie --traddr 0000:d1:00.0
+bdev_nvme_attach_controller --name NVMe5 --trtype pcie --traddr 0000:63:00.0
+bdev_nvme_attach_controller --name NVMe6 --trtype pcie --traddr 0000:64:00.0
+nvmf_create_subsystem nqn.2016-06.io.spdk:cnode1 -a -s SPDK00000000000001 -d SPDK_Controller1
+nvmf_subsystem_add_ns nqn.2016-06.io.spdk:cnode1 NVMe0n1
+nvmf_subsystem_add_ns nqn.2016-06.io.spdk:cnode1 NVMe1n1
+nvmf_subsystem_add_ns nqn.2016-06.io.spdk:cnode1 NVMe2n1
+nvmf_subsystem_add_ns nqn.2016-06.io.spdk:cnode1 NVMe3n1
+nvmf_subsystem_add_ns nqn.2016-06.io.spdk:cnode1 NVMe4n1
+nvmf_subsystem_add_ns nqn.2016-06.io.spdk:cnode1 NVMe5n1
+nvmf_subsystem_add_ns nqn.2016-06.io.spdk:cnode1 NVMe6n1
+
+nvmf_subsystem_add_listener discovery -t tcp -a 127.0.0.1 -s 4410
+
+nvmf_subsystem_add_listener nqn.2016-06.io.spdk:cnode1 -t tcp -a 127.0.0.1 -s 4420

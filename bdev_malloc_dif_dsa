@@ -1,0 +1,5 @@
+dsa_scan_accel_module
+iobuf_set_options --large-pool-count 10000 --small-pool-count 10000
+framework_start_init
+bdev_malloc_create -b Malloc1 100 512 -m 8 -i -t 1
+bdev_dif_create -b Malloc1 -p Dif1 -f

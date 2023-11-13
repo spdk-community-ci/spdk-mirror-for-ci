@@ -1,0 +1,3 @@
+dsa_scan_accel_module
+accel_assign_opc -o dif_strip -m dsa
+framework_start_init
