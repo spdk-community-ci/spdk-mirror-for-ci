@@ -1,0 +1,7 @@
+iobuf_set_options --large-pool-count 10000 --small-pool-count 10000
+dsa_scan_accel_module
+accel_assign_opc -o dif_generate_copy -m dsa
+accel_assign_opc -o dif_strip -m dsa
+framework_start_init
+bdev_null_create Null1 100 512 -m 8 -t 1
+bdev_dif_create -b Null1 -p Dif1 -f

@@ -1,0 +1,9 @@
+framework_start_init
+nvmf_create_transport -t TCP -u 10240 -c 8192 -m 128
+bdev_null_create Null1 100 512
+nvmf_create_subsystem nqn.2016-06.io.spdk:cnode1 -a -s SPDK00000000000001 -d SPDK_Controller1
+nvmf_subsystem_add_ns nqn.2016-06.io.spdk:cnode1 Null1
+
+nvmf_subsystem_add_listener discovery -t tcp -a 127.0.0.1 -s 4410
+
+nvmf_subsystem_add_listener nqn.2016-06.io.spdk:cnode1 -t tcp -a 127.0.0.1 -s 4420

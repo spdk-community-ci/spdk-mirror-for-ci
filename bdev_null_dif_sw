@@ -1,0 +1,4 @@
+iobuf_set_options --large-pool-count 10000 --small-pool-count 10000
+framework_start_init
+bdev_null_create Null1 100 520 -m 8 -t 1
+bdev_dif_create -b Null1 -p Dif1 -f
