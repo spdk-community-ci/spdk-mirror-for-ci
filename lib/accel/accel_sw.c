@@ -137,17 +137,11 @@ _sw_accel_compare(struct iovec *src_iovs, uint32_t src_iovcnt,
 static int
 _sw_accel_fill(struct iovec *iovs, uint32_t iovcnt, uint8_t fill)
 {
-	void *dst;
-	size_t nbytes;
+	uint32_t i;
 
-	if (spdk_unlikely(iovcnt != 1)) {
-		return -EINVAL;
+	for (i = 0; i < iovcnt; ++i) {
+		memset(iovs[i].iov_base, fill, iovs[i].iov_len);
 	}
-
-	dst = iovs[0].iov_base;
-	nbytes = iovs[0].iov_len;
-
-	memset(dst, fill, nbytes);
 
 	return 0;
 }
