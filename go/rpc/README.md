@@ -13,7 +13,7 @@ with `rpc.py` - Go client replaces Python client.
 
 Requirements:
 
-* `go` (v1.21 or above)
+* `go` (v1.19 or above)
 
 There are two ways to build files required for client replacement:
 
@@ -106,3 +106,39 @@ Output:
 
 - `client`: New [Client](#client) struct.
 - `error`: Contains error if something goes wrong during creation of a client. Otherwise `nil`.
+
+## Struct generator for RPC calls
+
+This code allows you to auto-generate structs for every RPC call available in SPDK. It uses a newly
+created file called `schema.json` located in `schema` folder in SPDK project root. Generated structures
+can be used in `RPC client` described above.
+
+### Build
+
+Requirements:
+
+* `go` (v1.19 or above)
+
+Go to [go/rpc](./) and invoke
+
+```shell
+make
+```
+
+This will create a `rpc.go` file containing all generated structs in
+[generators/utils/](./generators/utils) folder.
+
+### Examples
+
+Example of a generated struct:
+```go
+// BdevLvolResize Resize a logical volume.
+type BdevLvolResize struct {
+	// UUID or alias of the logical volume to resize
+	Name string `json:"name"`
+	// Desired size of the logical volume in MiB
+	SizeInMib int64 `json:"size_in_mib,omitempty"`
+	// Desired size of the logical volume in bytes (Deprecated. Please use size_in_mib instead.)
+	Size int64 `json:"size,omitempty"`
+}
+```
