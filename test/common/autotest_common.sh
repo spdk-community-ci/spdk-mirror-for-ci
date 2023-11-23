@@ -448,7 +448,7 @@ function get_config_params() {
 		config_params+=" --with-ocf"
 	fi
 
-	if [ $SPDK_RUN_UBSAN -eq 1 ]; then
+	if [ "$(uname -s)" = "Linux" ]; then
 		config_params+=' --enable-ubsan'
 	fi
 
