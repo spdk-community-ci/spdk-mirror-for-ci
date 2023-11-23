@@ -452,7 +452,7 @@ function get_config_params() {
 		config_params+=' --enable-ubsan'
 	fi
 
-	if [ $SPDK_RUN_ASAN -eq 1 ]; then
+	if [ "$(uname -s)" = "Linux" ] && [ $SPDK_RUN_VALGRIND -eq 0 ]; then
 		config_params+=' --enable-asan'
 	fi
 
