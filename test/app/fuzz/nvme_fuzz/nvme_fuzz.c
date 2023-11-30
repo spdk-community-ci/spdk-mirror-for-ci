@@ -454,7 +454,7 @@ submit_qp_cmds(struct nvme_fuzz_ns *ns, struct nvme_fuzz_qp *qp)
 static void
 submit_ns_cmds(struct nvme_fuzz_ns *ns_entry)
 {
-	int rc;
+	int rc = 0;
 
 	if (!g_run) {
 		return;

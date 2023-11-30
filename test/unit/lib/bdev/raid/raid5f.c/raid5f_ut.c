@@ -412,7 +412,7 @@ spdk_bdev_writev_blocks_with_md(struct spdk_bdev_desc *desc, struct spdk_io_chan
 	uint8_t data_chunk_idx;
 	uint64_t data_offset;
 	struct iovec dest;
-	void *dest_md_buf;
+	void *dest_md_buf = NULL;
 
 	SPDK_CU_ASSERT_FATAL(cb == raid5f_chunk_complete_bdev_io);
 
@@ -442,7 +442,7 @@ spdk_bdev_writev_blocks_with_md(struct spdk_bdev_desc *desc, struct spdk_io_chan
 	dest.iov_len = num_blocks * raid_bdev->bdev.blocklen;
 
 	spdk_iovcpy(iov, iovcnt, &dest, 1);
-	if (md_buf != NULL) {
+	if (md_buf != NULL && dest_md_buf != NULL) {
 		memcpy(dest_md_buf, md_buf, num_blocks * raid_bdev->bdev.md_len);
 	}
 

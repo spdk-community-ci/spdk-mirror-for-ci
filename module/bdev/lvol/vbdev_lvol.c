@@ -71,7 +71,7 @@ static int
 _vbdev_lvol_change_bdev_alias(struct spdk_lvol *lvol, const char *new_lvol_name)
 {
 	struct spdk_bdev_alias *tmp;
-	char *old_alias;
+	char *old_alias = NULL;
 	char *alias;
 	int rc;
 	int alias_number = 0;
