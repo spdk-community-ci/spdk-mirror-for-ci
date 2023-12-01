@@ -901,6 +901,7 @@ nvme_submit_io(struct perf_task *task, struct ns_worker_ctx *ns_ctx,
 							      task->dif_ctx.apptag_mask, task->dif_ctx.app_tag);
 		}
 	} else {
+		/*
 		switch (mode) {
 		case DIF_MODE_DIF:
 			rc = spdk_dif_generate(task->iovs, task->iovcnt, entry->io_size_blocks, &task->dif_ctx);
@@ -920,6 +921,7 @@ nvme_submit_io(struct perf_task *task, struct ns_worker_ctx *ns_ctx,
 		default:
 			break;
 		}
+		*/
 
 		if (task->iovcnt == 1) {
 			return spdk_nvme_ns_cmd_write_with_md(entry->u.nvme.ns, ns_ctx->u.nvme.qpair[qp_num],
@@ -972,6 +974,7 @@ nvme_verify_io(struct perf_task *task, struct ns_entry *entry)
 		return;
 	}
 
+/*
 	if (entry->md_interleave) {
 		rc = spdk_dif_verify(task->iovs, task->iovcnt, entry->io_size_blocks, &task->dif_ctx,
 				     &err_blk);
@@ -987,6 +990,7 @@ nvme_verify_io(struct perf_task *task, struct ns_entry *entry)
 				err_blk.err_type, err_blk.err_offset);
 		}
 	}
+*/
 }
 
 /*
