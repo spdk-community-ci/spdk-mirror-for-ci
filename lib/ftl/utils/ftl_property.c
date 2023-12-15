@@ -316,12 +316,12 @@ ftl_property_decode_bool(struct spdk_ftl_dev *dev, struct ftl_property *property
 		return -EINVAL;
 	}
 
-	if (0 == strncmp(value, "true", strlen("true"))) {
+	if (0 == strncmp(value, "true", strlen("true")) && strlen("true") == strlen(value)) {
 		*out = true;
 		return 0;
 	}
 
-	if (0 == strncmp(value, "false", strlen("false"))) {
+	if (0 == strncmp(value, "false", strlen("false")) && strlen("false") == strlen(value)) {
 		*out = false;
 		return 0;
 	}
