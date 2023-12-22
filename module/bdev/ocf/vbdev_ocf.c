@@ -543,9 +543,9 @@ vbdev_ocf_foreach(vbdev_ocf_foreach_fn fn, void *ctx)
 
 /* Called from OCF when SPDK_IO is completed */
 static void
-vbdev_ocf_io_submit_cb(struct ocf_io *io, int error)
+vbdev_ocf_io_submit_cb(ocf_io_t io, void *priv1, void *priv2, int error)
 {
-	struct spdk_bdev_io *bdev_io = io->priv1;
+	struct spdk_bdev_io *bdev_io = priv1;
 
 	if (error == 0) {
 		spdk_bdev_io_complete(bdev_io, SPDK_BDEV_IO_STATUS_SUCCESS);
@@ -560,7 +560,7 @@ vbdev_ocf_io_submit_cb(struct ocf_io *io, int error)
 
 /* Configure io parameters and send it to OCF */
 static int
-io_submit_to_ocf(struct spdk_bdev_io *bdev_io, struct ocf_io *io)
+io_submit_to_ocf(struct spdk_bdev_io *bdev_io, ocf_io_t io)
 {
 	switch (bdev_io->type) {
 	case SPDK_BDEV_IO_TYPE_WRITE:
@@ -586,7 +586,7 @@ static void
 io_handle(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_io)
 {
 	struct vbdev_ocf *vbdev = bdev_io->bdev->ctxt;
-	struct ocf_io *io = NULL;
+	ocf_io_t io = NULL;
 	struct bdev_ocf_data *data = NULL;
 	struct vbdev_ocf_qctx *qctx = spdk_io_channel_get_ctx(ch);
 	uint64_t len = bdev_io->u.bdev.num_blocks * bdev_io->bdev->blocklen;
