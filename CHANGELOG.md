@@ -59,6 +59,9 @@ like rebuild.
 Added `spdk_bs_grow_live()` and `spdk_bdev_update_bs_blockcnt()` API that can be used to
 increase size of blobstore filling the underlying device without first closing the blobstore.
 
+A new API `spdk_nvme_poll_group_process_admin_events` was added to poll management events separately
+from I/O completions to reduce overhead for large scale configuration.
+
 ### env
 
 Added SPDK command line parameter `--no-huge`, which enables SPDK to run without hugepages.

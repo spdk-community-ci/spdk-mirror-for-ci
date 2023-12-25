@@ -2826,6 +2826,15 @@ void spdk_nvme_poll_group_free_stats(struct spdk_nvme_poll_group *group,
 				     struct spdk_nvme_poll_group_stat *stat);
 
 /**
+ * Poll for management events on all qpairs in this poll group.
+ *
+ * \param group The group on which to poll for events.
+ *
+ * \return 0 on no error or negated errno on any error.
+ */
+int spdk_nvme_poll_group_process_admin_events(struct spdk_nvme_poll_group *group);
+
+/**
  * Get the identify namespace data as defined by the NVMe specification.
  *
  * This function is thread safe and can be called at any point while the controller
@@ -4222,6 +4231,8 @@ struct spdk_nvme_transport_ops {
 
 	void (*poll_group_free_stats)(struct spdk_nvme_transport_poll_group *tgroup,
 				      struct spdk_nvme_transport_poll_group_stat *stats);
+
+	int (*poll_group_process_admin_events)(struct spdk_nvme_transport_poll_group *tgroup);
 
 	int (*ctrlr_get_memory_domains)(const struct spdk_nvme_ctrlr *ctrlr,
 					struct spdk_memory_domain **domains,

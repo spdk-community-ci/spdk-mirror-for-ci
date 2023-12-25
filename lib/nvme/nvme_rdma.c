@@ -3398,6 +3398,7 @@ const struct spdk_nvme_transport_ops rdma_ops = {
 	.poll_group_destroy = nvme_rdma_poll_group_destroy,
 	.poll_group_get_stats = nvme_rdma_poll_group_get_stats,
 	.poll_group_free_stats = nvme_rdma_poll_group_free_stats,
+	.poll_group_process_admin_events = nvme_rdma_poll_group_process_admin_events,
 };
 
 SPDK_NVME_TRANSPORT_REGISTER(rdma, &rdma_ops);

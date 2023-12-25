@@ -301,3 +301,19 @@ spdk_nvme_poll_group_free_stats(struct spdk_nvme_poll_group *group,
 	free(stat->transport_stat);
 	free(stat);
 }
+
+int
+spdk_nvme_poll_group_process_admin_events(struct spdk_nvme_poll_group *group)
+{
+	struct spdk_nvme_transport_poll_group *tgroup;
+	int rc = 0, rc2;
+
+	STAILQ_FOREACH(tgroup, &group->tgroups, link) {
+		rc2 = nvme_transport_poll_group_process_admin_events(tgroup);
+		if (rc == 0 && rc2 != 0) {
+			rc = rc2;
+		}
+	}
+
+	return rc;
+}
