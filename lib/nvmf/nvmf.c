@@ -86,12 +86,13 @@ spdk_nvmf_tgt_add_referral(struct spdk_nvmf_tgt *tgt,
 		return 0;
 	}
 
-	referral = calloc(1, sizeof(*referral));
+	//referral = calloc(1, sizeof(*referral));
+	referral = malloc(sizeof(*referral));
 	if (!referral) {
 		SPDK_ERRLOG("Failed to allocate memory for a referral\n");
 		return -ENOMEM;
 	}
-
+	memset(referral, 0, sizeof(*referral));
 	referral->entry.subtype = nvmf_nqn_is_discovery(trid->subnqn) ?
 				  SPDK_NVMF_SUBTYPE_DISCOVERY :
 				  SPDK_NVMF_SUBTYPE_NVME;
@@ -326,6 +327,7 @@ _nvmf_tgt_disconnect_qpairs(void *ctx)
 		/* When the refcount from the channels reaches 0, nvmf_tgt_destroy_poll_group will be called. */
 		ch = spdk_io_channel_from_ctx(group);
 		spdk_put_io_channel(ch);
+		//printf("  [F1] %p\n", qpair_ctx);
 		free(qpair_ctx);
 		return;
 	}
@@ -341,12 +343,13 @@ nvmf_tgt_destroy_poll_group_qpairs(struct spdk_nvmf_poll_group *group)
 
 	SPDK_DTRACE_PROBE1_TICKS(nvmf_destroy_poll_group_qpairs, spdk_thread_get_id(group->thread));
 
-	ctx = calloc(1, sizeof(struct nvmf_qpair_disconnect_many_ctx));
+	//ctx = calloc(1, sizeof(struct nvmf_qpair_disconnect_many_ctx));
+	ctx = malloc(sizeof(struct nvmf_qpair_disconnect_many_ctx));
 	if (!ctx) {
 		SPDK_ERRLOG("Failed to allocate memory for destroy poll group ctx\n");
 		return;
 	}
-
+	memset(ctx, 0, sizeof(struct nvmf_qpair_disconnect_many_ctx));
 	ctx->group = group;
 	_nvmf_tgt_disconnect_qpairs(ctx);
 }
@@ -368,11 +371,12 @@ spdk_nvmf_tgt_create(struct spdk_nvmf_target_opts *opts)
 		}
 	}
 
-	tgt = calloc(1, sizeof(*tgt));
+	//tgt = calloc(1, sizeof(*tgt));
+	tgt = malloc(sizeof(*tgt));
 	if (!tgt) {
 		return NULL;
 	}
-
+	memset(tgt, 0, sizeof(*tgt));
 	snprintf(tgt->name, NVMF_TGT_NAME_MAX_LENGTH, "%s", opts->name);
 
 	if (!opts || !opts->max_subsystems) {
@@ -930,12 +934,13 @@ spdk_nvmf_tgt_add_transport(struct spdk_nvmf_tgt *tgt,
 		return; /* transport already created */
 	}
 
-	ctx = calloc(1, sizeof(*ctx));
+	//ctx = calloc(1, sizeof(*ctx));
+	ctx = malloc(sizeof(*ctx));
 	if (!ctx) {
 		cb_fn(cb_arg, -ENOMEM);
 		return;
 	}
-
+	memset(ctx, 0, sizeof(*ctx));
 	ctx->tgt = tgt;
 	ctx->transport = transport;
 	ctx->cb_fn = cb_fn;
@@ -993,11 +998,12 @@ spdk_nvmf_tgt_pause_polling(struct spdk_nvmf_tgt *tgt, spdk_nvmf_tgt_pause_polli
 		return -EINVAL;
 	}
 
-	ctx = calloc(1, sizeof(*ctx));
+	//ctx = calloc(1, sizeof(*ctx));
+	ctx = malloc(sizeof(*ctx));
 	if (!ctx) {
 		return -ENOMEM;
 	}
-
+	memset(ctx, 0, sizeof(*ctx));
 
 	tgt->state = NVMF_TGT_PAUSING;
 
@@ -1053,11 +1059,12 @@ spdk_nvmf_tgt_resume_polling(struct spdk_nvmf_tgt *tgt, spdk_nvmf_tgt_resume_pol
 		return -EINVAL;
 	}
 
-	ctx = calloc(1, sizeof(*ctx));
+	//ctx = calloc(1, sizeof(*ctx));
+	ctx = malloc(sizeof(*ctx));
 	if (!ctx) {
 		return -ENOMEM;
 	}
-
+	memset(ctx, 0, sizeof(*ctx));
 	tgt->state = NVMF_TGT_RESUMING;
 
 	ctx->tgt = tgt;
@@ -1143,13 +1150,14 @@ spdk_nvmf_tgt_new_qpair(struct spdk_nvmf_tgt *tgt, struct spdk_nvmf_qpair *qpair
 		tgt->next_poll_group = TAILQ_NEXT(group, link);
 	}
 
-	ctx = calloc(1, sizeof(*ctx));
+	//ctx = calloc(1, sizeof(*ctx));
+	ctx = malloc(sizeof(*ctx));
 	if (!ctx) {
 		SPDK_ERRLOG("Unable to send message to poll group.\n");
 		spdk_nvmf_qpair_disconnect(qpair, NULL, NULL);
 		return;
 	}
-
+	memset(ctx, 0, sizeof(*ctx));
 	ctx->qpair = qpair;
 	ctx->group = group;
 
@@ -1239,6 +1247,7 @@ _nvmf_ctrlr_free_from_qpair(void *ctx)
 		ctrlr->in_destruct = true;
 		spdk_thread_send_msg(ctrlr->subsys->thread, _nvmf_ctrlr_destruct, ctrlr);
 	}
+	//printf("  [F2] %p\n", qpair_ctx);
 	free(qpair_ctx);
 }
 
@@ -1265,11 +1274,14 @@ _nvmf_transport_qpair_fini_complete(void *cb_ctx)
 		}
 		/* Free qpair id from controller's bit mask and destroy the controller if it is the last qpair */
 		if (ctrlr->thread) {
+			// printf(">T:%p ", spdk_get_thread());
 			spdk_thread_send_msg(ctrlr->thread, _nvmf_ctrlr_free_from_qpair, qpair_ctx);
 		} else {
+			// printf(">~T:%p ", spdk_get_thread());
 			_nvmf_ctrlr_free_from_qpair(qpair_ctx);
 		}
 	} else {
+		//printf("  [F3] %p\n", qpair_ctx);
 		free(qpair_ctx);
 	}
 
@@ -1367,6 +1379,8 @@ _nvmf_qpair_disconnect_msg(void *ctx)
 	struct nvmf_qpair_disconnect_ctx *qpair_ctx = ctx;
 
 	spdk_nvmf_qpair_disconnect(qpair_ctx->qpair, qpair_ctx->cb_fn, qpair_ctx->ctx);
+	//printf("  [F4] %p\n", qpair_ctx);
+
 	free(ctx);
 }
 
@@ -1400,11 +1414,13 @@ spdk_nvmf_qpair_disconnect(struct spdk_nvmf_qpair *qpair, nvmf_qpair_disconnect_
 	if (spdk_get_thread() != group->thread) {
 		/* clear the atomic so we can set it on the next call on the proper thread. */
 		__atomic_clear(&qpair->disconnect_started, __ATOMIC_RELAXED);
-		qpair_ctx = calloc(1, sizeof(struct nvmf_qpair_disconnect_ctx));
+		//qpair_ctx = calloc(1, sizeof(struct nvmf_qpair_disconnect_ctx));
+		qpair_ctx = malloc(sizeof(struct nvmf_qpair_disconnect_ctx));
 		if (!qpair_ctx) {
 			SPDK_ERRLOG("Unable to allocate context for nvmf_qpair_disconnect\n");
 			return -ENOMEM;
 		}
+		memset(qpair_ctx, 0, sizeof(struct nvmf_qpair_disconnect_ctx));
 		qpair_ctx->qpair = qpair;
 		qpair_ctx->cb_fn = cb_fn;
 		qpair_ctx->thread = group->thread;
@@ -1417,12 +1433,14 @@ spdk_nvmf_qpair_disconnect(struct spdk_nvmf_qpair *qpair, nvmf_qpair_disconnect_
 	assert(qpair->state == SPDK_NVMF_QPAIR_ACTIVE);
 	nvmf_qpair_set_state(qpair, SPDK_NVMF_QPAIR_DEACTIVATING);
 
-	qpair_ctx = calloc(1, sizeof(struct nvmf_qpair_disconnect_ctx));
+	//qpair_ctx = calloc(1, sizeof(struct nvmf_qpair_disconnect_ctx));
+	qpair_ctx = malloc(sizeof(struct nvmf_qpair_disconnect_ctx));
 	if (!qpair_ctx) {
 		SPDK_ERRLOG("Unable to allocate context for nvmf_qpair_disconnect\n");
 		return -ENOMEM;
 	}
-
+	memset(qpair_ctx, 0, sizeof(struct nvmf_qpair_disconnect_ctx));
+	//printf("  [A ] %p\n", qpair_ctx);
 	qpair_ctx->qpair = qpair;
 	qpair_ctx->cb_fn = cb_fn;
 	qpair_ctx->thread = group->thread;
@@ -1430,6 +1448,7 @@ spdk_nvmf_qpair_disconnect(struct spdk_nvmf_qpair *qpair, nvmf_qpair_disconnect_
 
 	/* Check for outstanding I/O */
 	if (!TAILQ_EMPTY(&qpair->outstanding)) {
+		//printf(" MS++ Outstanding IO\n");
 		SPDK_DTRACE_PROBE2_TICKS(nvmf_poll_group_drain_qpair, qpair, spdk_thread_get_id(group->thread));
 		qpair->state_cb = _nvmf_qpair_destroy;
 		qpair->state_cb_arg = qpair_ctx;
@@ -1437,7 +1456,7 @@ spdk_nvmf_qpair_disconnect(struct spdk_nvmf_qpair *qpair, nvmf_qpair_disconnect_
 		nvmf_qpair_free_aer(qpair);
 		return 0;
 	}
-
+	//printf(" MS++ No Outstanding IO\n");
 	_nvmf_qpair_destroy(qpair_ctx, 0);
 
 	return 0;
@@ -1760,7 +1779,8 @@ nvmf_poll_group_remove_subsystem(struct spdk_nvmf_poll_group *group,
 	SPDK_DTRACE_PROBE3_TICKS(nvmf_poll_group_remove_subsystem, group, spdk_thread_get_id(group->thread),
 				 subsystem->subnqn);
 
-	ctx = calloc(1, sizeof(struct nvmf_qpair_disconnect_many_ctx));
+	//ctx = calloc(1, sizeof(struct nvmf_qpair_disconnect_many_ctx));
+	ctx = malloc(sizeof(struct nvmf_qpair_disconnect_many_ctx));
 	if (!ctx) {
 		SPDK_ERRLOG("Unable to allocate memory for context to remove poll subsystem\n");
 		if (cb_fn) {
@@ -1768,7 +1788,7 @@ nvmf_poll_group_remove_subsystem(struct spdk_nvmf_poll_group *group,
 		}
 		return;
 	}
-
+	memset(ctx, 0, sizeof(struct nvmf_qpair_disconnect_many_ctx));
 	ctx->group = group;
 	ctx->subsystem = subsystem;
 	ctx->cpl_fn = cb_fn;

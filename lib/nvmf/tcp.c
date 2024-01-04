@@ -4,6 +4,7 @@
  *   Copyright (c) 2022, 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  */
 
+#include <stdlib.h>
 #include "spdk/accel.h"
 #include "spdk/stdinc.h"
 #include "spdk/crc32.h"
@@ -50,6 +51,8 @@
 
 const struct spdk_nvmf_transport_ops spdk_nvmf_transport_tcp;
 static bool g_tls_log = false;
+
+static size_t align_size(size_t alignment, size_t size);
 
 /* spdk nvmf related structure */
 enum spdk_nvmf_tcp_req_state {
@@ -567,9 +570,15 @@ _nvmf_tcp_qpair_destroy(void *_tqpair)
 	 * terminates the connection.
 	 */
 	spdk_poller_unregister(&tqpair->timeout_poller);
-	spdk_dma_free(tqpair->pdus);
+	/* MS++
+	 *  spdk_dma_free(tqpair->pdus);
+	 */
+	free(tqpair->pdus);
 	free(tqpair->reqs);
-	spdk_free(tqpair->bufs);
+	/* MS++
+	 * spdk_free(tqpair->bufs);
+	 */
+	free(tqpair->bufs);
 	free(tqpair);
 
 	if (cb_fn != NULL) {
@@ -1198,9 +1207,16 @@ nvmf_tcp_qpair_init_mem_resource(struct spdk_nvmf_tcp_qpair *tqpair)
 	}
 
 	if (in_capsule_data_size) {
-		tqpair->bufs = spdk_zmalloc(tqpair->resource_count * in_capsule_data_size, 0x1000,
+		tqpair->bufs = aligned_alloc(0x1000,
+					     align_size(0x1000, tqpair->resource_count * in_capsule_data_size));
+		if (tqpair->bufs) {
+			memset(tqpair->bufs, 0, tqpair->resource_count * in_capsule_data_size);
+		}
+		/*
+		  tqpair->bufs = spdk_zmalloc(tqpair->resource_count * in_capsule_data_size, 0x1000,
 					    NULL, SPDK_ENV_LCORE_ID_ANY,
 					    SPDK_MALLOC_DMA);
+		 */
 		if (!tqpair->bufs) {
 			SPDK_ERRLOG("Unable to allocate bufs on tqpair=%p.\n", tqpair);
 			return -1;
@@ -1208,8 +1224,17 @@ nvmf_tcp_qpair_init_mem_resource(struct spdk_nvmf_tcp_qpair *tqpair)
 	}
 	/* prepare memory space for receiving pdus and tcp_req */
 	/* Add additional 1 member, which will be used for mgmt_pdu owned by the tqpair */
-	tqpair->pdus = spdk_dma_zmalloc((2 * tqpair->resource_count + 1) * sizeof(*tqpair->pdus), 0x1000,
+
+	tqpair->pdus = aligned_alloc(0x1000,
+				     align_size(0x1000, (2 * tqpair->resource_count + 1) * sizeof(*tqpair->pdus)));
+	if (tqpair->pdus) {
+		memset(tqpair->pdus, 0, (2 * tqpair->resource_count + 1) * sizeof(*tqpair->pdus));
+	}
+
+	/*
+	  tqpair->pdus = spdk_dma_zmalloc((2 * tqpair->resource_count + 1) * sizeof(*tqpair->pdus), 0x1000,
 					NULL);
+	 */
 	if (!tqpair->pdus) {
 		SPDK_ERRLOG("Unable to allocate pdu pool on tqpair =%p.\n", tqpair);
 		return -1;
@@ -1399,6 +1424,21 @@ nvmf_tcp_discover(struct spdk_nvmf_transport *transport,
 	}
 }
 
+static size_t
+align_size(size_t alignment, size_t size)
+{
+	size_t multiplier = 0;
+
+	if (size == 0) {
+		return 0;
+	}
+	if (size == alignment) {
+		return size;
+	}
+	multiplier = (size / alignment) + 1 ;
+	return multiplier * alignment;
+}
+
 static struct spdk_nvmf_tcp_control_msg_list *
 nvmf_tcp_control_msg_list_create(uint16_t num_messages)
 {
@@ -1412,8 +1452,15 @@ nvmf_tcp_control_msg_list_create(uint16_t num_messages)
 		return NULL;
 	}
 
+	list->msg_buf = aligned_alloc(NVMF_DATA_BUFFER_ALIGNMENT,
+				      align_size(NVMF_DATA_BUFFER_ALIGNMENT, num_messages * SPDK_NVME_TCP_IN_CAPSULE_DATA_MAX_SIZE));
+	if (list->msg_buf) {
+		memset(list->msg_buf, 0, num_messages * SPDK_NVME_TCP_IN_CAPSULE_DATA_MAX_SIZE);
+	}
+	/*
 	list->msg_buf = spdk_zmalloc(num_messages * SPDK_NVME_TCP_IN_CAPSULE_DATA_MAX_SIZE,
 				     NVMF_DATA_BUFFER_ALIGNMENT, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
+	 */
 	if (!list->msg_buf) {
 		SPDK_ERRLOG("Failed to allocate memory for control message buffers\n");
 		free(list);
@@ -1438,7 +1485,10 @@ nvmf_tcp_control_msg_list_free(struct spdk_nvmf_tcp_control_msg_list *list)
 		return;
 	}
 
-	spdk_free(list->msg_buf);
+	/* MS++
+	   spdk_free(list->msg_buf);
+	 */
+	free(list->msg_buf);
 	free(list);
 }
 

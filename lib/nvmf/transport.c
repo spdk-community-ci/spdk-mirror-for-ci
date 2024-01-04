@@ -17,7 +17,8 @@
 #include "spdk/util.h"
 #include "spdk_internal/usdt.h"
 
-#define NVMF_TRANSPORT_DEFAULT_ASSOCIATION_TIMEOUT_IN_MS 120000
+//#define NVMF_TRANSPORT_DEFAULT_ASSOCIATION_TIMEOUT_IN_MS 120000
+#define NVMF_TRANSPORT_DEFAULT_ASSOCIATION_TIMEOUT_IN_MS 5
 
 struct nvmf_transport_ops_list_element {
 	struct spdk_nvmf_transport_ops			ops;

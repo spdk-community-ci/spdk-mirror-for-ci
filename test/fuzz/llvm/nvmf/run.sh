@@ -32,7 +32,7 @@ function start_llvm_fuzz() {
 	trid="trtype:tcp adrfam:IPv4 subnqn:nqn.2016-06.io.spdk:cnode1 traddr:127.0.0.1 trsvcid:$port"
 	sed -e "s/\"trsvcid\": \"4420\"/\"trsvcid\": \"$port\"/" $testdir/fuzz_json.conf > $nvmf_cfg
 
-	$rootdir/test/app/fuzz/llvm_nvme_fuzz/llvm_nvme_fuzz \
+	LSAN_OPTIONS=report_objects=1 $rootdir/test/app/fuzz/llvm_nvme_fuzz/llvm_nvme_fuzz \
 		-m $core \
 		-s $mem_size \
 		-P $output_dir/llvm/ \

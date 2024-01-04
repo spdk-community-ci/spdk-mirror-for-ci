@@ -12,6 +12,7 @@
 #include "spdk/nvme.h"
 #include "spdk/likely.h"
 #include "spdk/file.h"
+#include <stdlib.h>
 
 static const uint8_t *g_data;
 static bool g_trid_specified = false;
@@ -736,6 +737,7 @@ static struct fuzz_type *g_fuzzer;
 struct spdk_nvme_transport_id g_trid;
 static struct spdk_nvme_ctrlr *g_ctrlr;
 static struct spdk_nvme_qpair *g_io_qpair;
+
 static void
 nvme_fuzz_cpl_cb(void *cb_arg, const struct spdk_nvme_cpl *cpl)
 {
@@ -744,6 +746,7 @@ nvme_fuzz_cpl_cb(void *cb_arg, const struct spdk_nvme_cpl *cpl)
 	assert(*outstanding > 0);
 	(*outstanding)--;
 }
+
 
 static int
 run_cmds(uint32_t queue_depth)
@@ -789,18 +792,22 @@ TestOneInput(const uint8_t *data, size_t size)
 	if (g_ctrlr == NULL) {
 		fprintf(stderr, "spdk_nvme_connect() failed for transport address '%s'\n",
 			g_trid.traddr);
+		/* 
+		 * spdk_app_stop(-1);
+		 */
+		sleep(100000);
 		return -1;
 	}
 
 	g_io_qpair = spdk_nvme_ctrlr_alloc_io_qpair(g_ctrlr, NULL, 0);
 	if (g_io_qpair == NULL) {
 		fprintf(stderr, "spdk_nvme_ctrlr_alloc_io_qpair failed\n");
+		sleep(100000);
 		ret = -1;
 		goto detach_ctrlr;
 	}
 
 	g_data = data;
-
 	run_cmds(size / g_fuzzer->bytes_per_cmd);
 	spdk_nvme_ctrlr_free_io_qpair(g_io_qpair);
 detach_ctrlr:
@@ -809,7 +816,11 @@ detach_ctrlr:
 	if (detach_ctx) {
 		spdk_nvme_detach_poll(detach_ctx);
 	}
-
+	/*
+	if (ret == -1) {
+		spdk_app_stop(-1);
+	}
+	*/
 	return ret;
 }
 
@@ -830,10 +841,7 @@ start_fuzzer(void *ctx)
 	char *_argv[] = {
 		"spdk",
 		"-len_control=0",
-		/* TODO: temporarily disable leak detection due to issues
-		 * with ASAN and DPDK, see #2455 and #2992.
-		 */
-		"-detect_leaks=0",
+		"-detect_leaks=1",
 		NULL,
 		NULL,
 		NULL,
