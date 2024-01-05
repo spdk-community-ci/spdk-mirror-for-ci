@@ -133,11 +133,11 @@ struct spdk_idxd_device {
 	struct spdk_idxd_impl		*impl;
 	void				*portal;
 	uint32_t			socket_id;
-	uint32_t			num_channels;
+	struct spdk_bit_array		*wq_array;
 	uint32_t			total_wq_size;
 	uint32_t			chan_per_device;
 	uint16_t			batch_size;
-	pthread_mutex_t			num_channels_lock;
+	pthread_mutex_t			wq_array_lock;
 	bool				pasid_enabled;
 	enum idxd_dev			type;
 	struct iaa_aecs			*aecs;
