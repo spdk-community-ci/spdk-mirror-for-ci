@@ -259,6 +259,7 @@ spdk_idxd_get_channel(struct spdk_idxd_device *idxd)
 	struct idxd_ops *op;
 	int i, num_descriptors, rc = -1;
 	uint32_t comp_rec_size;
+	uint32_t channel_num;
 
 	assert(idxd != NULL);
 
@@ -274,21 +275,29 @@ spdk_idxd_get_channel(struct spdk_idxd_device *idxd)
 	TAILQ_INIT(&chan->batch_pool);
 	STAILQ_INIT(&chan->ops_outstanding);
 
+	/* Have each channel start at a different offset. */
+	chan->portal = idxd->impl->portal_get_addr(idxd);
+
 	/* Assign WQ, portal */
-	pthread_mutex_lock(&idxd->num_channels_lock);
-	if (idxd->num_channels == idxd->chan_per_device) {
+	pthread_mutex_lock(&idxd->wq_array_lock);
+	channel_num = spdk_bit_array_find_first_clear(idxd->wq_array, 0);
+	if (channel_num == UINT32_MAX) {
 		/* too many channels sharing this device */
-		pthread_mutex_unlock(&idxd->num_channels_lock);
+		pthread_mutex_unlock(&idxd->wq_array_lock);
 		SPDK_ERRLOG("Too many channels sharing this device\n");
 		goto error;
 	}
+	rc = spdk_bit_array_set(idxd->wq_array, channel_num);
+	if (rc != 0) {
+		/* Should never happen since we found the channel_num
+		* under the lock */
+		assert(false);
+		pthread_mutex_unlock(&idxd->wq_array_lock);
+		goto error;
+	}
+	chan->portal_offset = (channel_num * PORTAL_STRIDE) & PORTAL_MASK;
 
-	/* Have each channel start at a different offset. */
-	chan->portal = idxd->impl->portal_get_addr(idxd);
-	chan->portal_offset = (idxd->num_channels * PORTAL_STRIDE) & PORTAL_MASK;
-	idxd->num_channels++;
-
-	pthread_mutex_unlock(&idxd->num_channels_lock);
+	pthread_mutex_unlock(&idxd->wq_array_lock);
 
 	/* Allocate descriptors and completions */
 	num_descriptors = idxd->total_wq_size / idxd->chan_per_device;
@@ -346,6 +355,8 @@ static int idxd_batch_cancel(struct spdk_idxd_io_channel *chan, int status);
 void
 spdk_idxd_put_channel(struct spdk_idxd_io_channel *chan)
 {
+	uint32_t channel_num;
+
 	assert(chan != NULL);
 	assert(chan->idxd != NULL);
 
@@ -353,10 +364,14 @@ spdk_idxd_put_channel(struct spdk_idxd_io_channel *chan)
 		idxd_batch_cancel(chan, -ECANCELED);
 	}
 
-	pthread_mutex_lock(&chan->idxd->num_channels_lock);
-	assert(chan->idxd->num_channels > 0);
-	chan->idxd->num_channels--;
-	pthread_mutex_unlock(&chan->idxd->num_channels_lock);
+	pthread_mutex_lock(&chan->idxd->wq_array_lock);
+	/* portal_offset is moved forward on each submission by chan_per_device,
+	 * so that all channels can submit on different WQ addresses */
+	channel_num = (chan->portal_offset % (chan->idxd->chan_per_device * PORTAL_STRIDE)) /
+		      PORTAL_STRIDE;
+	assert(spdk_bit_array_get(chan->idxd->wq_array, channel_num) == true);
+	spdk_bit_array_clear(chan->idxd->wq_array, channel_num);
+	pthread_mutex_unlock(&chan->idxd->wq_array_lock);
 
 	spdk_free(chan->ops_base);
 	spdk_free(chan->desc_base);
@@ -411,6 +426,7 @@ idxd_device_destruct(struct spdk_idxd_device *idxd)
 {
 	assert(idxd->impl != NULL);
 
+	spdk_bit_array_free(&idxd->wq_array);
 	idxd->impl->destruct(idxd);
 }
 
@@ -422,7 +438,13 @@ idxd_wq_setup(struct spdk_idxd_device *idxd)
 	 */
 
 	idxd->chan_per_device = (idxd->total_wq_size >= 128) ? 8 : 4;
-	pthread_mutex_init(&idxd->num_channels_lock, NULL);
+	idxd->wq_array = spdk_bit_array_create(idxd->chan_per_device);
+	if (idxd->wq_array == NULL) {
+		SPDK_ERRLOG("Failed to bit create array for the IDXD WQ\n");
+		return -ENOMEM;
+	}
+
+	pthread_mutex_init(&idxd->wq_array_lock, NULL);
 	return 0;
 }
 
