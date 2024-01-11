@@ -52,9 +52,7 @@ _submit_to_hw(struct spdk_idxd_io_channel *chan, struct idxd_ops *op)
 	 * operations begin.
 	 */
 	_spdk_wmb();
-	movdir64b(chan->portal + chan->portal_offset, op->desc);
-	chan->portal_offset = (chan->portal_offset + chan->idxd->chan_per_device * PORTAL_STRIDE) &
-			      PORTAL_MASK;
+	movdir64b(chan->portal + op->portal_offset, op->desc);
 }
 
 inline static int
@@ -295,7 +293,7 @@ spdk_idxd_get_channel(struct spdk_idxd_device *idxd)
 		pthread_mutex_unlock(&idxd->wq_array_lock);
 		goto error;
 	}
-	chan->portal_offset = (channel_num * PORTAL_STRIDE) & PORTAL_MASK;
+	chan->channel_num = (uint16_t)channel_num;
 
 	pthread_mutex_unlock(&idxd->wq_array_lock);
 
@@ -317,7 +315,10 @@ spdk_idxd_get_channel(struct spdk_idxd_device *idxd)
 			goto error;
 		}
 		op->desc = desc;
+
 		STAILQ_INSERT_TAIL(&chan->ops_pool, op, link);
+		op->portal_offset = (uint16_t)(((chan->channel_num * chan->idxd->chan_per_device + i) *
+						PORTAL_STRIDE) & PORTAL_MASK);
 
 		if (idxd->type == IDXD_DEV_TYPE_DSA) {
 			comp_rec_size = sizeof(struct dsa_hw_comp_record);
@@ -349,8 +350,6 @@ static int idxd_batch_cancel(struct spdk_idxd_io_channel *chan, int status);
 void
 spdk_idxd_put_channel(struct spdk_idxd_io_channel *chan)
 {
-	uint32_t channel_num;
-
 	assert(chan != NULL);
 	assert(chan->idxd != NULL);
 
@@ -361,10 +360,8 @@ spdk_idxd_put_channel(struct spdk_idxd_io_channel *chan)
 	pthread_mutex_lock(&chan->idxd->wq_array_lock);
 	/* portal_offset is moved forward on each submission by chan_per_device,
 	 * so that all channels can submit on different WQ addresses */
-	channel_num = (chan->portal_offset % (chan->idxd->chan_per_device * PORTAL_STRIDE)) /
-		      PORTAL_STRIDE;
-	assert(spdk_bit_array_get(chan->idxd->wq_array, channel_num) == true);
-	spdk_bit_array_clear(chan->idxd->wq_array, channel_num);
+	assert(spdk_bit_array_get(chan->idxd->wq_array, chan->channel_num) == true);
+	spdk_bit_array_clear(chan->idxd->wq_array, chan->channel_num);
 	pthread_mutex_unlock(&chan->idxd->wq_array_lock);
 
 	_idxd_free_ops(chan);
