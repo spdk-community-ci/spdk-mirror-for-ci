@@ -834,10 +834,6 @@ nvme_pcie_qpair_process_completions(struct spdk_nvme_qpair *qpair, uint32_t max_
 	bool			 next_is_valid = false;
 	int			 rc;
 
-	if (spdk_unlikely(pqpair->pcie_state == NVME_PCIE_QPAIR_FAILED)) {
-		return -ENXIO;
-	}
-
 	if (spdk_unlikely(nvme_qpair_get_state(qpair) == NVME_QPAIR_CONNECTING)) {
 		if (pqpair->pcie_state == NVME_PCIE_QPAIR_READY) {
 			/* It is possible that another thread set the pcie_state to
@@ -861,6 +857,10 @@ nvme_pcie_qpair_process_completions(struct spdk_nvme_qpair *qpair, uint32_t max_
 			}
 		}
 		return 0;
+	}
+
+	if (spdk_unlikely(pqpair->pcie_state == NVME_PCIE_QPAIR_FAILED)) {
+		return -ENXIO;
 	}
 
 	if (spdk_unlikely(nvme_qpair_is_admin_queue(qpair))) {
