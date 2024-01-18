@@ -462,7 +462,7 @@ nvme_completion_create_sq_cb(void *arg, const struct spdk_nvme_cpl *cpl)
 		}
 		return;
 	}
-	pqpair->pcie_state = NVME_PCIE_QPAIR_READY;
+
 	if (ctrlr->shadow_doorbell) {
 		pqpair->shadow_doorbell.sq_tdbl = ctrlr->shadow_doorbell + (2 * qpair->id + 0) *
 						  pctrlr->doorbell_stride_u32;
@@ -476,8 +476,9 @@ nvme_completion_create_sq_cb(void *arg, const struct spdk_nvme_cpl *cpl)
 	} else {
 		pqpair->flags.has_shadow_doorbell = 0;
 	}
-	nvme_pcie_qpair_reset(qpair);
 
+	nvme_pcie_qpair_reset(qpair);
+	pqpair->pcie_state = NVME_PCIE_QPAIR_READY;
 }
 
 static void
