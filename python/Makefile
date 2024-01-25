@@ -19,9 +19,13 @@ pylibdir := $(pylibdir:/local%=%)
 pylibdir := $(CONFIG_PREFIX)$(pylibdir)
 endif
 
-all:
+all: genrpc
 
 clean:
+
+genrpc:
+	$(Q)$(SPDK_ROOT_DIR)/scripts/genrpc.py $(SPDK_ROOT_DIR)/schema/schema.json > \
+		$(SPDK_ROOT_DIR)/python/spdk/rpc/rpc.py
 
 install: rpc spdkcli
 	$(Q)$(setup_cmd) $(SPDK_ROOT_DIR)/python
@@ -46,4 +50,4 @@ uninstall:
 	$(Q)rm -f $(DESTDIR)/$(bindir)/spdk_rpc
 	$(Q)rm -f $(DESTDIR)/$(bindir)/spdk_cli
 
-.PHONY: all clean install uninstall
+.PHONY: all clean genrpc install uninstall
