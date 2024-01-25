@@ -19,9 +19,13 @@ pylibdir := $(pylibdir:/local%=%)
 pylibdir := $(CONFIG_PREFIX)$(pylibdir)
 endif
 
-all:
+all: genrpc
 
 clean:
+
+genrpc:
+	$(Q) $(SPDK_ROOT_DIR)/scripts/genrpc.py $(SPDK_ROOT_DIR)/schema/schema.json > \
+	$(SPDK_ROOT_DIR)/python/spdk/rpc/rpc.py
 
 install: rpc spdkcli
 	$(Q)$(setup_cmd) $(SPDK_ROOT_DIR)/python
