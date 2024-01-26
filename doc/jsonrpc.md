@@ -6378,7 +6378,8 @@ Example response:
           }
         }
       }
-    }
+    },
+    "WAF": 0.0
 }
 ~~~
 

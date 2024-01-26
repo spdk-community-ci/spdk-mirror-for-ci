@@ -278,6 +278,18 @@ _rpc_bdev_ftl_get_stats(void *ctx, int rc)
 		spdk_json_write_object_end(w);
 	}
 
+	{
+		/* Calculate WAF */
+		uint64_t user = stats->entries[FTL_STATS_TYPE_USER].write.blocks;
+		uint64_t base = stats->entries[FTL_STATS_TYPE_BASE].write.blocks;
+		double waf = 0.0L;
+
+		if (user) {
+			waf = (double)base / (double)user;
+		}
+		spdk_json_write_named_double(w, "WAF", waf);
+	}
+
 	spdk_json_write_object_end(w);
 	spdk_jsonrpc_end_result(request, w);
 	free(ftl_stats_ctx);

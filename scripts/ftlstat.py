@@ -79,7 +79,9 @@ class FTLBdev:
     def __get_delta(self, delta, previous, current, interval):
         for key in previous:
             if key in current:
-                if isinstance(previous[key], dict) and isinstance(current[key], dict):
+                if key == "WAF":
+                    delta[key] = current[key]
+                elif isinstance(previous[key], dict) and isinstance(current[key], dict):
                     delta[key] = {}
                     self.__get_delta(
                         delta[key], previous[key], current[key], interval)
@@ -165,6 +167,8 @@ class FTLStat:
             elif key.endswith(".blocks"):
                 key = ".bw".join(key.rsplit(".blocks", 1))
                 value = value * 4096 / 2**20  # MiB/s
+                flat_stats_io[key] = value
+            elif key == "WAF":
                 flat_stats_io[key] = value
 
     def _output_start(self):
