@@ -1060,6 +1060,11 @@ static const struct ftl_mngt_process_desc g_desc_recovery = {
 			.cleanup = ftl_mngt_stop_core_poller
 		},
 		{
+			.name = "Start admin poller",
+			.action = ftl_mngt_start_admin_poller,
+			.cleanup = ftl_mngt_stop_admin_poller
+		},
+		{
 			.name = "Self test on startup",
 			.action = ftl_mngt_self_test
 		},

@@ -203,6 +203,11 @@ static const struct ftl_mngt_process_desc desc_first_start = {
 			.cleanup = ftl_mngt_stop_core_poller
 		},
 		{
+			.name = "Start admin poller",
+			.action = ftl_mngt_start_admin_poller,
+			.cleanup = ftl_mngt_stop_admin_poller
+		},
+		{
 			.name = "Finalize initialization",
 			.action = ftl_mngt_finalize_startup,
 		},
@@ -260,6 +265,11 @@ static const struct ftl_mngt_process_desc desc_clean_start = {
 			.name = "Start core poller",
 			.action = ftl_mngt_start_core_poller,
 			.cleanup = ftl_mngt_stop_core_poller
+		},
+		{
+			.name = "Start admin poller",
+			.action = ftl_mngt_start_admin_poller,
+			.cleanup = ftl_mngt_stop_admin_poller
 		},
 		{
 			.name = "Self test on startup",

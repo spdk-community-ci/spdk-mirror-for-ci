@@ -24,6 +24,10 @@ static const struct ftl_mngt_process_desc desc_shutdown = {
 			.action = ftl_mngt_unregister_io_device
 		},
 		{
+			.name = "Stop admin poller",
+			.action = ftl_mngt_stop_admin_poller
+		},
+		{
 			.name = "Stop core poller",
 			.action = ftl_mngt_stop_core_poller
 		},
@@ -78,6 +82,10 @@ static const struct ftl_mngt_process_desc desc_fast_shutdown = {
 		{
 			.name = "Unregister IO device",
 			.action = ftl_mngt_unregister_io_device
+		},
+		{
+			.name = "Stop admin poller",
+			.action = ftl_mngt_stop_admin_poller
 		},
 		{
 			.name = "Stop core poller",

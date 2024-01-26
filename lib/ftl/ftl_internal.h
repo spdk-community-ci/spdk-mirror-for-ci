@@ -146,6 +146,7 @@ struct spdk_ftl_dev;
 struct ftl_mngt_process;
 struct ftl_io;
 struct ftl_rq;
+struct ftl_admin_poller_ctx;
 
 int ftl_p2l_ckpt_init(struct spdk_ftl_dev *dev);
 

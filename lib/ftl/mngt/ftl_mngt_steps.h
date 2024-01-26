@@ -75,6 +75,10 @@ void ftl_mngt_start_core_poller(struct spdk_ftl_dev *dev, struct ftl_mngt_proces
 
 void ftl_mngt_stop_core_poller(struct spdk_ftl_dev *dev, struct ftl_mngt_process *mngt);
 
+void ftl_mngt_start_admin_poller(struct spdk_ftl_dev *dev, struct ftl_mngt_process *mngt);
+
+void ftl_mngt_stop_admin_poller(struct spdk_ftl_dev *dev, struct ftl_mngt_process *mngt);
+
 void ftl_mngt_persist_l2p(struct spdk_ftl_dev *dev, struct ftl_mngt_process *mngt);
 
 void ftl_mngt_init_layout(struct spdk_ftl_dev *dev, struct ftl_mngt_process *mngt);

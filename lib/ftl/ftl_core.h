@@ -156,8 +156,11 @@ struct spdk_ftl_dev {
 	/* Underlying device IO channel */
 	struct spdk_io_channel		*base_ioch;
 
-	/* Poller */
+	/* Core poller */
 	struct spdk_poller		*core_poller;
+
+	/* Admin poller */
+	struct ftl_admin_poller_ctx	*admin_poller_ctx;
 
 	/* Read submission queue */
 	TAILQ_HEAD(, ftl_io)		rd_sq;
