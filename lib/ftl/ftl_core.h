@@ -349,4 +349,16 @@ ftl_fast_recovery(const struct spdk_ftl_dev *dev)
 	return !dev->sb->clean && !dev->sb_shm->shm_clean && dev->sb_shm->shm_ready;
 }
 
+/**
+ * @brief Checks if FTL is in idle state
+ *
+ * The idle state is whenever no user IO activity after while
+ *
+ * @param dev FTL device
+ *
+ * @retval true FTL in idle state
+ * @return false FTL is active and handling user IO recently
+ */
+bool ftl_is_idle(struct spdk_ftl_dev *dev);
+
 #endif /* FTL_CORE_H */
