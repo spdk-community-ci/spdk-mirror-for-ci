@@ -42,6 +42,12 @@ void ftl_property_dump_uint32(struct spdk_ftl_dev *dev, const struct ftl_propert
 			      struct spdk_json_write_ctx *w);
 
 /**
+ * @brief A function to dump the FTL property which type is double
+ */
+void ftl_property_dump_double(struct spdk_ftl_dev *dev, const struct ftl_property *property,
+			      struct spdk_json_write_ctx *w);
+
+/**
  * @brief Dump the value of property into the specified JSON RPC request
  *
  * @param dev FTL device

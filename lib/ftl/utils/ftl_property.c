@@ -222,6 +222,16 @@ ftl_property_dump_uint32(struct spdk_ftl_dev *dev, const struct ftl_property *pr
 	spdk_json_write_named_uint32(w, "value", *value);
 }
 
+void
+ftl_property_dump_double(struct spdk_ftl_dev *dev, const struct ftl_property *property,
+			 struct spdk_json_write_ctx *w)
+{
+	double *value = property->value;
+
+	assert(property->size == sizeof(*value));
+	spdk_json_write_named_double(w, "value", *value);
+}
+
 int
 ftl_property_decode(struct spdk_ftl_dev *dev, const char *name, const char *value,
 		    size_t value_size, void **output, size_t *output_size)
