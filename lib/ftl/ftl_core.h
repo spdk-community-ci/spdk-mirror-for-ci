@@ -233,6 +233,8 @@ void ftl_recover_max_seq(struct spdk_ftl_dev *dev);
 void ftl_stats_bdev_io_completed(struct spdk_ftl_dev *dev, enum ftl_stats_type type,
 				 struct spdk_bdev_io *bdev_io);
 
+void ftl_stats_io_completed(struct spdk_ftl_dev *dev, struct ftl_io *io);
+
 void ftl_stats_crc_error(struct spdk_ftl_dev *dev, enum ftl_stats_type type);
 
 int ftl_trim(struct spdk_ftl_dev *dev, struct ftl_io *io, struct spdk_io_channel *ch,

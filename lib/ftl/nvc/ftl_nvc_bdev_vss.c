@@ -42,12 +42,9 @@ write_io_cb(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
 	struct ftl_io *io = cb_arg;
 	struct ftl_nv_cache *nv_cache = &io->dev->nv_cache;
 
-	ftl_stats_bdev_io_completed(io->dev, FTL_STATS_TYPE_USER, bdev_io);
-
+	ftl_stats_bdev_io_completed(io->dev, FTL_STATS_TYPE_CACHE, bdev_io);
 	spdk_bdev_free_io(bdev_io);
-
 	ftl_mempool_put(nv_cache->md_pool, io->md);
-
 	ftl_nv_cache_write_complete(io, success);
 }
 

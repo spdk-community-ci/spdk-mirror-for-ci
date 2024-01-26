@@ -84,6 +84,7 @@ DEFINE_STUB_V(ftl_property_register, (struct spdk_ftl_dev *dev,
 				      ftl_property_decode_fn decode,
 				      ftl_property_set_fn set,
 				      bool verbose_mode));
+DEFINE_STUB_V(ftl_stats_io_completed, (struct spdk_ftl_dev *dev, struct ftl_io *io));
 
 #if defined(DEBUG)
 DEFINE_STUB_V(ftl_trace_submission, (struct spdk_ftl_dev *dev, const struct ftl_io *io,

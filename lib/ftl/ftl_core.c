@@ -26,13 +26,24 @@ spdk_ftl_io_size(void)
 	return sizeof(struct ftl_io);
 }
 
+static enum ftl_stats_type
+get_bdev_io_ftl_stats_dev_type(struct spdk_ftl_dev *dev, struct spdk_bdev_io *bdev_io) {
+	struct spdk_bdev *nvc = spdk_bdev_desc_get_bdev(dev->nv_cache.bdev_desc);
+
+	if (bdev_io->bdev == nvc)
+	{
+		return FTL_STATS_TYPE_CACHE;
+	} else
+	{
+		return FTL_STATS_TYPE_BASE;
+	}
+}
+
 static void
-ftl_io_cmpl_cb(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
+ftl_read_io_cmpl_cb(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
 {
 	struct ftl_io *io = cb_arg;
 	struct spdk_ftl_dev *dev = io->dev;
-
-	ftl_stats_bdev_io_completed(dev, FTL_STATS_TYPE_USER, bdev_io);
 
 	if (spdk_unlikely(!success)) {
 		io->status = -EIO;
@@ -45,6 +56,7 @@ ftl_io_cmpl_cb(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
 		ftl_io_complete(io);
 	}
 
+	ftl_stats_bdev_io_completed(dev, get_bdev_io_ftl_stats_dev_type(dev, bdev_io), bdev_io);
 	spdk_bdev_free_io(bdev_io);
 }
 
@@ -247,11 +259,11 @@ ftl_submit_read(struct ftl_io *io)
 		ftl_trace_submission(dev, io, addr, num_blocks);
 
 		if (ftl_addr_in_nvc(dev, addr)) {
-			rc = ftl_nv_cache_read(io, addr, num_blocks, ftl_io_cmpl_cb, io);
+			rc = ftl_nv_cache_read(io, addr, num_blocks, ftl_read_io_cmpl_cb, io);
 		} else {
 			rc = spdk_bdev_read_blocks(dev->base_bdev_desc, dev->base_ioch,
 						   ftl_io_iovec_addr(io),
-						   addr, num_blocks, ftl_io_cmpl_cb, io);
+						   addr, num_blocks, ftl_read_io_cmpl_cb, io);
 		}
 
 		if (spdk_unlikely(rc)) {
@@ -846,6 +858,57 @@ ftl_stats_bdev_io_completed(struct spdk_ftl_dev *dev, enum ftl_stats_type type,
 		stats_group->errors.media++;
 	} else {
 		stats_group->errors.other++;
+	}
+
+	switch (type) {
+	case FTL_STATS_TYPE_CMP:
+		if (bdev_io->type == SPDK_BDEV_IO_TYPE_READ) {
+			type = FTL_STATS_TYPE_CACHE;
+		} else {
+			type = FTL_STATS_TYPE_BASE;
+		}
+		break;
+	case FTL_STATS_TYPE_GC:
+		type = FTL_STATS_TYPE_BASE;
+		break;
+	case FTL_STATS_TYPE_MD_BASE:
+		type = FTL_STATS_TYPE_BASE;
+		break;
+	case FTL_STATS_TYPE_MD_NV_CACHE:
+		type = FTL_STATS_TYPE_CACHE;
+		break;
+	case FTL_STATS_TYPE_L2P:
+		type = FTL_STATS_TYPE_CACHE;
+		break;
+	default:
+		return;
+	}
+	ftl_stats_bdev_io_completed(dev, type, bdev_io);
+
+}
+
+void
+ftl_stats_io_completed(struct spdk_ftl_dev *dev, struct ftl_io *io)
+{
+	struct ftl_stats_entry *stats_entry = &dev->stats.entries[FTL_STATS_TYPE_USER];
+	struct ftl_stats_group *stats_group;
+
+	switch (io->type) {
+	case FTL_IO_READ:
+		stats_group = &stats_entry->read;
+		break;
+	case FTL_IO_WRITE:
+		stats_group = &stats_entry->write;
+		break;
+	default:
+		return;
+	}
+
+	if (0 == io->status) {
+		stats_group->ios++;
+		stats_group->blocks += io->num_blocks;
+	} else {
+		stats_group->errors.media++;
 	}
 }
 

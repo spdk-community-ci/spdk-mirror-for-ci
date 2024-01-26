@@ -6245,6 +6245,44 @@ Example response:
           }
         }
       },
+      "cache": {
+        "read": {
+          "ios": 1,
+          "blocks": 1,
+          "errors": {
+            "media": 0,
+            "crc": 0,
+            "other": 0
+          }
+        },
+        "write": {
+          "ios": 1065,
+          "blocks": 1077796,
+          "errors": {
+            "media": 0,
+            "other": 0
+          }
+        }
+      },
+      "base": {
+        "read": {
+          "ios": 0,
+          "blocks": 0,
+          "errors": {
+            "media": 0,
+            "crc": 0,
+            "other": 0
+          }
+        },
+        "write": {
+          "ios": 1,
+          "blocks": 32,
+          "errors": {
+            "media": 0,
+            "other": 0
+          }
+        }
+      },
       "cmp": {
         "read": {
           "ios": 0,

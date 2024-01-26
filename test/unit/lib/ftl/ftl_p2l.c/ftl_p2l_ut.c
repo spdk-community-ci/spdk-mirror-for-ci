@@ -11,6 +11,7 @@
 #include "ftl/ftl_core.c"
 #include "ftl/ftl_p2l.c"
 
+struct spdk_bdev_io;
 struct spdk_ftl_dev g_dev;
 struct ftl_band g_band;
 void *md_buffer;

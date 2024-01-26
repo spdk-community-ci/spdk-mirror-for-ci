@@ -230,6 +230,12 @@ _rpc_bdev_ftl_get_stats(void *ctx, int rc)
 		case FTL_STATS_TYPE_USER:
 			spdk_json_write_named_object_begin(w, "user");
 			break;
+		case FTL_STATS_TYPE_CACHE:
+			spdk_json_write_named_object_begin(w, "cache");
+			break;
+		case FTL_STATS_TYPE_BASE:
+			spdk_json_write_named_object_begin(w, "base");
+			break;
 		case FTL_STATS_TYPE_CMP:
 			spdk_json_write_named_object_begin(w, "cmp");
 			break;
@@ -237,10 +243,10 @@ _rpc_bdev_ftl_get_stats(void *ctx, int rc)
 			spdk_json_write_named_object_begin(w, "gc");
 			break;
 		case FTL_STATS_TYPE_MD_BASE:
-			spdk_json_write_named_object_begin(w, "md_base");
+			spdk_json_write_named_object_begin(w, "base_md");
 			break;
 		case FTL_STATS_TYPE_MD_NV_CACHE:
-			spdk_json_write_named_object_begin(w, "md_nv_cache");
+			spdk_json_write_named_object_begin(w, "cache_md");
 			break;
 		case FTL_STATS_TYPE_L2P:
 			spdk_json_write_named_object_begin(w, "l2p");

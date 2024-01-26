@@ -361,8 +361,8 @@ exception(void *arg)
 	io_cleanup(md);
 }
 
-static inline enum ftl_stats_type
-get_bdev_io_ftl_stats_type(struct spdk_ftl_dev *dev, struct spdk_bdev_io *bdev_io) {
+static enum ftl_stats_type
+get_bdev_io_ftl_stats_dev_type(struct spdk_ftl_dev *dev, struct spdk_bdev_io *bdev_io) {
 	struct spdk_bdev *nvc = spdk_bdev_desc_get_bdev(dev->nv_cache.bdev_desc);
 
 	if (bdev_io->bdev == nvc)
@@ -379,7 +379,7 @@ read_write_blocks_cb(struct spdk_bdev_io *bdev_io, bool success, void *arg)
 {
 	struct ftl_md *md = arg;
 
-	ftl_stats_bdev_io_completed(md->dev, get_bdev_io_ftl_stats_type(md->dev, bdev_io), bdev_io);
+	ftl_stats_bdev_io_completed(md->dev, get_bdev_io_ftl_stats_dev_type(md->dev, bdev_io), bdev_io);
 
 	if (spdk_unlikely(!success)) {
 		if (md->io.op == FTL_MD_OP_RESTORE && has_mirror(md)) {
@@ -562,7 +562,7 @@ persist_entry_cb(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
 	struct ftl_md_io_entry_ctx *ctx = cb_arg;
 	struct ftl_md *md = ctx->md;
 
-	ftl_stats_bdev_io_completed(md->dev, get_bdev_io_ftl_stats_type(md->dev, bdev_io), bdev_io);
+	ftl_stats_bdev_io_completed(md->dev, get_bdev_io_ftl_stats_dev_type(md->dev, bdev_io), bdev_io);
 
 	spdk_bdev_free_io(bdev_io);
 
@@ -671,7 +671,7 @@ read_entry_cb(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
 	struct ftl_md_io_entry_ctx *ctx = cb_arg;
 	struct ftl_md *md = ctx->md;
 
-	ftl_stats_bdev_io_completed(md->dev, get_bdev_io_ftl_stats_type(md->dev, bdev_io), bdev_io);
+	ftl_stats_bdev_io_completed(md->dev, get_bdev_io_ftl_stats_dev_type(md->dev, bdev_io), bdev_io);
 
 	spdk_bdev_free_io(bdev_io);
 

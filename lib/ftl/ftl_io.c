@@ -143,7 +143,6 @@ ftl_io_cb(struct ftl_io *io, void *arg, int status)
 				assert(0);
 				break;
 			}
-
 		}
 
 		if (!io->status) {
@@ -156,6 +155,7 @@ ftl_io_cb(struct ftl_io *io, void *arg, int status)
 		ftl_mempool_put(ioch->map_pool, io->map);
 	}
 
+	ftl_stats_io_completed(io->dev, io);
 	result = spdk_ring_enqueue(ioch->cq, (void **)&io, 1, NULL);
 	assert(result != 0);
 }

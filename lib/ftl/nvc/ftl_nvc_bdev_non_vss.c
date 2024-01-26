@@ -69,7 +69,7 @@ write_io_cb(struct spdk_bdev_io *bdev_io, bool success, void *ctx)
 {
 	struct ftl_io *io = ctx;
 
-	ftl_stats_bdev_io_completed(io->dev, FTL_STATS_TYPE_USER, bdev_io);
+	ftl_stats_bdev_io_completed(io->dev, FTL_STATS_TYPE_CACHE, bdev_io);
 	spdk_bdev_free_io(bdev_io);
 
 	if (spdk_likely(success)) {
