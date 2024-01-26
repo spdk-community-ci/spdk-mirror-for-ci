@@ -30,7 +30,7 @@
 
 #define FTL_NVC_VERSION_CURRENT FTL_NVC_VERSION_2
 
-#define FTL_NV_CACHE_NUM_COMPACTORS 8
+#define FTL_NV_CACHE_NUM_COMPACTORS 64
 
 /*
  * Parameters controlling nv cache write throttling.
@@ -43,12 +43,12 @@
  */
 
 /* Interval in milliseconds between write throttle updates. */
-#define FTL_NV_CACHE_THROTTLE_INTERVAL_MS	20
+#define FTL_NV_CACHE_THROTTLE_INTERVAL_MS 20
 /* Throttle modifier proportional gain */
-#define FTL_NV_CACHE_THROTTLE_MODIFIER_KP	20
+#define FTL_NV_CACHE_THROTTLE_MODIFIER_KP 20
 /* Min and max modifier values */
-#define FTL_NV_CACHE_THROTTLE_MODIFIER_MIN	-0.8
-#define FTL_NV_CACHE_THROTTLE_MODIFIER_MAX	0.5
+#define FTL_NV_CACHE_THROTTLE_MODIFIER_MIN -0.8
+#define FTL_NV_CACHE_THROTTLE_MODIFIER_MAX 0.5
 
 struct ftl_nvcache_restore;
 typedef void (*ftl_nv_cache_restore_fn)(struct ftl_nvcache_restore *, int, void *cb_arg);
