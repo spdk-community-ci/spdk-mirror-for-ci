@@ -150,10 +150,10 @@ static void
 ftl_property_dump_common_end(const struct ftl_property *property,
 			     struct spdk_json_write_ctx *w)
 {
-	if (property->unit) {
+	if (property->unit && property->unit[0]) {
 		spdk_json_write_named_string(w, "unit", property->unit);
 	}
-	if (property->desc) {
+	if (property->desc && property->desc[0]) {
 		spdk_json_write_named_string(w, "desc", property->desc);
 	}
 
