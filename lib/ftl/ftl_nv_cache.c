@@ -13,6 +13,7 @@
 #include "ftl_nv_cache_io.h"
 #include "ftl_core.h"
 #include "ftl_band.h"
+#include "ftl_admin.h"
 #include "utils/ftl_addr_utils.h"
 #include "utils/ftl_defs.h"
 #include "mngt/ftl_mngt.h"
@@ -92,12 +93,11 @@ ftl_nv_cache_init_update_limits(struct spdk_ftl_dev *dev)
 					  dev->conf.nv_cache.chunk_compaction_threshold /
 					  100;
 
-	nvc->throttle.interval_tsc = FTL_NV_CACHE_THROTTLE_INTERVAL_MS *
-				     (spdk_get_ticks_hz() / 1000);
-
 	nvc->chunk_free_target = spdk_divide_round_up(usable_chunks *
 				 dev->conf.nv_cache.chunk_free_target,
 				 100);
+
+	nvc->chunk_usable_count = usable_chunks;
 }
 
 struct nvc_scrub_ctx {
@@ -325,12 +325,6 @@ ftl_nv_cache_init(struct spdk_ftl_dev *dev)
 	ftl_nv_cache_init_update_limits(dev);
 	ftl_property_register(dev, "cache_device", NULL, 0, NULL, NULL, ftl_property_dump_cache_dev, NULL,
 			      NULL, true);
-
-	nv_cache->throttle.interval_tsc = FTL_NV_CACHE_THROTTLE_INTERVAL_MS *
-					  (spdk_get_ticks_hz() / 1000);
-	nv_cache->chunk_free_target = spdk_divide_round_up(nv_cache->chunk_count *
-				      dev->conf.nv_cache.chunk_free_target,
-				      100);
 
 	if (nv_cache->nvc_type->ops.init) {
 		return nv_cache->nvc_type->ops.init(dev);
@@ -573,6 +567,7 @@ chunk_free_cb(int status, void *ctx)
 
 	if (spdk_likely(!status)) {
 		struct ftl_nv_cache *nv_cache = chunk->nv_cache;
+		struct spdk_ftl_dev *dev =  SPDK_CONTAINEROF(nv_cache, struct spdk_ftl_dev, nv_cache);
 
 		nv_cache->chunk_free_persist_count--;
 		TAILQ_INSERT_TAIL(&nv_cache->chunk_free_list, chunk, entry);
@@ -581,6 +576,7 @@ chunk_free_cb(int status, void *ctx)
 		chunk->md->state = FTL_CHUNK_STATE_FREE;
 		chunk->md->close_seq_id = 0;
 		ftl_chunk_free_chunk_free_entry(chunk);
+		ftl_admin_nv_cache_throttle_update(dev);
 	} else {
 #ifdef SPDK_FTL_RETRY_ON_ERROR
 		ftl_md_persist_entry_retry(&chunk->md_persist_entry_ctx);
@@ -620,43 +616,9 @@ ftl_chunk_persist_free_state(struct ftl_nv_cache *nv_cache)
 }
 
 static void
-compaction_stats_update(struct ftl_nv_cache_chunk *chunk)
-{
-	struct ftl_nv_cache *nv_cache = chunk->nv_cache;
-	struct compaction_bw_stats *compaction_bw = &nv_cache->compaction_recent_bw;
-	double *ptr;
-
-	if (spdk_unlikely(chunk->compaction_length_tsc == 0)) {
-		return;
-	}
-
-	if (spdk_likely(compaction_bw->count == FTL_NV_CACHE_COMPACTION_SMA_N)) {
-		ptr = compaction_bw->buf + compaction_bw->first;
-		compaction_bw->first++;
-		if (compaction_bw->first == FTL_NV_CACHE_COMPACTION_SMA_N) {
-			compaction_bw->first = 0;
-		}
-		compaction_bw->sum -= *ptr;
-	} else {
-		ptr = compaction_bw->buf + compaction_bw->count;
-		compaction_bw->count++;
-	}
-
-	*ptr = (double)chunk->md->blocks_compacted * FTL_BLOCK_SIZE / chunk->compaction_length_tsc;
-	chunk->compaction_length_tsc = 0;
-
-	compaction_bw->sum += *ptr;
-	nv_cache->compaction_sma = compaction_bw->sum / compaction_bw->count;
-}
-
-static void
 chunk_compaction_advance(struct ftl_nv_cache_chunk *chunk, uint64_t num_blocks)
 {
 	struct ftl_nv_cache *nv_cache = chunk->nv_cache;
-	uint64_t tsc = spdk_thread_get_last_tsc(spdk_get_thread());
-
-	chunk->compaction_length_tsc += tsc - chunk->compaction_start_tsc;
-	chunk->compaction_start_tsc = tsc;
 
 	chunk->md->blocks_compacted += num_blocks;
 	assert(chunk->md->blocks_compacted <= chunk_user_blocks_written(chunk));
@@ -668,10 +630,7 @@ chunk_compaction_advance(struct ftl_nv_cache_chunk *chunk, uint64_t num_blocks)
 	TAILQ_REMOVE(&nv_cache->chunk_comp_list, chunk, entry);
 	nv_cache->chunk_comp_count--;
 
-	compaction_stats_update(chunk);
-
 	chunk_free_p2l_map(chunk);
-
 	ftl_chunk_free(chunk);
 }
 
@@ -1023,7 +982,6 @@ compaction_entry_read_pos(struct ftl_nv_cache *nv_cache, struct ftl_rq_entry *en
 		if (!chunk) {
 			return false;
 		}
-		chunk->compaction_start_tsc = spdk_thread_get_last_tsc(spdk_get_thread());
 
 		/* Get next read position in chunk */
 		addr = compaction_chunk_read_pos(dev, chunk);
@@ -1407,44 +1365,6 @@ ftl_nv_cache_set_addr(struct spdk_ftl_dev *dev, uint64_t lba, ftl_addr addr)
 	ftl_bitmap_set(dev->valid_map, addr);
 }
 
-static void
-ftl_nv_cache_throttle_update(struct ftl_nv_cache *nv_cache)
-{
-	double err;
-	double modifier;
-
-	err = ((double)nv_cache->chunk_free_count - nv_cache->chunk_free_target) / nv_cache->chunk_count;
-	modifier = FTL_NV_CACHE_THROTTLE_MODIFIER_KP * err;
-
-	if (modifier < FTL_NV_CACHE_THROTTLE_MODIFIER_MIN) {
-		modifier = FTL_NV_CACHE_THROTTLE_MODIFIER_MIN;
-	} else if (modifier > FTL_NV_CACHE_THROTTLE_MODIFIER_MAX) {
-		modifier = FTL_NV_CACHE_THROTTLE_MODIFIER_MAX;
-	}
-
-	if (spdk_unlikely(nv_cache->compaction_sma == 0 || nv_cache->compaction_active_count == 0)) {
-		nv_cache->throttle.blocks_submitted_limit = UINT64_MAX;
-	} else {
-		double blocks_per_interval = nv_cache->compaction_sma * nv_cache->throttle.interval_tsc /
-					     FTL_BLOCK_SIZE;
-		nv_cache->throttle.blocks_submitted_limit = blocks_per_interval * (1.0 + modifier);
-	}
-}
-
-static void
-ftl_nv_cache_process_throttle(struct ftl_nv_cache *nv_cache)
-{
-	uint64_t tsc = spdk_thread_get_last_tsc(spdk_get_thread());
-
-	if (spdk_unlikely(!nv_cache->throttle.start_tsc)) {
-		nv_cache->throttle.start_tsc = tsc;
-	} else if (tsc - nv_cache->throttle.start_tsc >= nv_cache->throttle.interval_tsc) {
-		ftl_nv_cache_throttle_update(nv_cache);
-		nv_cache->throttle.start_tsc = tsc;
-		nv_cache->throttle.blocks_submitted = 0;
-	}
-}
-
 static void ftl_chunk_open(struct ftl_nv_cache_chunk *chunk);
 
 void
@@ -1467,7 +1387,6 @@ ftl_nv_cache_process(struct spdk_ftl_dev *dev)
 
 	compaction_process(nv_cache);
 	ftl_chunk_persist_free_state(nv_cache);
-	ftl_nv_cache_process_throttle(nv_cache);
 
 	if (nv_cache->nvc_type->ops.process) {
 		nv_cache->nvc_type->ops.process(dev);
@@ -1958,8 +1877,10 @@ chunk_close_cb(int status, void *ctx)
 		/* Chunk full move it on full list */
 		TAILQ_INSERT_TAIL(&chunk->nv_cache->chunk_full_list, chunk, entry);
 		chunk->nv_cache->chunk_full_count++;
-
 		chunk->nv_cache->last_seq_id = chunk->md->close_seq_id;
+
+		assert(chunk->nv_cache->chunk_closing_count > 0);
+		chunk->nv_cache->chunk_closing_count--;
 
 		chunk->md->state = FTL_CHUNK_STATE_CLOSED;
 		if (nv_cache->nvc_type->ops.on_chunk_closed) {
@@ -2017,6 +1938,7 @@ ftl_chunk_close(struct ftl_nv_cache_chunk *chunk)
 	assert(chunk->md->write_pointer == chunk_tail_md_offset(chunk->nv_cache));
 	brq->io.addr = chunk->offset + chunk->md->write_pointer;
 
+	dev->nv_cache.chunk_closing_count++;
 	ftl_chunk_basic_rq_write(chunk, brq);
 }
 
@@ -2572,4 +2494,34 @@ ftl_nv_cache_chunk_md_initialize(struct ftl_nv_cache_chunk_md *md)
 {
 	memset(md, 0, sizeof(*md));
 	md->version = FTL_NVC_VERSION_CURRENT;
+}
+
+uint64_t
+ftl_nv_cache_free_blocks(struct spdk_ftl_dev *dev)
+{
+	struct ftl_nv_cache *nvc = &dev->nv_cache;
+
+	/* To avoid free block fluctuation, first let's calculate number of used blocks */
+	uint64_t used_blocks = 0;
+
+	/* Closed chunks */
+	used_blocks += nvc->chunk_full_count * nvc->chunk_blocks;
+
+	/* Closing chunks */
+	used_blocks += nvc->chunk_closing_count * nvc->chunk_blocks;
+
+	/* Currently used chunk */
+	if (nvc->chunk_current) {
+		used_blocks += nvc->chunk_current->md->write_pointer;
+	}
+
+	/* Now return free block count */
+	return nvc->chunk_usable_count * dev->nv_cache.chunk_blocks - used_blocks;
+}
+
+uint64_t
+ftl_nv_cache_free_blocks_target(struct spdk_ftl_dev *dev)
+{
+	return dev->nv_cache.chunk_free_target * (dev->nv_cache.chunk_blocks -
+			dev->nv_cache.tail_md_chunk_blocks);
 }

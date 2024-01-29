@@ -32,24 +32,6 @@
 
 #define FTL_NV_CACHE_NUM_COMPACTORS 64
 
-/*
- * Parameters controlling nv cache write throttling.
- *
- * The write throttle limit value is calculated as follows:
- * limit = compaction_average_bw * (1.0 + modifier)
- *
- * The modifier depends on the number of free chunks vs the configured threshold. Its value is
- * zero if the number of free chunks is at the threshold, negative if below and positive if above.
- */
-
-/* Interval in milliseconds between write throttle updates. */
-#define FTL_NV_CACHE_THROTTLE_INTERVAL_MS 20
-/* Throttle modifier proportional gain */
-#define FTL_NV_CACHE_THROTTLE_MODIFIER_KP 20
-/* Min and max modifier values */
-#define FTL_NV_CACHE_THROTTLE_MODIFIER_MIN -0.8
-#define FTL_NV_CACHE_THROTTLE_MODIFIER_MAX 0.5
-
 struct ftl_nvcache_restore;
 typedef void (*ftl_nv_cache_restore_fn)(struct ftl_nvcache_restore *, int, void *cb_arg);
 
@@ -121,12 +103,6 @@ struct ftl_nv_cache_chunk {
 	/* This flag is used to indicate chunk is used in recovery */
 	bool recovery;
 
-	/* Compaction start time */
-	uint64_t compaction_start_tsc;
-
-	/* Compaction duration */
-	uint64_t compaction_length_tsc;
-
 	/* For writing metadata */
 	struct ftl_md_io_entry_ctx md_persist_entry_ctx;
 
@@ -195,6 +171,7 @@ struct ftl_nv_cache {
 	/* Full chunks list */
 	TAILQ_HEAD(, ftl_nv_cache_chunk) chunk_full_list;
 	uint64_t chunk_full_count;
+	uint64_t chunk_closing_count;
 
 	/* Chunks being compacted */
 	TAILQ_HEAD(, ftl_nv_cache_chunk) chunk_comp_list;
@@ -218,21 +195,10 @@ struct ftl_nv_cache {
 
 	uint64_t chunk_free_target;
 
-	/* Simple moving average of recent compaction velocity values */
-	double compaction_sma;
-
-#define FTL_NV_CACHE_COMPACTION_SMA_N (FTL_NV_CACHE_NUM_COMPACTORS * 2)
-	/* Circular buffer holding values for calculating compaction SMA */
-	struct compaction_bw_stats {
-		double buf[FTL_NV_CACHE_COMPACTION_SMA_N];
-		ptrdiff_t first;
-		size_t count;
-		double sum;
-	} compaction_recent_bw;
+	/* Effective number of chunk to be used by cache */
+	uint64_t chunk_usable_count;
 
 	struct {
-		uint64_t interval_tsc;
-		uint64_t start_tsc;
 		uint64_t blocks_submitted;
 		uint64_t blocks_submitted_limit;
 	} throttle;
@@ -304,5 +270,25 @@ struct ftl_nv_cache_chunk *ftl_nv_cache_get_chunk_from_addr(struct spdk_ftl_dev 
 uint64_t ftl_nv_cache_acquire_trim_seq_id(struct ftl_nv_cache *nv_cache);
 
 void ftl_nv_cache_chunk_md_initialize(struct ftl_nv_cache_chunk_md *md);
+
+/**
+ * @brief Returns number of free blocks in NV cache
+ *
+ * The function takes into account all free and open chunks.
+ *
+ * @param dev FTL device
+ *
+ * @return Number of free blocks in NV cache
+ */
+uint64_t ftl_nv_cache_free_blocks(struct spdk_ftl_dev *dev);
+
+/**
+ * @brief Returns number of expected free target blocks in NV cache
+ *
+ * @param dev FTL device
+ *
+ * @return Number of expected free target blocks in NV cache
+ */
+uint64_t ftl_nv_cache_free_blocks_target(struct spdk_ftl_dev *dev);
 
 #endif  /* FTL_NV_CACHE_H */
