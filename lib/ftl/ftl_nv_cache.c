@@ -1033,12 +1033,12 @@ compaction_process(struct ftl_nv_cache *nv_cache)
 	struct spdk_ftl_dev *dev = SPDK_CONTAINEROF(nv_cache, struct spdk_ftl_dev, nv_cache);
 	struct ftl_nv_cache_compactor *compactor;
 
-	if (!is_compaction_required(nv_cache)) {
+	if (is_compaction_required(nv_cache)) {
+		if (nv_cache->chunk_comp_count < FTL_MAX_COMPACTED_CHUNKS) {
+			prepare_chunk_for_compaction(nv_cache);
+		}
+	} else if (spdk_unlikely(nv_cache->halt)) {
 		return;
-	}
-
-	if (nv_cache->chunk_comp_count < FTL_MAX_COMPACTED_CHUNKS) {
-		prepare_chunk_for_compaction(nv_cache);
 	}
 
 	if (TAILQ_EMPTY(&nv_cache->chunk_comp_list)) {
@@ -2516,12 +2516,11 @@ ftl_nv_cache_free_blocks(struct spdk_ftl_dev *dev)
 	}
 
 	/* Now return free block count */
-	return nvc->chunk_usable_count * dev->nv_cache.chunk_blocks - used_blocks;
+	return (nvc->chunk_usable_count * dev->nv_cache.chunk_blocks) - used_blocks;
 }
 
 uint64_t
 ftl_nv_cache_free_blocks_target(struct spdk_ftl_dev *dev)
 {
-	return dev->nv_cache.chunk_free_target * (dev->nv_cache.chunk_blocks -
-			dev->nv_cache.tail_md_chunk_blocks);
+	return dev->nv_cache.chunk_free_target * dev->nv_cache.chunk_blocks;
 }
