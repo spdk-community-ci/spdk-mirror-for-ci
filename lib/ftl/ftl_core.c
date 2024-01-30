@@ -718,13 +718,12 @@ ftl_process_io_queue(struct spdk_ftl_dev *dev)
 		ftl_add_io_activity(dev);
 	}
 
-	while (!TAILQ_EMPTY(&dev->wr_sq) && !ftl_nv_cache_throttle(dev)) {
+	if (!TAILQ_EMPTY(&dev->wr_sq) && !ftl_nv_cache_throttle(dev)) {
 		io = TAILQ_FIRST(&dev->wr_sq);
 		TAILQ_REMOVE(&dev->wr_sq, io, queue_entry);
 		assert(io->type == FTL_IO_WRITE);
 		if (!ftl_nv_cache_write(io)) {
 			TAILQ_INSERT_HEAD(&dev->wr_sq, io, queue_entry);
-			break;
 		}
 		ftl_add_io_activity(dev);
 	}
