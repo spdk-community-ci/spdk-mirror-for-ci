@@ -21,6 +21,8 @@ struct raid_bdev_write_sb_ctx {
 	raid_bdev_write_sb_cb cb;
 	void *cb_ctx;
 	struct spdk_bdev_io_wait_entry wait_entry;
+	void *md_buf;
+	struct iovec sb_iov;
 };
 
 struct raid_bdev_read_sb_ctx {
@@ -30,6 +32,8 @@ struct raid_bdev_read_sb_ctx {
 	void *cb_ctx;
 	void *buf;
 	uint32_t buf_size;
+	void *md_buf;
+	struct iovec sb_iov;
 };
 
 static inline uint64_t
@@ -134,6 +138,7 @@ static void
 raid_bdev_read_sb_ctx_free(struct raid_bdev_read_sb_ctx *ctx)
 {
 	spdk_dma_free(ctx->buf);
+	spdk_dma_free(ctx->md_buf);
 
 	free(ctx);
 }
@@ -146,8 +151,10 @@ raid_bdev_read_sb_remainder(struct raid_bdev_read_sb_ctx *ctx)
 	struct raid_bdev_superblock *sb = ctx->buf;
 	struct spdk_bdev *bdev = spdk_bdev_desc_get_bdev(ctx->desc);
 	uint32_t buf_size_prev;
-	void *buf;
+	void *buf, *md_buf;
 	int rc;
+	uint64_t num_blocks_all, num_blocks_prev;
+	struct spdk_bdev_ext_io_opts io_opts = {};
 
 	buf_size_prev = ctx->buf_size;
 	ctx->buf_size = align_ceil(sb->length, spdk_bdev_get_block_size(bdev));
@@ -157,9 +164,33 @@ raid_bdev_read_sb_remainder(struct raid_bdev_read_sb_ctx *ctx)
 		return -ENOMEM;
 	}
 	ctx->buf = buf;
+	ctx->sb_iov.iov_base = ctx->buf + buf_size_prev;
+	ctx->sb_iov.iov_len = ctx->buf_size - buf_size_prev;
 
-	rc = spdk_bdev_read(ctx->desc, ctx->ch, ctx->buf + buf_size_prev, buf_size_prev,
-			    ctx->buf_size - buf_size_prev, raid_bdev_read_sb_cb, ctx);
+	num_blocks_all = ctx->buf_size / spdk_bdev_get_block_size(bdev);
+	num_blocks_prev = buf_size_prev / spdk_bdev_get_block_size(bdev);
+
+	io_opts.size = sizeof(io_opts);
+	io_opts.memory_domain = NULL;
+	io_opts.memory_domain_ctx = NULL;
+
+	if (spdk_unlikely(spdk_bdev_get_dif_type(bdev) != SPDK_DIF_DISABLE)) {
+		md_buf = spdk_dma_realloc(ctx->md_buf, spdk_bdev_get_md_size(bdev) * num_blocks_all, 0, NULL);
+		if (!ctx->md_buf) {
+			SPDK_ERRLOG("Failed to reallocate metadata buffer\n");
+			return -ENOMEM;
+		}
+		ctx->md_buf = md_buf;
+
+		io_opts.metadata = ctx->md_buf + (num_blocks_prev * spdk_bdev_get_md_size(bdev));
+		io_opts.dif_check_flags_exclude_mask = SPDK_DIF_FLAGS_GUARD_CHECK |
+						       SPDK_DIF_FLAGS_REFTAG_CHECK | SPDK_DIF_FLAGS_APPTAG_CHECK;
+	}
+
+	rc = spdk_bdev_readv_blocks_ext(ctx->desc, ctx->ch, &ctx->sb_iov, 1,
+					num_blocks_prev,
+					num_blocks_all - num_blocks_prev,
+					raid_bdev_read_sb_cb, ctx, &io_opts);
 	if (rc != 0) {
 		SPDK_ERRLOG("Failed to read bdev %s superblock remainder: %s\n",
 			    spdk_bdev_get_name(bdev), spdk_strerror(-rc));
@@ -208,6 +239,8 @@ raid_bdev_load_base_bdev_superblock(struct spdk_bdev_desc *desc, struct spdk_io_
 	struct spdk_bdev *bdev = spdk_bdev_desc_get_bdev(desc);
 	struct raid_bdev_read_sb_ctx *ctx;
 	int rc;
+	uint64_t num_blocks;
+	struct spdk_bdev_ext_io_opts io_opts = {};
 
 	assert(cb != NULL);
 
@@ -226,8 +259,29 @@ raid_bdev_load_base_bdev_superblock(struct spdk_bdev_desc *desc, struct spdk_io_
 		rc = -ENOMEM;
 		goto err;
 	}
+	ctx->sb_iov.iov_base = ctx->buf;
+	ctx->sb_iov.iov_len = ctx->buf_size;
 
-	rc = spdk_bdev_read(desc, ch, ctx->buf, 0, ctx->buf_size, raid_bdev_read_sb_cb, ctx);
+	num_blocks = ctx->buf_size / spdk_bdev_get_block_size(bdev);
+
+	io_opts.size = sizeof(io_opts);
+	io_opts.memory_domain = NULL;
+	io_opts.memory_domain_ctx = NULL;
+
+	if (spdk_unlikely(spdk_bdev_get_dif_type(bdev) != SPDK_DIF_DISABLE)) {
+		ctx->md_buf = spdk_dma_malloc(spdk_bdev_get_md_size(bdev) * num_blocks, 0, NULL);
+		if (!ctx->md_buf) {
+			rc = -ENOMEM;
+			goto err;
+		}
+
+		io_opts.metadata = ctx->md_buf;
+		io_opts.dif_check_flags_exclude_mask = SPDK_DIF_FLAGS_GUARD_CHECK |
+						       SPDK_DIF_FLAGS_REFTAG_CHECK | SPDK_DIF_FLAGS_APPTAG_CHECK;
+	}
+
+	rc = spdk_bdev_readv_blocks_ext(desc, ch, &ctx->sb_iov, 1, 0, num_blocks,
+					raid_bdev_read_sb_cb, ctx, &io_opts);
 	if (rc) {
 		goto err;
 	}
@@ -248,6 +302,7 @@ raid_bdev_write_sb_base_bdev_done(int status, struct raid_bdev_write_sb_ctx *ctx
 
 	if (--ctx->remaining == 0) {
 		ctx->cb(ctx->status, ctx->raid_bdev, ctx->cb_ctx);
+		spdk_dma_free(ctx->md_buf);
 		free(ctx);
 	}
 }
@@ -276,6 +331,20 @@ _raid_bdev_write_superblock(void *_ctx)
 	struct raid_base_bdev_info *base_info;
 	uint8_t i;
 	int rc;
+	struct spdk_bdev_ext_io_opts io_opts = {};
+
+	ctx->sb_iov.iov_base = (void *)raid_bdev->sb;
+	ctx->sb_iov.iov_len = ctx->nbytes;
+
+	io_opts.size = sizeof(io_opts);
+	io_opts.memory_domain = NULL;
+	io_opts.memory_domain_ctx = NULL;
+
+	if (spdk_unlikely(spdk_bdev_get_dif_type(&raid_bdev->bdev) != SPDK_DIF_DISABLE)) {
+		io_opts.metadata = ctx->md_buf;
+		io_opts.dif_check_flags_exclude_mask = SPDK_DIF_FLAGS_GUARD_CHECK |
+						       SPDK_DIF_FLAGS_REFTAG_CHECK | SPDK_DIF_FLAGS_APPTAG_CHECK;
+	}
 
 	for (i = ctx->submitted; i < raid_bdev->num_base_bdevs; i++) {
 		base_info = &raid_bdev->base_bdev_info[i];
@@ -287,9 +356,11 @@ _raid_bdev_write_superblock(void *_ctx)
 			continue;
 		}
 
-		rc = spdk_bdev_write(base_info->desc, base_info->app_thread_ch,
-				     (void *)raid_bdev->sb, 0, ctx->nbytes,
-				     raid_bdev_write_superblock_cb, ctx);
+		rc = spdk_bdev_writev_blocks_ext(base_info->desc,
+						 base_info->app_thread_ch,
+						 &ctx->sb_iov, 1, 0,
+						 ctx->nbytes / spdk_bdev_get_block_size(&raid_bdev->bdev),
+						 raid_bdev_write_superblock_cb, ctx, &io_opts);
 		if (rc != 0) {
 			struct spdk_bdev *bdev = spdk_bdev_desc_get_bdev(base_info->desc);
 
@@ -332,6 +403,16 @@ raid_bdev_write_superblock(struct raid_bdev *raid_bdev, raid_bdev_write_sb_cb cb
 	ctx->remaining = raid_bdev->num_base_bdevs + 1;
 	ctx->cb = cb;
 	ctx->cb_ctx = cb_ctx;
+
+	if (spdk_unlikely(spdk_bdev_get_dif_type(&raid_bdev->bdev) != SPDK_DIF_DISABLE)) {
+		ctx->md_buf = spdk_dma_malloc(spdk_bdev_get_md_size(&raid_bdev->bdev)
+					      * (ctx->nbytes / spdk_bdev_get_block_size(&raid_bdev->bdev)), 0, NULL);
+		if (!ctx->md_buf) {
+			free(ctx);
+			cb(-ENOMEM, raid_bdev, cb_ctx);
+			return;
+		}
+	}
 
 	sb->seq_number++;
 	raid_bdev_sb_update_crc(sb);

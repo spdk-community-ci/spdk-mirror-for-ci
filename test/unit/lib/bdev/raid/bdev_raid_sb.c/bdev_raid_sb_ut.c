@@ -14,7 +14,6 @@
 #define TEST_BUF_ALIGN	64
 #define TEST_BLOCK_SIZE	512
 
-DEFINE_STUB(spdk_bdev_desc_get_bdev, struct spdk_bdev *, (struct spdk_bdev_desc *desc), NULL);
 DEFINE_STUB(spdk_bdev_get_block_size, uint32_t, (const struct spdk_bdev *bdev), TEST_BLOCK_SIZE);
 DEFINE_STUB(spdk_bdev_queue_io_wait, int, (struct spdk_bdev *bdev, struct spdk_io_channel *ch,
 		struct spdk_bdev_io_wait_entry *entry), 0);
@@ -50,6 +49,18 @@ spdk_bdev_get_uuid(const struct spdk_bdev *bdev)
 	return &bdev->uuid;
 }
 
+struct spdk_bdev *
+spdk_bdev_desc_get_bdev(struct spdk_bdev_desc *desc)
+{
+	return (void *)desc;
+}
+
+uint32_t
+spdk_bdev_get_md_size(const struct spdk_bdev *bdev)
+{
+	return 8;
+}
+
 void
 spdk_bdev_free_io(struct spdk_bdev_io *bdev_io)
 {
@@ -57,35 +68,54 @@ spdk_bdev_free_io(struct spdk_bdev_io *bdev_io)
 }
 
 int
-spdk_bdev_read(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
-	       void *buf, uint64_t offset, uint64_t nbytes,
-	       spdk_bdev_io_completion_cb cb, void *cb_arg)
+spdk_bdev_readv_blocks_ext(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
+			   struct iovec *iov, int iovcnt,
+			   uint64_t offset_blocks, uint64_t num_blocks,
+			   spdk_bdev_io_completion_cb cb, void *cb_arg,
+			   struct spdk_bdev_ext_io_opts *opts)
 {
 	g_read_counter++;
-	memcpy(buf, g_buf + offset, nbytes);
+	/* TODO */
+	memcpy(iov->iov_base,
+	       g_buf + (offset_blocks * spdk_bdev_get_block_size(spdk_bdev_desc_get_bdev(desc))),
+	       iov->iov_len);
 	cb(NULL, true, cb_arg);
 	return 0;
 }
 
 int
-spdk_bdev_write(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
-		void *buf, uint64_t offset, uint64_t nbytes,
-		spdk_bdev_io_completion_cb cb, void *cb_arg)
+spdk_bdev_writev_blocks_ext(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
+			    struct iovec *iov, int iovcnt,
+			    uint64_t offset_blocks, uint64_t num_blocks,
+			    spdk_bdev_io_completion_cb cb, void *cb_arg,
+			    struct spdk_bdev_ext_io_opts *opts)
 {
-	struct raid_bdev_superblock *sb = buf;
+	struct raid_bdev_superblock *sb = iov->iov_base;
 	struct spdk_bdev_io *bdev_io;
 
-	CU_ASSERT(offset == 0);
-	CU_ASSERT(nbytes / TEST_BLOCK_SIZE == spdk_divide_round_up(sb->length, TEST_BLOCK_SIZE));
+	CU_ASSERT(offset_blocks == 0);
+	CU_ASSERT(iov->iov_len / TEST_BLOCK_SIZE == spdk_divide_round_up(sb->length, TEST_BLOCK_SIZE));
+	CU_ASSERT(opts != NULL);
 
 	bdev_io = calloc(1, sizeof(*bdev_io));
 	SPDK_CU_ASSERT_FATAL(bdev_io != NULL);
 	bdev_io->internal.cb = cb;
 	bdev_io->internal.caller_ctx = cb_arg;
+	bdev_io->u.bdev.dif_check_flags = (SPDK_DIF_FLAGS_REFTAG_CHECK &
+					   SPDK_DIF_FLAGS_GUARD_CHECK & SPDK_DIF_FLAGS_APPTAG_CHECK) &
+					  ~opts->dif_check_flags_exclude_mask;
 
 	TAILQ_INSERT_TAIL(&g_bdev_io_queue, bdev_io, internal.link);
 
 	return 0;
+}
+
+typedef enum spdk_dif_type spdk_dif_type_t;
+
+spdk_dif_type_t
+spdk_bdev_get_dif_type(const struct spdk_bdev *bdev)
+{
+	return SPDK_DIF_TYPE1;
 }
 
 static void
@@ -131,6 +161,7 @@ test_raid_bdev_write_superblock(void)
 	};
 	int status;
 	uint8_t i;
+	struct spdk_bdev_io *bdev_io;
 
 	for (i = 1; i < SPDK_COUNTOF(base_info); i++) {
 		base_info[i].desc = (void *)0x1;
@@ -141,6 +172,9 @@ test_raid_bdev_write_superblock(void)
 	status = INT_MAX;
 	raid_bdev_write_superblock(&raid_bdev, write_sb_cb, &status);
 	CU_ASSERT(TAILQ_EMPTY(&g_bdev_io_queue) == false);
+	TAILQ_FOREACH(bdev_io, &g_bdev_io_queue, internal.link) {
+		CU_ASSERT(bdev_io->u.bdev.dif_check_flags == 0);
+	}
 	process_io_completions();
 	CU_ASSERT(status == 0);
 }
