@@ -75,6 +75,7 @@
 	spdk_dif_verify;
 	spdk_dif_update_crc32c;
 	spdk_dif_generate_copy;
+	spdk_dif_strip_copy;
 	spdk_dif_verify_copy;
 	spdk_dif_inject_error;
 	spdk_dix_generate;

@@ -231,6 +231,22 @@ int spdk_dif_generate_copy(struct iovec *iovs, int iovcnt, struct iovec *bounce_
 			   const struct spdk_dif_ctx *ctx);
 
 /**
+ * Copy data and strip DIF for extended LBA payload.
+ *
+ * \param iovs iovec array describing the LBA payload.
+ * \param iovcnt Number of elements in the iovec array.
+ * \param bounce_iovs A contiguous buffer forming extended LBA payload.
+ * \param bounce_iovcnt Number of elements in the bounce_iovs array.
+ * \param num_blocks Number of blocks of the LBA payload.
+ * \param ctx DIF context.
+ *
+ * \return 0 on success and negated errno otherwise.
+ */
+int spdk_dif_strip_copy(struct iovec *iovs, int iovcnt, struct iovec *bounce_iovs,
+			int bounce_iovcnt,  uint32_t num_blocks,
+			const struct spdk_dif_ctx *ctx);
+
+/**
  * Verify DIF and copy data for extended LBA payload.
  *
  * \param iovs iovec array describing the LBA payload.
