@@ -48,7 +48,8 @@ enum spdk_accel_opcode {
 	SPDK_ACCEL_OPC_DIF_VERIFY		= 11,
 	SPDK_ACCEL_OPC_DIF_GENERATE		= 12,
 	SPDK_ACCEL_OPC_DIF_GENERATE_COPY	= 13,
-	SPDK_ACCEL_OPC_LAST			= 14,
+	SPDK_ACCEL_OPC_DIF_STRIP		= 14,
+	SPDK_ACCEL_OPC_LAST			= 15,
 };
 
 enum spdk_accel_cipher {
@@ -465,6 +466,32 @@ int spdk_accel_submit_dif_generate_copy(struct spdk_io_channel *ch, struct iovec
 					size_t dst_iovcnt, struct iovec *src_iovs, size_t src_iovcnt,
 					uint32_t num_blocks, const struct spdk_dif_ctx *ctx,
 					spdk_accel_completion_cb cb_fn, void *cb_arg);
+
+/**
+ * Submit a Data Integrity Field (DIF) strip request.
+ *
+ * This operation copies memory from the source to the destination address,
+ * and removing the DIF data.
+ *
+ * \param ch I/O channel associated with this call.
+ * \param dst_iovs The destination io vector array. The total allocated memory size needs
+ *		  to be at least: num_blocks * block_size (provided to spdk_dif_ctx_init())
+ * \param dst_iovcnt The size of the destination io vectors array.
+ * \param src_iovs The source io vector array. The total allocated memory size needs
+ *		  to be at least: num_blocks * block_size_no_md
+ * \param src_iovcnt The size of the source io vectors array.
+ * \param num_blocks Number of data blocks to process.
+ * \param ctx DIF context. Contains the DIF configuration values, including the reference
+ *            Application Tag value and initial value of the Reference Tag to insert
+ * \param cb_fn Called when this operation completes.
+ * \param cb_arg Callback argument.
+ *
+ * \return 0 on success, negative errno on failure.
+ */
+int spdk_accel_submit_dif_strip(struct spdk_io_channel *ch, struct iovec *dst_iovs,
+				size_t dst_iovcnt, struct iovec *src_iovs, size_t src_iovcnt,
+				uint32_t num_blocks, const struct spdk_dif_ctx *ctx,
+				spdk_accel_completion_cb cb_fn, void *cb_arg);
 
 /** Object grouping multiple accel operations to be executed at the same point in time */
 struct spdk_accel_sequence;
