@@ -233,6 +233,7 @@ struct nvme_poll_group {
 	struct spdk_nvme_poll_group		*group;
 	struct spdk_io_channel			*accel_channel;
 	struct spdk_poller			*poller;
+	struct spdk_poller			*admin_event_poller;
 	bool					collect_spin_stat;
 	uint64_t				spin_ticks;
 	uint64_t				start_ticks;
@@ -299,6 +300,7 @@ struct spdk_bdev_nvme_opts {
 	bool allow_accel_sequence;
 	uint32_t rdma_max_cq_size;
 	uint16_t rdma_cm_event_timeout_ms;
+	uint64_t transport_poll_period_us;
 };
 
 struct spdk_nvme_qpair *bdev_nvme_get_io_qpair(struct spdk_io_channel *ctrlr_io_ch);

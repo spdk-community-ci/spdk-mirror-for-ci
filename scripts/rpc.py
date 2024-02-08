@@ -586,7 +586,8 @@ if __name__ == "__main__":
                                        io_path_stat=args.io_path_stat,
                                        allow_accel_sequence=args.allow_accel_sequence,
                                        rdma_max_cq_size=args.rdma_max_cq_size,
-                                       rdma_cm_event_timeout_ms=args.rdma_cm_event_timeout_ms)
+                                       rdma_cm_event_timeout_ms=args.rdma_cm_event_timeout_ms,
+                                       transport_poll_period_us=args.transport_poll_period_us)
 
     p = subparsers.add_parser('bdev_nvme_set_options',
                               help='Set options for the bdev nvme type. This is startup command.')
@@ -671,6 +672,8 @@ if __name__ == "__main__":
                    help='The maximum size of a rdma completion queue. Default: 0 (unlimited)', type=int)
     p.add_argument('--rdma-cm-event-timeout-ms',
                    help='Time to wait for RDMA CM event. Only applicable for RDMA transports.', type=int)
+    p.add_argument('--transport-poll-period-us',
+                   help='How often to poll transport management events. Default: 0 (disabled)', type=int)
 
     p.set_defaults(func=bdev_nvme_set_options)
 

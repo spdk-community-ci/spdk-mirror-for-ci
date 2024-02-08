@@ -3922,6 +3922,7 @@ io_path_stat               | Optional | boolean     | Enable collecting I/O stat
 allow_accel_sequence       | Optional | boolean     | Allow NVMe bdevs to advertise support for accel sequences if the controller also supports them.  Default: `false`.
 rdma_max_cq_size           | Optional | number      | Set the maximum size of a rdma completion queue. Default: 0 (unlimited)
 rdma_cm_event_timeout_ms   | Optional | number      | Time to wait for RDMA CM events. Default: 0 (0 means using default value of driver).
+transport_poll_period_us   | Optional | number      | How often transport events are polled separately in microseconds. Default 0 (disabled).
 
 #### Example
 

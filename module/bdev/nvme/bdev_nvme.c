@@ -1631,6 +1631,20 @@ bdev_nvme_poll(void *arg)
 	return num_completions > 0 ? SPDK_POLLER_BUSY : SPDK_POLLER_IDLE;
 }
 
+static int
+bdev_nvme_poll_admin_events(void *arg)
+{
+	struct nvme_poll_group *group = arg;
+	int rc;
+
+	rc = spdk_nvme_poll_group_process_admin_events(group->group);
+	if (rc != 0) {
+		bdev_nvme_check_io_qpairs(group);
+	}
+
+	return SPDK_POLLER_BUSY;
+}
+
 static int bdev_nvme_poll_adminq(void *arg);
 
 static void
@@ -3397,6 +3411,16 @@ bdev_nvme_create_poll_group_cb(void *io_device, void *ctx_buf)
 		return -1;
 	}
 
+	if (g_opts.transport_poll_period_us != 0) {
+		group->admin_event_poller = SPDK_POLLER_REGISTER(bdev_nvme_poll_admin_events,
+					    group, g_opts.transport_poll_period_us);
+		if (group->admin_event_poller == NULL) {
+			spdk_poller_unregister(&group->poller);
+			spdk_nvme_poll_group_destroy(group->group);
+			return -1;
+		}
+	}
+
 	return 0;
 }
 
@@ -3412,6 +3436,7 @@ bdev_nvme_destroy_poll_group_cb(void *io_device, void *ctx_buf)
 	}
 
 	spdk_poller_unregister(&group->poller);
+	spdk_poller_unregister(&group->admin_event_poller);
 	if (spdk_nvme_poll_group_destroy(group->group)) {
 		SPDK_ERRLOG("Unable to destroy a poll group for the NVMe bdev module.\n");
 		assert(false);
@@ -5544,7 +5569,8 @@ bdev_nvme_set_opts(const struct spdk_bdev_nvme_opts *opts)
 
 	if (opts->rdma_srq_size != 0 ||
 	    opts->rdma_max_cq_size != 0 ||
-	    opts->rdma_cm_event_timeout_ms != 0) {
+	    opts->rdma_cm_event_timeout_ms != 0 ||
+	    opts->transport_poll_period_us != 0) {
 		struct spdk_nvme_transport_opts drv_opts;
 
 		spdk_nvme_transport_get_opts(&drv_opts, sizeof(drv_opts));
@@ -5556,6 +5582,9 @@ bdev_nvme_set_opts(const struct spdk_bdev_nvme_opts *opts)
 		}
 		if (opts->rdma_cm_event_timeout_ms != 0) {
 			drv_opts.rdma_cm_event_timeout_ms = opts->rdma_cm_event_timeout_ms;
+		}
+		if (opts->transport_poll_period_us != 0) {
+			drv_opts.use_poll_group_process_admin_events = opts->transport_poll_period_us;
 		}
 
 		ret = spdk_nvme_transport_set_opts(&drv_opts, sizeof(drv_opts));
