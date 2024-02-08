@@ -3217,7 +3217,9 @@ nvme_rdma_poll_group_process_completions(struct spdk_nvme_transport_poll_group *
 		}
 	}
 
-	rc2 = nvme_rdma_poll_group_process_cm_events(tgroup);
+	if (!g_spdk_nvme_transport_opts.use_poll_group_process_admin_events) {
+		rc2 = nvme_rdma_poll_group_process_cm_events(tgroup);
+	}
 
 	completions_allowed = completions_per_qpair * tgroup->num_connected_qpairs;
 	if (group->num_pollers) {

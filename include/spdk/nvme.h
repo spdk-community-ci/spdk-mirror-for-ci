@@ -4297,6 +4297,15 @@ struct spdk_nvme_transport_opts {
 	 * RDMA CM event timeout in milliseconds.
 	 */
 	uint16_t rdma_cm_event_timeout_ms;
+
+	/**
+	 * A hint to the transport to exclude polling management events from
+	 * spdk_nvme_poll_group_process_completions(). It indicates the upper layer calls
+	 * spdk_nvme_poll_group_process_admin_events() separately.
+	 *
+	 * It is used for RDMA transport.
+	 */
+	bool use_poll_group_process_admin_events;
 };
 SPDK_STATIC_ASSERT(sizeof(struct spdk_nvme_transport_opts) == 24, "Incorrect size");
 

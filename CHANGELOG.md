@@ -62,6 +62,10 @@ increase size of blobstore filling the underlying device without first closing t
 A new API `spdk_nvme_poll_group_process_admin_events` was added to poll management events separately
 from I/O completions to reduce overhead for large scale configuration.
 
+A new transport option `use_poll_group_process_admin_events` was added to indicate that
+the upper layer uses `spdk_nvme_poll_group_process_admin_events` separately from
+`spdk_nvme_poll_group_process_completions`.
+
 ### env
 
 Added SPDK command line parameter `--no-huge`, which enables SPDK to run without hugepages.
