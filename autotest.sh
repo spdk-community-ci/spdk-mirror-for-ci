@@ -177,6 +177,10 @@ if [ $SPDK_RUN_FUNCTIONAL_TEST -eq 1 ]; then
 		run_test "spdkcli_tcp" $rootdir/test/spdkcli/tcp.sh
 	fi
 
+	if [[ $SPDK_JSONRPC_GO_CLIENT -eq 1 ]]; then
+		run_test "go_test" $rootdir/test/go/gotest.sh
+	fi
+
 	run_test "dpdk_mem_utility" $rootdir/test/dpdk_memory_utility/test_dpdk_mem_info.sh
 	run_test "event" $rootdir/test/event/event.sh
 	run_test "thread" $rootdir/test/thread/thread.sh
