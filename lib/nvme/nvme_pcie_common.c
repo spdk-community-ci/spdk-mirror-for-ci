@@ -261,7 +261,7 @@ nvme_pcie_ctrlr_construct_admin_qpair(struct spdk_nvme_ctrlr *ctrlr, uint16_t nu
 		SPDK_ERRLOG("Failed to allocate admin qpair statistics\n");
 		return -ENOMEM;
 	}
-
+	printf("QP_stat [A1] %p\n", pqpair->stat);
 	return nvme_pcie_qpair_construct(ctrlr->adminq, NULL);
 }
 
@@ -541,6 +541,7 @@ _nvme_pcie_ctrlr_create_io_qpair(struct spdk_nvme_ctrlr *ctrlr, struct spdk_nvme
 				nvme_qpair_set_state(qpair, NVME_QPAIR_DISCONNECTED);
 				return -ENOMEM;
 			}
+			printf("QP_stat [A2] %p\n", pqpair->stat);
 		}
 	}
 
@@ -1015,10 +1016,12 @@ nvme_pcie_qpair_destroy(struct spdk_nvme_qpair *qpair)
 	if (!pqpair->shared_stats && (!qpair->active_proc ||
 				      qpair->active_proc == nvme_ctrlr_get_current_process(qpair->ctrlr))) {
 		if (qpair->id) {
+			printf("QP_stat [F1] %p\n", pqpair->stat);
 			free(pqpair->stat);
 		} else {
 			/* statistics of admin qpair are allocates from huge pages because
 			 * admin qpair is shared for multi-process */
+			printf("QP_stat [F2] %p\n", pqpair->stat);
 			spdk_free(pqpair->stat);
 		}
 

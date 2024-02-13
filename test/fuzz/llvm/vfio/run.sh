@@ -40,7 +40,7 @@ function start_llvm_fuzz() {
 		-P $output_dir/llvm/ \
 		-F $vfiouser_dir \
 		-c $vfiouser_cfg \
-		-t $timen \
+		-t 10 \
 		-D $corpus_dir \
 		-Y $vfiouser_io_dir \
 		-r $fuzzer_dir/spdk$fuzzer_type.sock \
