@@ -127,6 +127,10 @@ nvmes=($(nvme_in_userspace))
 nvme_count=$((${#nvmes[@]} > 2 ? 2 : ${#nvmes[@]}))
 nvmes=("${nvmes[@]::nvme_count}")
 
+# Keep our selected devices in userspace and give remaining devices
+# back to the kernel to make sure hotplug won't slurp them.
+PCI_BLOCKED="${nvmes[*]}" "$rootdir/scripts/setup.sh" reset
+
 xtrace_disable
 cache_pci_bus
 xtrace_restore
