@@ -207,6 +207,65 @@ struct spdk_bdev_opts {
 } __attribute__((packed));
 SPDK_STATIC_ASSERT(sizeof(struct spdk_bdev_opts) == 32, "Incorrect size");
 
+enum spdk_bdev_pi_action {
+	/**
+	 * No PI action
+	 */
+	SPDK_BDEV_PI_ACTION_NONE = 0,
+	/**
+	 * Equivalent of NVMe PRACT=1, applies to write IO
+	 *
+	 * Do a DIF insert-copy on write.
+	 * Metadata interleaved or separate decided automatically, based
+	 * on the bdev flags.
+	 * If the bdev does not support DIF or DIX, just send the unmodified IO.
+	 */
+	SPDK_BDEV_PI_ACTION_DIF_INSERT = 1,
+	/**
+	 * Equivalent of NVMe PRACT=1, applies to read IO
+	 *
+	 * Do a DIF verify-strip-copy on read.
+	 * Metadata interleaved or separate decided automatically, based
+	 * on the bdev flags.
+	 * If the bdev does not support DIF or DIX, just send the unmodified IO.
+	 */
+	SPDK_BDEV_PI_ACTION_DIF_STRIP = 2,
+	/**
+	 * Equivalent of NVMe PRACT=0, applies to read and write IO
+	 *
+	 * DIF Verify on write and read.
+	 * Metadata interleaved or separate decided automatically, based
+	 * on the bdev flags.
+	 * If the bdev does not support DIF or DIX, just send the unmodified IO.
+	 */
+	SPDK_BDEV_PI_ACTION_DIF_VERIFY = 3,
+	/**
+	 * DIF insert-in-place, applies to write IO
+	 *
+	 * Same as PRACT=1 with MD size > DIF size, but works for the case of MD size == DIF size.
+	 * Always insert in place, no insert-copy. If no metadata provided by the user, fail the IO.
+	 * Metadata interleaved or separate decided automatically, based
+	 * on the bdev flags.
+	 *
+	 * This mode is useful for applications, which don't want to deal with DIFs, but want to avoid
+	 * the data copy on the IO path, so they allocate space for the DIF.
+	 */
+	SPDK_BDEV_PI_ACTION_DIF_INSERT_IN_PLACE = 4,
+	/**
+	 * Automatic selection of the PI action, applies to read and write IO
+	 *
+	 * If user provided any metadata, send the unmodified IO,
+	 * else if the bdev supports metadata, but not DIF/DIX, send the IO with
+	 *     empty metadata (interleaved or separate),
+	 * else if the bdev supports DIF/DIX, insert-copy on write, verify-strip-copy on read.
+	 *
+	 * This mode is for the cases, when the user wants his app to work on any type of bdev, but does not
+	 * want to deal with the complexities of the metadata buffers and DIFs. Good example would be internal IO,
+	 * like RAID superblock.
+	 */
+	SPDK_BDEV_PI_ACTION_AUTO = 5
+};
+
 /**
  * Structure with optional IO request parameters
  */
@@ -233,8 +292,12 @@ struct spdk_bdev_ext_io_opts {
 	 * is set, that flag will be excluded from any DIF operations for this IO.
 	 */
 	uint32_t dif_check_flags_exclude_mask;
+	/**
+	 * Select the Protection Information action for this IO
+	 */
+	enum spdk_bdev_pi_action pi_action;
 } __attribute__((packed));
-SPDK_STATIC_ASSERT(sizeof(struct spdk_bdev_ext_io_opts) == 44, "Incorrect size");
+SPDK_STATIC_ASSERT(sizeof(struct spdk_bdev_ext_io_opts) == 48, "Incorrect size");
 
 /**
  * Get the options for the bdev module.

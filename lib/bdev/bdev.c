@@ -407,13 +407,13 @@ static int bdev_readv_blocks_with_md(struct spdk_bdev_desc *desc, struct spdk_io
 				     uint64_t num_blocks,
 				     struct spdk_memory_domain *domain, void *domain_ctx,
 				     struct spdk_accel_sequence *seq, uint32_t dif_check_flags,
-				     spdk_bdev_io_completion_cb cb, void *cb_arg);
+				     enum spdk_bdev_pi_action pi_action, spdk_bdev_io_completion_cb cb, void *cb_arg);
 static int bdev_writev_blocks_with_md(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
 				      struct iovec *iov, int iovcnt, void *md_buf,
 				      uint64_t offset_blocks, uint64_t num_blocks,
 				      struct spdk_memory_domain *domain, void *domain_ctx,
 				      struct spdk_accel_sequence *seq, uint32_t dif_check_flags,
-				      spdk_bdev_io_completion_cb cb, void *cb_arg);
+				      enum spdk_bdev_pi_action pi_action, spdk_bdev_io_completion_cb cb, void *cb_arg);
 
 static int bdev_lock_lba_range(struct spdk_bdev_desc *desc, struct spdk_io_channel *_ch,
 			       uint64_t offset, uint64_t length,
@@ -3000,6 +3000,7 @@ bdev_io_split_submit(struct spdk_bdev_io *bdev_io, struct iovec *iov, int iovcnt
 					       num_blocks, bdev_io->internal.memory_domain,
 					       bdev_io->internal.memory_domain_ctx, NULL,
 					       bdev_io->u.bdev.dif_check_flags,
+					       bdev_io->u.bdev.pi_action,
 					       bdev_io_split_done, bdev_io);
 		break;
 	case SPDK_BDEV_IO_TYPE_WRITE:
@@ -3010,6 +3011,7 @@ bdev_io_split_submit(struct spdk_bdev_io *bdev_io, struct iovec *iov, int iovcnt
 						num_blocks, bdev_io->internal.memory_domain,
 						bdev_io->internal.memory_domain_ctx, NULL,
 						bdev_io->u.bdev.dif_check_flags,
+						bdev_io->u.bdev.pi_action,
 						bdev_io_split_done, bdev_io);
 		break;
 	case SPDK_BDEV_IO_TYPE_UNMAP:
@@ -5338,7 +5340,7 @@ bdev_readv_blocks_with_md(struct spdk_bdev_desc *desc, struct spdk_io_channel *c
 			  struct iovec *iov, int iovcnt, void *md_buf, uint64_t offset_blocks,
 			  uint64_t num_blocks, struct spdk_memory_domain *domain, void *domain_ctx,
 			  struct spdk_accel_sequence *seq, uint32_t dif_check_flags,
-			  spdk_bdev_io_completion_cb cb, void *cb_arg)
+			  enum spdk_bdev_pi_action pi_action, spdk_bdev_io_completion_cb cb, void *cb_arg)
 {
 	struct spdk_bdev *bdev = spdk_bdev_desc_get_bdev(desc);
 	struct spdk_bdev_io *bdev_io;
@@ -5370,6 +5372,7 @@ bdev_readv_blocks_with_md(struct spdk_bdev_desc *desc, struct spdk_io_channel *c
 	bdev_io->u.bdev.memory_domain_ctx = domain_ctx;
 	bdev_io->u.bdev.accel_sequence = seq;
 	bdev_io->u.bdev.dif_check_flags = dif_check_flags;
+	bdev_io->u.bdev.pi_action = pi_action;
 
 	_bdev_io_submit_ext(desc, bdev_io);
 
@@ -5385,7 +5388,8 @@ spdk_bdev_readv_blocks(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
 	struct spdk_bdev *bdev = spdk_bdev_desc_get_bdev(desc);
 
 	return bdev_readv_blocks_with_md(desc, ch, iov, iovcnt, NULL, offset_blocks,
-					 num_blocks, NULL, NULL, NULL, bdev->dif_check_flags, cb, cb_arg);
+					 num_blocks, NULL, NULL, NULL, bdev->dif_check_flags,
+					 SPDK_BDEV_PI_ACTION_NONE, cb, cb_arg);
 }
 
 int
@@ -5405,7 +5409,8 @@ spdk_bdev_readv_blocks_with_md(struct spdk_bdev_desc *desc, struct spdk_io_chann
 	}
 
 	return bdev_readv_blocks_with_md(desc, ch, iov, iovcnt, md_buf, offset_blocks,
-					 num_blocks, NULL, NULL, NULL, bdev->dif_check_flags, cb, cb_arg);
+					 num_blocks, NULL, NULL, NULL, bdev->dif_check_flags,
+					 SPDK_BDEV_PI_ACTION_NONE, cb, cb_arg);
 }
 
 static inline bool
@@ -5435,6 +5440,7 @@ spdk_bdev_readv_blocks_ext(struct spdk_bdev_desc *desc, struct spdk_io_channel *
 	void *domain_ctx = NULL, *md = NULL;
 	uint32_t dif_check_flags = 0;
 	struct spdk_bdev *bdev = spdk_bdev_desc_get_bdev(desc);
+	enum spdk_bdev_pi_action pi_action = SPDK_BDEV_PI_ACTION_NONE;
 
 	if (opts) {
 		if (spdk_unlikely(!_bdev_io_check_opts(opts, iov))) {
@@ -5445,6 +5451,7 @@ spdk_bdev_readv_blocks_ext(struct spdk_bdev_desc *desc, struct spdk_io_channel *
 		domain = bdev_get_ext_io_opt(opts, memory_domain, NULL);
 		domain_ctx = bdev_get_ext_io_opt(opts, memory_domain_ctx, NULL);
 		seq = bdev_get_ext_io_opt(opts, accel_sequence, NULL);
+		pi_action = bdev_get_ext_io_opt(opts, pi_action, SPDK_BDEV_PI_ACTION_NONE);
 		if (md) {
 			if (spdk_unlikely(!spdk_bdev_is_md_separate(bdev))) {
 				return -EINVAL;
@@ -5463,8 +5470,13 @@ spdk_bdev_readv_blocks_ext(struct spdk_bdev_desc *desc, struct spdk_io_channel *
 	dif_check_flags = bdev->dif_check_flags &
 			  ~(bdev_get_ext_io_opt(opts, dif_check_flags_exclude_mask, 0));
 
+	if (spdk_unlikely(pi_action != SPDK_BDEV_PI_ACTION_NONE)) {
+		return -EINVAL;
+	}
+
 	return bdev_readv_blocks_with_md(desc, ch, iov, iovcnt, md, offset_blocks,
-					 num_blocks, domain, domain_ctx, seq, dif_check_flags, cb, cb_arg);
+					 num_blocks, domain, domain_ctx, seq, dif_check_flags, pi_action,
+					 cb, cb_arg);
 }
 
 static int
@@ -5560,7 +5572,7 @@ bdev_writev_blocks_with_md(struct spdk_bdev_desc *desc, struct spdk_io_channel *
 			   uint64_t offset_blocks, uint64_t num_blocks,
 			   struct spdk_memory_domain *domain, void *domain_ctx,
 			   struct spdk_accel_sequence *seq, uint32_t dif_check_flags,
-			   spdk_bdev_io_completion_cb cb, void *cb_arg)
+			   enum spdk_bdev_pi_action pi_action, spdk_bdev_io_completion_cb cb, void *cb_arg)
 {
 	struct spdk_bdev *bdev = spdk_bdev_desc_get_bdev(desc);
 	struct spdk_bdev_io *bdev_io;
@@ -5596,6 +5608,7 @@ bdev_writev_blocks_with_md(struct spdk_bdev_desc *desc, struct spdk_io_channel *
 	bdev_io->u.bdev.memory_domain_ctx = domain_ctx;
 	bdev_io->u.bdev.accel_sequence = seq;
 	bdev_io->u.bdev.dif_check_flags = dif_check_flags;
+	bdev_io->u.bdev.pi_action = pi_action;
 
 	_bdev_io_submit_ext(desc, bdev_io);
 
@@ -5627,7 +5640,8 @@ spdk_bdev_writev_blocks(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
 	struct spdk_bdev *bdev = spdk_bdev_desc_get_bdev(desc);
 
 	return bdev_writev_blocks_with_md(desc, ch, iov, iovcnt, NULL, offset_blocks,
-					  num_blocks, NULL, NULL, NULL, bdev->dif_check_flags, cb, cb_arg);
+					  num_blocks, NULL, NULL, NULL, bdev->dif_check_flags,
+					  SPDK_BDEV_PI_ACTION_NONE, cb, cb_arg);
 }
 
 int
@@ -5647,7 +5661,8 @@ spdk_bdev_writev_blocks_with_md(struct spdk_bdev_desc *desc, struct spdk_io_chan
 	}
 
 	return bdev_writev_blocks_with_md(desc, ch, iov, iovcnt, md_buf, offset_blocks,
-					  num_blocks, NULL, NULL, NULL, bdev->dif_check_flags, cb, cb_arg);
+					  num_blocks, NULL, NULL, NULL, bdev->dif_check_flags,
+					  SPDK_BDEV_PI_ACTION_NONE, cb, cb_arg);
 }
 
 int
@@ -5662,6 +5677,7 @@ spdk_bdev_writev_blocks_ext(struct spdk_bdev_desc *desc, struct spdk_io_channel 
 	void *domain_ctx = NULL, *md = NULL;
 	uint32_t dif_check_flags = 0;
 	struct spdk_bdev *bdev = spdk_bdev_desc_get_bdev(desc);
+	enum spdk_bdev_pi_action pi_action = SPDK_BDEV_PI_ACTION_NONE;
 
 	if (opts) {
 		if (spdk_unlikely(!_bdev_io_check_opts(opts, iov))) {
@@ -5672,6 +5688,7 @@ spdk_bdev_writev_blocks_ext(struct spdk_bdev_desc *desc, struct spdk_io_channel 
 		domain = bdev_get_ext_io_opt(opts, memory_domain, NULL);
 		domain_ctx = bdev_get_ext_io_opt(opts, memory_domain_ctx, NULL);
 		seq = bdev_get_ext_io_opt(opts, accel_sequence, NULL);
+		pi_action = bdev_get_ext_io_opt(opts, pi_action, SPDK_BDEV_PI_ACTION_NONE);
 		if (md) {
 			if (spdk_unlikely(!spdk_bdev_is_md_separate(bdev))) {
 				return -EINVAL;
@@ -5690,8 +5707,12 @@ spdk_bdev_writev_blocks_ext(struct spdk_bdev_desc *desc, struct spdk_io_channel 
 	dif_check_flags = bdev->dif_check_flags &
 			  ~(bdev_get_ext_io_opt(opts, dif_check_flags_exclude_mask, 0));
 
+	if (spdk_unlikely(pi_action != SPDK_BDEV_PI_ACTION_NONE)) {
+		return -EINVAL;
+	}
+
 	return bdev_writev_blocks_with_md(desc, ch, iov, iovcnt, md, offset_blocks, num_blocks,
-					  domain, domain_ctx, seq, dif_check_flags, cb, cb_arg);
+					  domain, domain_ctx, seq, dif_check_flags, pi_action, cb, cb_arg);
 }
 
 static void
