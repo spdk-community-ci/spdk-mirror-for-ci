@@ -44,3 +44,4 @@ test/common/build_config.sh
 .spdk-isal.log
 .spdk-isal-crypto.log
 python/spdk/rpc/rpc.py
+doc/jsonrpc.md

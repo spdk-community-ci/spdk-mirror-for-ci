@@ -22,9 +22,10 @@ endif
 all: genrpc
 
 clean:
+	$(Q)rm -rf spdk/rpc/generated_rpc.py
 
 genrpc:
-	$(Q)$(SPDK_ROOT_DIR)/scripts/genrpc.py $(SPDK_ROOT_DIR)/schema/schema.json > \
+	$(Q)$(SPDK_ROOT_DIR)/scripts/generator/genrpc.py --rpcs > \
 		$(SPDK_ROOT_DIR)/python/spdk/rpc/rpc.py
 
 install: rpc spdkcli
