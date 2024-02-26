@@ -3,6 +3,8 @@
 #  All rights reserved.
 #
 
+SPDK_ROOT_DIR := $(abspath $(CURDIR)/..)
+
 all: doc
 	@:
 
@@ -21,9 +23,13 @@ changelog.md: ../CHANGELOG.md
 	    -e '/# v..\...:/s/\./-/2' \
 	    < $< > $@
 
-output: Doxyfile changelog.md deprecation.md $(wildcard *.md) $(wildcard ../include/spdk/*.h)
+jsonrpc:
+	$(Q) $(SPDK_ROOT_DIR)/scripts/generator/genrpc.py --doc > $@
+	$(Q)rm -rf $@
+
+output: jsonrpc Doxyfile changelog.md deprecation.md $(wildcard *.md) $(wildcard ../include/spdk/*.h)
 	$(Q)rm -rf $@
 	$(Q)doxygen Doxyfile
 
 clean:
-	$(Q)rm -rf output changelog.md deprecation.md
+	$(Q)rm -rf output changelog.md deprecation.md jsonrpc.md

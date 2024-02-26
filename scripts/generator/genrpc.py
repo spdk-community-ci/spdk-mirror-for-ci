@@ -4,11 +4,19 @@
 #  All rights reserved.
 
 import argparse
+from collections import OrderedDict
 from datetime import date
 from json import load
 from os import path
+from pathlib import Path
 from sys import stdout
 from textwrap import wrap
+
+from tabulate import tabulate
+
+cwd = Path(__file__).parent.resolve()
+root_folder = Path(__file__).absolute().parent.parent.parent
+
 
 license = f"""#  SPDX-License-Identifier: BSD-3-Clause
 #  Copyright (C) {date.today().year} Intel Corporation.
@@ -56,7 +64,7 @@ def generate_rpcs(schema):
         pparams = "".join(print_param(method["params"], signature_length))
         method_desc = "\n\t".join(wrap(text=method["description"], width=130, break_long_words=False)).expandtabs(4)
         desc = [
-            "\n\t\t".join(wrap(f"{arg['param']}: {arg['description']}", width=130, break_long_words=False))
+            "\n\t\t".join(wrap(f"{arg['param']}: {arg['description']}", width=130, break_long_words=False)).expandtabs(4)
             for arg in method["params"]
         ]
         params_desc_list = "\n\t\t".join(desc)
@@ -90,13 +98,75 @@ def generate_rpcs(schema):
     stdout.write(content)
 
 
+def generate_docs(schema):
+    doc_folder = path.join(root_folder, "doc")
+
+    new_names = OrderedDict(
+        {
+            "param": "Name",
+            "required": "Optional",
+            "type": "Type",
+            "description": "Description",
+        }
+    )
+
+    with open(f"{cwd}/doc_tmpl.md", mode="r") as tmpl:
+        doc = tmpl.read()
+
+    for method in schema["methods"]:
+        base_str = "{#rpc_%s_params}" % method["method"]
+        md_params_header = f"#### Parameters\n\n"
+        md_params = "No parameters required"
+
+        if method["params"]:
+            renamed_params = []
+            for param in method["params"]:
+                param["required"] = "Required" if param["required"] else "Optional"
+                renamed_params.append(
+                    OrderedDict(
+                        (value, param[key]) for (key, value) in new_names.items()
+                    )
+                )
+            md_params = tabulate(
+                renamed_params,
+                headers="keys",
+                tablefmt="presto",
+            ).replace("-+-", " | ")
+
+        doc = doc.replace(base_str, f"{md_params_header}{md_params}")
+
+    with open(f"{doc_folder}/jsonrpc.md", mode="w+", encoding="utf-8") as new_doc:
+        new_doc.write(doc)
+        print("... wrote jsonrpc.md")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="RPC functions and documentation generator"
     )
     parser.add_argument(
+        "-s",
+        "--schema",
         dest="schema",
         help="path to rpc json schema",
+        required=False,
+        default=f"{root_folder}/schema/schema.json",
+    )
+    parser.add_argument(
+        "-d",
+        "--doc",
+        dest="doc",
+        help="run doc generation",
+        required=False,
+        action="store_true",
+    )
+    parser.add_argument(
+        "-r",
+        "--rpcs",
+        dest="rpc",
+        help="run doc generation",
+        required=False,
+        action="store_true",
     )
 
     args = parser.parse_args()
@@ -107,4 +177,10 @@ if __name__ == "__main__":
     with open(args.schema, "r") as file:
         schema = load(file)
 
-    generate_rpcs(schema)
+    if not (args.doc or args.rpc):
+        parser.error("No action requested, add -d for doc or -r for rpcs generation")
+
+    if args.doc:
+        generate_docs(schema)
+    if args.rpc:
+        generate_rpcs(schema)
