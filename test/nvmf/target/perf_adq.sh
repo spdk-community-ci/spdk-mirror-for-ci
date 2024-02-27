@@ -40,6 +40,7 @@ function adq_configure_driver() {
 
 function adq_configure_nvmf_target() {
 	$rpc_py sock_impl_set_options --enable-placement-id $1 --enable-zerocopy-send-server -i posix
+	$rpc_py sock_set_default_impl -i posix
 	$rpc_py framework_start_init
 	$rpc_py nvmf_create_transport $NVMF_TRANSPORT_OPTS --io-unit-size 8192 --sock-priority $1
 	$rpc_py bdev_malloc_create 64 512 -b Malloc1
