@@ -14,7 +14,11 @@
 #include "spdk/string.h"
 #include "spdk/log.h"
 #include "spdk_internal/usdt.h"
+#include "spdk/config.h"
 
+#ifdef SPDK_CONFIG_ASAN
+#include <sanitizer/lsan_interface.h>
+#endif
 #include "nvmf_internal.h"
 #include "transport.h"
 
@@ -1404,7 +1408,14 @@ spdk_nvmf_qpair_disconnect(struct spdk_nvmf_qpair *qpair, nvmf_qpair_disconnect_
 	if (spdk_get_thread() != group->thread) {
 		/* clear the atomic so we can set it on the next call on the proper thread. */
 		__atomic_clear(&qpair->disconnect_started, __ATOMIC_RELAXED);
+#ifdef SPDK_CONFIG_ASAN
+		__lsan_disable();
+#endif
 		qpair_ctx = calloc(1, sizeof(struct nvmf_qpair_disconnect_ctx));
+#ifdef SPDK_CONFIG_ASAN
+		__lsan_enable();
+#endif
+
 		if (!qpair_ctx) {
 			SPDK_ERRLOG("Unable to allocate context for nvmf_qpair_disconnect\n");
 			return -ENOMEM;
@@ -1421,7 +1432,13 @@ spdk_nvmf_qpair_disconnect(struct spdk_nvmf_qpair *qpair, nvmf_qpair_disconnect_
 	assert(qpair->state == SPDK_NVMF_QPAIR_ACTIVE);
 	nvmf_qpair_set_state(qpair, SPDK_NVMF_QPAIR_DEACTIVATING);
 
+#ifdef SPDK_CONFIG_ASAN
+	__lsan_disable();
+#endif
 	qpair_ctx = calloc(1, sizeof(struct nvmf_qpair_disconnect_ctx));
+#ifdef SPDK_CONFIG_ASAN
+	__lsan_enable();
+#endif
 	if (!qpair_ctx) {
 		SPDK_ERRLOG("Unable to allocate context for nvmf_qpair_disconnect\n");
 		return -ENOMEM;
