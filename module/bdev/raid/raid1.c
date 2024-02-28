@@ -359,7 +359,7 @@ raid1_submit_process_request(struct raid_bdev_process_request *process_req,
 
 	raid_bdev_io_init(raid_io, raid_ch, SPDK_BDEV_IO_TYPE_READ,
 			  process_req->offset_blocks, process_req->num_blocks,
-			  &process_req->iov, 1, process_req->md_buf, NULL, NULL);
+			  &process_req->iov, 1, process_req->md_buf, NULL, NULL, 0);
 	raid_io->completion_cb = raid1_process_read_completed;
 
 	ret = raid1_submit_read_request(raid_io);

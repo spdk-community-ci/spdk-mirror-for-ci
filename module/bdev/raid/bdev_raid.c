@@ -583,9 +583,11 @@ raid_bdev_writev_blocks_ext(struct raid_base_bdev_info *base_info, struct spdk_i
 {
 	int rc;
 	uint64_t remapped_offset_blocks = base_info->data_offset + offset_blocks;
+	uint32_t dif_check_flags = base_info->raid_bdev->bdev.dif_check_flags &
+				   ~opts->dif_check_flags_exclude_mask;
 
 	if (spdk_unlikely(spdk_bdev_get_dif_type(&base_info->raid_bdev->bdev) != SPDK_DIF_DISABLE &&
-			  base_info->raid_bdev->bdev.dif_check_flags & SPDK_DIF_FLAGS_REFTAG_CHECK)) {
+			  dif_check_flags & SPDK_DIF_FLAGS_REFTAG_CHECK)) {
 
 		rc = raid_bdev_remap_dix_reftag(opts->metadata, num_blocks, &base_info->raid_bdev->bdev,
 						remapped_offset_blocks);
@@ -648,7 +650,7 @@ raid_bdev_io_complete(struct raid_bdev_io *raid_io, enum spdk_bdev_io_status sta
 	} else {
 		if (spdk_unlikely(bdev_io->type == SPDK_BDEV_IO_TYPE_READ &&
 				  spdk_bdev_get_dif_type(bdev_io->bdev) != SPDK_DIF_DISABLE &&
-				  bdev_io->bdev->dif_check_flags & SPDK_DIF_FLAGS_REFTAG_CHECK &&
+				  bdev_io->u.bdev.dif_check_flags & SPDK_DIF_FLAGS_REFTAG_CHECK &&
 				  status == SPDK_BDEV_IO_STATUS_SUCCESS)) {
 
 			rc = raid_bdev_remap_dix_reftag(bdev_io->u.bdev.md_buf,
@@ -891,7 +893,8 @@ void
 raid_bdev_io_init(struct raid_bdev_io *raid_io, struct raid_bdev_io_channel *raid_ch,
 		  enum spdk_bdev_io_type type, uint64_t offset_blocks,
 		  uint64_t num_blocks, struct iovec *iovs, int iovcnt, void *md_buf,
-		  struct spdk_memory_domain *memory_domain, void *memory_domain_ctx)
+		  struct spdk_memory_domain *memory_domain, void *memory_domain_ctx,
+		  uint32_t dif_check_flags)
 {
 	struct spdk_io_channel *ch = spdk_io_channel_from_ctx(raid_ch);
 	struct raid_bdev *raid_bdev = spdk_io_channel_get_io_device(ch);
@@ -904,6 +907,7 @@ raid_bdev_io_init(struct raid_bdev_io *raid_io, struct raid_bdev_io_channel *rai
 	raid_io->memory_domain = memory_domain;
 	raid_io->memory_domain_ctx = memory_domain_ctx;
 	raid_io->md_buf = md_buf;
+	raid_io->dif_check_flags = dif_check_flags;
 
 	raid_io->raid_bdev = raid_bdev;
 	raid_io->raid_ch = raid_ch;
@@ -933,7 +937,8 @@ raid_bdev_submit_request(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_i
 	raid_bdev_io_init(raid_io, spdk_io_channel_get_ctx(ch), bdev_io->type,
 			  bdev_io->u.bdev.offset_blocks, bdev_io->u.bdev.num_blocks,
 			  bdev_io->u.bdev.iovs, bdev_io->u.bdev.iovcnt, bdev_io->u.bdev.md_buf,
-			  bdev_io->u.bdev.memory_domain, bdev_io->u.bdev.memory_domain_ctx);
+			  bdev_io->u.bdev.memory_domain, bdev_io->u.bdev.memory_domain_ctx,
+			  bdev_io->u.bdev.dif_check_flags);
 
 	switch (bdev_io->type) {
 	case SPDK_BDEV_IO_TYPE_READ:

@@ -127,6 +127,7 @@ struct raid_bdev_io {
 	struct spdk_memory_domain *memory_domain;
 	void *memory_domain_ctx;
 	void *md_buf;
+	uint32_t dif_check_flags;
 
 	/* WaitQ entry, used only in waitq logic */
 	struct spdk_bdev_io_wait_entry	waitq_entry;
@@ -364,7 +365,8 @@ void raid_bdev_process_request_complete(struct raid_bdev_process_request *proces
 void raid_bdev_io_init(struct raid_bdev_io *raid_io, struct raid_bdev_io_channel *raid_ch,
 		       enum spdk_bdev_io_type type, uint64_t offset_blocks,
 		       uint64_t num_blocks, struct iovec *iovs, int iovcnt, void *md_buf,
-		       struct spdk_memory_domain *memory_domain, void *memory_domain_ctx);
+		       struct spdk_memory_domain *memory_domain, void *memory_domain_ctx,
+		       uint32_t dif_check_flags);
 
 static inline uint8_t
 raid_bdev_base_bdev_slot(struct raid_base_bdev_info *base_info)
