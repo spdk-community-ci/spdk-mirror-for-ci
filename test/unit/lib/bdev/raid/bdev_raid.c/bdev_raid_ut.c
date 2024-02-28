@@ -41,6 +41,7 @@ struct io_output {
 	struct iovec                *iovs;
 	int                         iovcnt;
 	void                        *md_buf;
+	uint32_t                    dif_check_flags_exclude_mask;
 };
 
 struct raid_io_ranges {
@@ -80,6 +81,7 @@ uint64_t g_bdev_ch_io_device;
 bool g_bdev_io_defer_completion;
 TAILQ_HEAD(, spdk_bdev_io) g_deferred_ios = TAILQ_HEAD_INITIALIZER(g_deferred_ios);
 bool g_enable_dif;
+uint32_t g_dif_check_flags_exclude_mask;
 
 DEFINE_STUB_V(spdk_bdev_module_examine_done, (struct spdk_bdev_module *module));
 DEFINE_STUB_V(spdk_bdev_module_list_add, (struct spdk_bdev_module *bdev_module));
@@ -231,6 +233,7 @@ set_test_opts_dif(void)
 	g_strip_size = 64;
 	g_max_io_size = 1024;
 	g_enable_dif = true;
+	g_dif_check_flags_exclude_mask = SPDK_DIF_FLAGS_GUARD_CHECK;
 
 	printf("Test Options\n");
 	printf("blocklen = %u, strip_size = %u, max_io_size = %u, g_max_base_drives = %u, "
@@ -429,7 +432,7 @@ set_io_output(struct io_output *output,
 	      uint64_t offset_blocks, uint64_t num_blocks,
 	      spdk_bdev_io_completion_cb cb, void *cb_arg,
 	      enum spdk_bdev_io_type iotype, struct iovec *iovs,
-	      int iovcnt, void *md)
+	      int iovcnt, void *md, uint32_t dif_check_flags_exclude_mask)
 {
 	output->desc = desc;
 	output->ch = ch;
@@ -441,6 +444,7 @@ set_io_output(struct io_output *output,
 	output->iovs = iovs;
 	output->iovcnt = iovcnt;
 	output->md_buf = md;
+	output->dif_check_flags_exclude_mask = dif_check_flags_exclude_mask;
 }
 
 static void
@@ -498,7 +502,8 @@ spdk_bdev_writev_blocks_ext(struct spdk_bdev_desc *desc, struct spdk_io_channel 
 	}
 	if (g_bdev_io_submit_status == 0) {
 		set_io_output(output, desc, ch, offset_blocks, num_blocks, cb, cb_arg,
-			      SPDK_BDEV_IO_TYPE_WRITE, iov, iovcnt, opts->metadata);
+			      SPDK_BDEV_IO_TYPE_WRITE, iov, iovcnt, opts->metadata,
+			      opts->dif_check_flags_exclude_mask);
 		g_io_output_index++;
 
 		child_io = calloc(1, sizeof(struct spdk_bdev_io));
@@ -536,7 +541,7 @@ spdk_bdev_reset(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
 
 	if (g_bdev_io_submit_status == 0) {
 		set_io_output(output, desc, ch, 0, 0, cb, cb_arg, SPDK_BDEV_IO_TYPE_RESET,
-			      NULL, 0, NULL);
+			      NULL, 0, NULL, 0);
 		g_io_output_index++;
 
 		child_io = calloc(1, sizeof(struct spdk_bdev_io));
@@ -561,7 +566,7 @@ spdk_bdev_unmap_blocks(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
 
 	if (g_bdev_io_submit_status == 0) {
 		set_io_output(output, desc, ch, offset_blocks, num_blocks, cb, cb_arg,
-			      SPDK_BDEV_IO_TYPE_UNMAP, NULL, 0, NULL);
+			      SPDK_BDEV_IO_TYPE_UNMAP, NULL, 0, NULL, 0);
 		g_io_output_index++;
 
 		child_io = calloc(1, sizeof(struct spdk_bdev_io));
@@ -713,7 +718,8 @@ spdk_bdev_readv_blocks_ext(struct spdk_bdev_desc *desc, struct spdk_io_channel *
 	SPDK_CU_ASSERT_FATAL(g_io_output_index <= (g_max_io_size / g_strip_size) + 1);
 	if (g_bdev_io_submit_status == 0) {
 		set_io_output(output, desc, ch, offset_blocks, num_blocks, cb, cb_arg,
-			      SPDK_BDEV_IO_TYPE_READ, iov, iovcnt, opts->metadata);
+			      SPDK_BDEV_IO_TYPE_READ, iov, iovcnt, opts->metadata,
+			      opts->dif_check_flags_exclude_mask);
 		generate_dif(iov, iovcnt, opts->metadata, offset_blocks, num_blocks,
 			     spdk_bdev_desc_get_bdev(desc));
 		g_io_output_index++;
@@ -907,6 +913,9 @@ _bdev_io_initialize(struct spdk_bdev_io *bdev_io, struct spdk_io_channel *ch,
 	bdev_io->type = iotype;
 	bdev_io->internal.ch = channel;
 	bdev_io->u.bdev.iovcnt = iovcnt;
+	if (g_enable_dif) {
+		bdev_io->u.bdev.dif_check_flags = bdev->dif_check_flags & ~g_dif_check_flags_exclude_mask;
+	}
 
 	if (iovcnt == 0) {
 		bdev_io->u.bdev.iovs = NULL;
@@ -1027,6 +1036,9 @@ verify_io(struct spdk_bdev_io *bdev_io, uint8_t num_base_drives,
 			verify_dif(output->iovs, output->iovcnt, output->md_buf,
 				   output->offset_blocks, output->num_blocks,
 				   spdk_bdev_desc_get_bdev(raid_bdev->base_bdev_info[pd_idx].desc));
+		}
+		if (g_enable_dif) {
+			CU_ASSERT(output->dif_check_flags_exclude_mask == g_dif_check_flags_exclude_mask);
 		}
 	}
 	CU_ASSERT(g_io_comp_status == io_status);

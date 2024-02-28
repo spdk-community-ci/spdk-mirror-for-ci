@@ -33,7 +33,7 @@ raid0_bdev_io_completion(struct spdk_bdev_io *bdev_io, bool success, void *cb_ar
 	if (success) {
 		if (spdk_unlikely(bdev_io->type == SPDK_BDEV_IO_TYPE_READ &&
 				  spdk_bdev_get_dif_type(bdev_io->bdev) != SPDK_DIF_DISABLE &&
-				  bdev_io->bdev->dif_check_flags & SPDK_DIF_FLAGS_REFTAG_CHECK)) {
+				  bdev_io->u.bdev.dif_check_flags & SPDK_DIF_FLAGS_REFTAG_CHECK)) {
 
 			rc = raid_bdev_verify_dix_reftag(bdev_io->u.bdev.iovs, bdev_io->u.bdev.iovcnt,
 							 bdev_io->u.bdev.md_buf, bdev_io->u.bdev.num_blocks, bdev_io->bdev,
@@ -122,6 +122,7 @@ raid0_submit_rw_request(struct raid_bdev_io *raid_io)
 	io_opts.memory_domain = raid_io->memory_domain;
 	io_opts.memory_domain_ctx = raid_io->memory_domain_ctx;
 	io_opts.metadata = raid_io->md_buf;
+	io_opts.dif_check_flags_exclude_mask = raid_io->dif_check_flags ^ raid_bdev->bdev.dif_check_flags;
 
 	if (raid_io->type == SPDK_BDEV_IO_TYPE_READ) {
 		ret = raid_bdev_readv_blocks_ext(base_info, base_ch,
@@ -132,7 +133,7 @@ raid0_submit_rw_request(struct raid_bdev_io *raid_io)
 		struct spdk_bdev *bdev = &base_info->raid_bdev->bdev;
 
 		if (spdk_unlikely(spdk_bdev_get_dif_type(bdev) != SPDK_DIF_DISABLE &&
-				  bdev->dif_check_flags & SPDK_DIF_FLAGS_REFTAG_CHECK)) {
+				  raid_io->dif_check_flags & SPDK_DIF_FLAGS_REFTAG_CHECK)) {
 			ret = raid_bdev_verify_dix_reftag(raid_io->iovs, raid_io->iovcnt, io_opts.metadata,
 							  pd_blocks, bdev, raid_io->offset_blocks);
 			if (ret != 0) {

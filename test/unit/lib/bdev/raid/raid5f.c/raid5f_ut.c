@@ -27,7 +27,8 @@ DEFINE_STUB_V(raid_bdev_io_init, (struct raid_bdev_io *raid_io,
 				  struct raid_bdev_io_channel *raid_ch,
 				  enum spdk_bdev_io_type type, uint64_t offset_blocks,
 				  uint64_t num_blocks, struct iovec *iovs, int iovcnt, void *md_buf,
-				  struct spdk_memory_domain *memory_domain, void *memory_domain_ctx));
+				  struct spdk_memory_domain *memory_domain, void *memory_domain_ctx,
+				  uint32_t dif_check_flags));
 
 struct spdk_io_channel *
 spdk_accel_get_io_channel(void)
