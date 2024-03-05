@@ -21,6 +21,9 @@
 #include "spdk/version.h"
 #include "spdk/log.h"
 #include "spdk_internal/usdt.h"
+#ifdef SPDK_CONFIG_ASAN
+#include <sanitizer/lsan_interface.h>
+#endif
 
 #define MIN_KEEP_ALIVE_TIMEOUT_IN_MS 10000
 #define NVMF_DISC_KATO_IN_MS 120000
@@ -373,7 +376,13 @@ nvmf_ctrlr_create(struct spdk_nvmf_subsystem *subsystem,
 	struct spdk_nvme_transport_id listen_trid = {};
 	bool subsys_has_multi_iocs = false;
 
+#ifdef SPDK_CONFIG_ASAN
+	__lsan_disable();
+#endif
 	ctrlr = calloc(1, sizeof(*ctrlr));
+#ifdef SPDK_CONFIG_ASAN
+	__lsan_enable();
+#endif
 	if (ctrlr == NULL) {
 		SPDK_ERRLOG("Memory allocation failed\n");
 		return NULL;
