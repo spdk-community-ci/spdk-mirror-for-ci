@@ -125,16 +125,19 @@ write_complete(void *arg, const struct spdk_nvme_cpl *completion)
 	} else {
 		spdk_free(sequence->buf);
 	}
-	sequence->buf = spdk_zmalloc(0x1000, 0x1000, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
+
+	sequence->buf = spdk_zmalloc(0x1000, 0x20000, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
 
 	rc = spdk_nvme_ns_cmd_read(ns_entry->ns, ns_entry->qpair, sequence->buf,
 				   0, /* LBA start */
-				   1, /* number of LBAs */
+				   21, /* number of LBAs */
 				   read_complete, (void *)sequence, 0);
 	if (rc != 0) {
 		fprintf(stderr, "starting read I/O failed\n");
 		exit(1);
 	}
+
+	//sequence->is_completed = 1;
 }
 
 static void
@@ -238,7 +241,7 @@ hello_world(void)
 		 *  0 on the namespace, and then later read it back into a separate buffer
 		 *  to demonstrate the full I/O path.
 		 */
-		snprintf(sequence.buf, 0x1000, "%s", DATA_BUFFER_STRING);
+		snprintf(sequence.buf, 0x20000, "%s", DATA_BUFFER_STRING);
 
 		/*
 		 * Write the data buffer to LBA 0 of this namespace.  "write_complete" and
@@ -256,7 +259,7 @@ hello_world(void)
 		 */
 		rc = spdk_nvme_ns_cmd_write(ns_entry->ns, ns_entry->qpair, sequence.buf,
 					    0, /* LBA start */
-					    1, /* number of LBAs */
+					    21, /* number of LBAs */
 					    write_complete, &sequence, 0);
 		if (rc != 0) {
 			fprintf(stderr, "starting write I/O failed\n");

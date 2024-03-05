@@ -1212,6 +1212,28 @@ if __name__ == "__main__":
     p.add_argument('name', help='pass through bdev name')
     p.set_defaults(func=bdev_passthru_delete)
 
+    def bdev_dif_create(args):
+        print_json(rpc.bdev.bdev_dif_create(args.client,
+                                                 base_bdev_name=args.base_bdev_name,
+                                                 name=args.name,
+                                                 uuid=args.uuid,
+                                                 dif_insert_or_strip=args.dif_insert_or_strip))
+
+    p = subparsers.add_parser('bdev_dif_create', help='Add a DIF bdev on existing bdev')
+    p.add_argument('-b', '--base-bdev-name', help="Name of the existing bdev", required=True)
+    p.add_argument('-p', '--name', help="Name of the DIF bdev", required=True)
+    p.add_argument('-u', '--uuid', help="UUID of the bdev")
+    p.add_argument('-f', '--dif-insert-or-strip', action='store_true', help='Enable DIF insert/strip mode')
+    p.set_defaults(func=bdev_dif_create)
+
+    def bdev_dif_delete(args):
+        rpc.bdev.bdev_dif_delete(args.client,
+                                      name=args.name)
+
+    p = subparsers.add_parser('bdev_dif_delete', help='Delete a DIF bdev')
+    p.add_argument('name', help='DIF bdev name')
+    p.set_defaults(func=bdev_dif_delete)
+
     def bdev_get_bdevs(args):
         print_dict(rpc.bdev.bdev_get_bdevs(args.client,
                                            name=args.name, timeout=args.timeout_ms))

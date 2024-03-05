@@ -2435,6 +2435,7 @@ nvmf_tcp_sock_process(struct spdk_nvmf_tcp_qpair *tqpair)
 			}
 
 			/* Generate and insert DIF to whole data block received if DIF is enabled */
+			/*
 			if (spdk_unlikely(pdu->dif_ctx != NULL) &&
 			    spdk_dif_generate_stream(pdu->data_iov, pdu->data_iovcnt, 0, data_len,
 						     pdu->dif_ctx) != 0) {
@@ -2442,6 +2443,7 @@ nvmf_tcp_sock_process(struct spdk_nvmf_tcp_qpair *tqpair)
 				nvmf_tcp_qpair_set_recv_state(tqpair, NVME_TCP_PDU_RECV_STATE_QUIESCING);
 				break;
 			}
+			*/
 
 			/* All of this PDU has now been read from the socket. */
 			nvmf_tcp_pdu_payload_handle(tqpair, pdu);
@@ -2664,8 +2666,7 @@ _nvmf_tcp_send_c2h_data(struct spdk_nvmf_tcp_qpair *tqpair,
 	struct nvme_tcp_pdu *rsp_pdu;
 	struct spdk_nvme_tcp_c2h_data_hdr *c2h_data;
 	uint32_t plen, pdo, alignment;
-	int rc;
-
+	/* int rc; */
 	SPDK_DEBUGLOG(nvmf_tcp, "enter\n");
 
 	rsp_pdu = tcp_req->pdu;
@@ -2722,8 +2723,8 @@ _nvmf_tcp_send_c2h_data(struct spdk_nvmf_tcp_qpair *tqpair,
 	}
 
 	if (spdk_unlikely(tcp_req->req.dif_enabled)) {
-		struct spdk_nvme_cpl *rsp = &tcp_req->req.rsp->nvme_cpl;
-		struct spdk_dif_error err_blk = {};
+		/* struct spdk_nvme_cpl *rsp = &tcp_req->req.rsp->nvme_cpl; */
+		/* struct spdk_dif_error err_blk = {}; */
 		uint32_t mapped_length = 0;
 		uint32_t available_iovs = SPDK_COUNTOF(rsp_pdu->iov);
 		uint32_t ddgst_len = 0;
@@ -2759,6 +2760,7 @@ _nvmf_tcp_send_c2h_data(struct spdk_nvmf_tcp_qpair *tqpair,
 
 		assert(rsp_pdu->rw_offset <= tcp_req->req.length);
 
+/*
 		rc = spdk_dif_verify_stream(rsp_pdu->data_iov, rsp_pdu->data_iovcnt,
 					    0, rsp_pdu->data_len, rsp_pdu->dif_ctx, &err_blk);
 		if (rc != 0) {
@@ -2769,6 +2771,7 @@ _nvmf_tcp_send_c2h_data(struct spdk_nvmf_tcp_qpair *tqpair,
 			nvmf_tcp_send_capsule_resp_pdu(tcp_req, tqpair);
 			return;
 		}
+*/
 	}
 
 	rsp_pdu->rw_offset += c2h_data->datal;
