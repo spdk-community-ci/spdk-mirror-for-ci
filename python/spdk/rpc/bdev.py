@@ -1378,6 +1378,38 @@ def bdev_passthru_delete(client, name):
     return client.call('bdev_passthru_delete', params)
 
 
+def bdev_dif_create(client, base_bdev_name, name, uuid=None, dif_insert_or_strip=None):
+    """Construct a DIF block device.
+
+    Args:
+        base_bdev_name: name of the existing bdev
+        name: name of block device
+        uuid: UUID of block device (optional)
+
+    Returns:
+        Name of created block device.
+    """
+    params = {
+        'base_bdev_name': base_bdev_name,
+        'name': name,
+    }
+    if uuid:
+        params['uuid'] = uuid
+    if dif_insert_or_strip:
+        params['dif_insert_or_strip'] = dif_insert_or_strip
+    return client.call('bdev_dif_create', params)
+
+
+def bdev_dif_delete(client, name):
+    """Remove DIF bdev from the system.
+
+    Args:
+        name: name of DIF bdev to delete
+    """
+    params = {'name': name}
+    return client.call('bdev_dif_delete', params)
+
+
 def bdev_opal_create(client, nvme_ctrlr_name, nsid, locking_range_id, range_start, range_length, password):
     """Create opal virtual block devices from a base nvme bdev.
 

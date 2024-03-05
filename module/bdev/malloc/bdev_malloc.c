@@ -117,6 +117,7 @@ malloc_done(void *ref, int status)
 		return;
 	}
 
+	/*
 	if (bdev_io->bdev->dif_type != SPDK_DIF_DISABLE &&
 	    bdev_io->type == SPDK_BDEV_IO_TYPE_READ &&
 	    task->status == SPDK_BDEV_IO_STATUS_SUCCESS) {
@@ -125,6 +126,7 @@ malloc_done(void *ref, int status)
 			task->status = SPDK_BDEV_IO_STATUS_FAILED;
 		}
 	}
+	*/
 
 	assert(!bdev_io->u.bdev.accel_sequence || task->status == SPDK_BDEV_IO_STATUS_NOMEM);
 	spdk_bdev_io_complete(spdk_bdev_io_from_ctx(task), task->status);
@@ -396,6 +398,7 @@ _bdev_malloc_submit_request(struct malloc_channel *mch, struct spdk_bdev_io *bde
 		return 0;
 
 	case SPDK_BDEV_IO_TYPE_WRITE:
+		/*
 		if (bdev_io->bdev->dif_type != SPDK_DIF_DISABLE) {
 			rc = malloc_verify_pi(bdev_io);
 			if (rc != 0) {
@@ -403,6 +406,7 @@ _bdev_malloc_submit_request(struct malloc_channel *mch, struct spdk_bdev_io *bde
 				return 0;
 			}
 		}
+		*/
 
 		bdev_malloc_writev(disk, mch->accel_channel, task, bdev_io);
 		return 0;

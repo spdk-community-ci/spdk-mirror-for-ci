@@ -1624,7 +1624,7 @@ spdk_idxd_submit_dif_insert(struct spdk_idxd_io_channel *chan,
 	uint64_t src_len, src_seg_len, dst_len, dst_seg_len;
 	void *src, *dst;
 	size_t i;
-	uint32_t num_blocks_left;
+	uint32_t num_blocks_left, num_blocks_done;
 	uint8_t dif_flags;
 
 	assert(ctx != NULL);
@@ -1652,6 +1652,7 @@ spdk_idxd_submit_dif_insert(struct spdk_idxd_io_channel *chan,
 	op = NULL;
 	first_op = NULL;
 	num_blocks_left = num_blocks;
+	num_blocks_done = 0;
 	for (i = 0; i < siovcnt; i++) {
 		src_len = siov[i].iov_len;
 		src = siov[i].iov_base;
@@ -1729,13 +1730,14 @@ spdk_idxd_submit_dif_insert(struct spdk_idxd_io_channel *chan,
 			desc->dif_ins.flags = dif_flags;
 			desc->dif_ins.app_tag_seed = ctx->app_tag;
 			desc->dif_ins.app_tag_mask = ~ctx->apptag_mask;
-			desc->dif_ins.ref_tag_seed = (uint32_t)ctx->init_ref_tag;
+			desc->dif_ins.ref_tag_seed = (uint32_t)ctx->init_ref_tag + num_blocks_done;
 
 			src_len -= src_seg_len;
 			dst_len -= dst_seg_len;
 			src += src_seg_len;
 			dst += dst_seg_len;
 			num_blocks_left -= src_seg_len / (ctx->block_size - ctx->md_size);
+			num_blocks_done += src_seg_len / (ctx->block_size - ctx->md_size);
 		}
 	}
 
@@ -1784,7 +1786,7 @@ spdk_idxd_submit_dif_strip(struct spdk_idxd_io_channel *chan,
 	uint64_t src_len, src_seg_len, dst_len, dst_seg_len;
 	void *src, *dst;
 	size_t i;
-	uint32_t num_blocks_left;
+	uint32_t num_blocks_left, num_blocks_done;
 	uint8_t dif_flags;
 
 	assert(ctx != NULL);
@@ -1808,6 +1810,7 @@ spdk_idxd_submit_dif_strip(struct spdk_idxd_io_channel *chan,
 	op = NULL;
 	first_op = NULL;
 	num_blocks_left = num_blocks;
+	num_blocks_done = 0;
 	for (i = 0; i < siovcnt; i++) {
 		src_len = siov[i].iov_len;
 		src = siov[i].iov_base;
@@ -1881,13 +1884,14 @@ spdk_idxd_submit_dif_strip(struct spdk_idxd_io_channel *chan,
 			desc->dif_strip.flags = dif_flags;
 			desc->dif_strip.app_tag_seed = ctx->app_tag;
 			desc->dif_strip.app_tag_mask = ~ctx->apptag_mask;
-			desc->dif_strip.ref_tag_seed = (uint32_t)ctx->init_ref_tag;
+			desc->dif_strip.ref_tag_seed = (uint32_t)ctx->init_ref_tag + num_blocks_done;
 
 			src_len -= src_seg_len;
 			dst_len -= dst_seg_len;
 			src += src_seg_len;
 			dst += dst_seg_len;
 			num_blocks_left -= src_seg_len / (ctx->block_size - ctx->md_size);
+			num_blocks_done += src_seg_len / (ctx->block_size - ctx->md_size);
 		}
 	}
 

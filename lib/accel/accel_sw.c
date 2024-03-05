@@ -80,6 +80,7 @@ sw_accel_supports_opcode(enum spdk_accel_opcode opc)
 	case SPDK_ACCEL_OPC_XOR:
 	case SPDK_ACCEL_OPC_DIF_VERIFY:
 	case SPDK_ACCEL_OPC_DIF_GENERATE_COPY:
+	case SPDK_ACCEL_OPC_DIF_STRIP:
 		return true;
 	default:
 		return false;
