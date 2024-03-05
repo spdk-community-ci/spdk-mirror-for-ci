@@ -2277,10 +2277,13 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     def bdev_raid_add_base_bdev(args):
         rpc.bdev.bdev_raid_add_base_bdev(args.client,
                                          raid_bdev=args.raid_bdev,
-                                         base_bdev=args.base_bdev)
+                                         base_bdev=args.base_bdev,
+                                         skip_rebuild=args.skip_rebuild)
     p = subparsers.add_parser('bdev_raid_add_base_bdev', help='Add base bdev to existing raid bdev')
     p.add_argument('raid_bdev', help='raid bdev name')
     p.add_argument('base_bdev', help='base bdev name')
+    p.add_argument('-s', '--skip-rebuild', help='Assume the bdev is already rebuilt',
+                   action='store_true')
     p.set_defaults(func=bdev_raid_add_base_bdev)
 
     def bdev_raid_remove_base_bdev(args):

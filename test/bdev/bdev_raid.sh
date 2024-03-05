@@ -800,6 +800,80 @@ function raid_rebuild_test() {
 	return 0
 }
 
+function raid_add_bdev_without_rebuild() {
+	local raid_level="raid1"
+	local num_base_bdevs=$1
+	local superblock=$2
+	local base_bdevs=($(for ((i = 1; i <= num_base_bdevs; i++)); do echo BaseBdev$i; done))
+	local raid_bdev_name="raid_bdev1"
+	local strip_size=0
+	local data_offset
+
+	"$rootdir/build/examples/bdevperf" -r $rpc_server -T $raid_bdev_name -t 60 -w randrw -M 50 -o 3M -q 2 -U -z -L bdev_raid &
+	raid_pid=$!
+	waitforlisten $raid_pid $rpc_server
+
+	# Create base bdevs
+	for bdev in "${base_bdevs[@]}"; do
+		$rpc_py bdev_malloc_create 32 512 -b ${bdev}_malloc
+		$rpc_py bdev_passthru_create -b ${bdev}_malloc -p $bdev
+	done
+
+	# Create RAID bdev
+	$rpc_py bdev_raid_create -r $raid_level -b "${base_bdevs[*]}" -n $raid_bdev_name $([ $superblock = true ] && echo "-s")
+	verify_raid_bdev_state $raid_bdev_name "online" $raid_level $strip_size $num_base_bdevs
+
+	# Get base bdev's data offset
+	data_offset=$($rpc_py bdev_raid_get_bdevs all | jq -r '.[].base_bdevs_list[0].data_offset')
+
+	# Remove one base bdev
+	$rpc_py bdev_raid_remove_base_bdev ${base_bdevs[0]}
+
+	# Create spare bdev
+	$rpc_py bdev_delay_create -b ${base_bdevs[0]} -d "spare_delay" -r 0 -t 0 -w 100000 -n 100000
+	$rpc_py bdev_passthru_create -b "spare_delay" -p "spare"
+
+	# Check if the RAID bdev is in online state (degraded)
+	verify_raid_bdev_state $raid_bdev_name "online" $raid_level $strip_size $((num_base_bdevs - 1))
+
+	# Add bdev without rebuild
+	$rpc_py bdev_raid_add_base_bdev $raid_bdev_name "spare" -s
+	sleep 1
+
+	# Check if rebuild not started
+	verify_raid_bdev_process $raid_bdev_name "none" "none"
+
+	# Start user I/O
+	"$rootdir/examples/bdev/bdevperf/bdevperf.py" -s $rpc_server perform_tests -t 1
+
+	# Stop the RAID bdev
+	$rpc_py bdev_raid_delete $raid_bdev_name
+	[[ $($rpc_py bdev_raid_get_bdevs all | jq 'length') == 0 ]]
+
+	# Compare data on the added bdev and other base bdevs
+	nbd_start_disks $rpc_server "spare" "/dev/nbd0"
+	for bdev in "${base_bdevs[@]:1}"; do
+		nbd_start_disks $rpc_server $bdev "/dev/nbd1"
+		cmp -i $((data_offset * 512)) /dev/nbd0 /dev/nbd1
+		nbd_stop_disks $rpc_server "/dev/nbd1"
+	done
+	nbd_stop_disks $rpc_server "/dev/nbd0"
+
+	# Check if superblock was updated after adding the base bdev
+	if [ $superblock = true ]; then
+		# Remove then re-add a base bdev to assemble the raid bdev again
+		$rpc_py bdev_passthru_delete "spare"
+		$rpc_py bdev_passthru_create -b "spare_delay" -p "spare"
+
+		verify_raid_bdev_state $raid_bdev_name "online" $raid_level $strip_size $num_base_bdevs
+		verify_raid_bdev_process $raid_bdev_name "none" "none"
+	fi
+
+	killprocess $raid_pid
+
+	return 0
+}
+
 function raid_io_error_test() {
 	local raid_level=$1
 	local num_base_bdevs=$2
@@ -958,6 +1032,8 @@ if [ "$has_nbd" = true ]; then
 		run_test "raid_rebuild_test_sb" raid_rebuild_test raid1 $n true false true
 		run_test "raid_rebuild_test_io" raid_rebuild_test raid1 $n false true true
 		run_test "raid_rebuild_test_sb_io" raid_rebuild_test raid1 $n true true true
+		run_test "raid_add_bdev_without_rebuild" raid_add_bdev_without_rebuild $n false
+		run_test "raid_add_bdev_without_rebuild_sb" raid_add_bdev_without_rebuild $n true
 	done
 fi
 

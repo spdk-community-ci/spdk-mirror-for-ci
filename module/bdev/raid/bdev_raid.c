@@ -2432,18 +2432,8 @@ raid_bdev_delete(struct raid_bdev *raid_bdev, raid_bdev_destruct_cb cb_fn, void 
 }
 
 static void
-raid_bdev_process_finish_write_sb_cb(int status, struct raid_bdev *raid_bdev, void *ctx)
+raid_bdev_configure_base_bdev_update_sb(struct raid_bdev *raid_bdev, void *cb, void *cb_ctx)
 {
-	if (status != 0) {
-		SPDK_ERRLOG("Failed to write raid bdev '%s' superblock after background process finished: %s\n",
-			    raid_bdev->bdev.name, spdk_strerror(-status));
-	}
-}
-
-static void
-raid_bdev_process_finish_write_sb(void *ctx)
-{
-	struct raid_bdev *raid_bdev = ctx;
 	struct raid_bdev_superblock *sb = raid_bdev->sb;
 	struct raid_bdev_sb_base_bdev *sb_base_bdev;
 	struct raid_base_bdev_info *base_info;
@@ -2462,7 +2452,25 @@ raid_bdev_process_finish_write_sb(void *ctx)
 		}
 	}
 
-	raid_bdev_write_superblock(raid_bdev, raid_bdev_process_finish_write_sb_cb, NULL);
+	raid_bdev_write_superblock(raid_bdev, cb, cb_ctx);
+}
+
+static void
+raid_bdev_process_finish_write_sb_cb(int status, struct raid_bdev *raid_bdev, void *ctx)
+{
+	if (status != 0) {
+		SPDK_ERRLOG("Failed to write raid bdev '%s' superblock after background process finished: %s\n",
+			    raid_bdev->bdev.name, spdk_strerror(-status));
+	}
+}
+
+static void
+raid_bdev_process_finish_write_sb(void *ctx)
+{
+	struct raid_bdev *raid_bdev = ctx;
+
+	raid_bdev_configure_base_bdev_update_sb(raid_bdev, raid_bdev_process_finish_write_sb_cb,
+						NULL);
 }
 
 static void raid_bdev_process_free(struct raid_bdev_process *process);
@@ -3126,6 +3134,59 @@ raid_bdev_start_rebuild(struct raid_base_bdev_info *target)
 static void raid_bdev_configure_base_bdev_cont(struct raid_base_bdev_info *base_info);
 
 static void
+raid_bdev_ch_sync(struct spdk_io_channel_iter *i)
+{
+	spdk_for_each_channel_continue(i, 0);
+}
+
+static void
+raid_bdev_register_without_rebuild(struct spdk_io_channel_iter *i)
+{
+	struct raid_base_bdev_info *base_info = spdk_io_channel_iter_get_ctx(i);
+	struct spdk_io_channel *ch = spdk_io_channel_iter_get_channel(i);
+	struct raid_bdev_io_channel *raid_ch = spdk_io_channel_get_ctx(ch);
+	uint8_t slot;
+	int ret = 0;
+
+	slot = raid_bdev_base_bdev_slot(base_info);
+	raid_ch->base_channel[slot] = spdk_bdev_get_io_channel(base_info->desc);
+	if (!raid_ch->base_channel[slot]) {
+		SPDK_ERRLOG("Unable to create io channel for base bdev\n");
+		ret = -ENOMEM;
+	}
+	spdk_for_each_channel_continue(i, ret);
+}
+
+static void
+raid_bdev_no_rebuild_finish_write_sb_cb(int status, struct raid_bdev *raid_bdev, void *ctx)
+{
+	struct raid_base_bdev_info *base_info = ctx;
+
+	if (status != 0) {
+		SPDK_ERRLOG("Failed to write raid bdev '%s' superblock: %s\n",
+			    raid_bdev->bdev.name, spdk_strerror(-status));
+		_raid_bdev_remove_base_bdev(base_info, NULL, NULL);
+	}
+
+	if (base_info->configure_cb != NULL) {
+		base_info->configure_cb(base_info->configure_cb_ctx, status);
+	}
+}
+
+static void
+raid_bdev_register_without_rebuild_done(struct spdk_io_channel_iter *i, int status)
+{
+	struct raid_base_bdev_info *base_info = spdk_io_channel_iter_get_ctx(i);
+	struct raid_bdev *raid_bdev = base_info->raid_bdev;
+
+	if (raid_bdev->sb != NULL) {
+		raid_bdev_configure_base_bdev_update_sb(raid_bdev,
+							raid_bdev_no_rebuild_finish_write_sb_cb,
+							base_info);
+	}
+}
+
+static void
 _raid_bdev_configure_base_bdev_cont(struct spdk_io_channel_iter *i, int status)
 {
 	struct raid_base_bdev_info *base_info = spdk_io_channel_iter_get_ctx(i);
@@ -3134,32 +3195,33 @@ _raid_bdev_configure_base_bdev_cont(struct spdk_io_channel_iter *i, int status)
 }
 
 static void
-raid_bdev_ch_sync(struct spdk_io_channel_iter *i)
-{
-	spdk_for_each_channel_continue(i, 0);
-}
-
-static void
 raid_bdev_configure_base_bdev_cont(struct raid_base_bdev_info *base_info)
 {
 	struct raid_bdev *raid_bdev = base_info->raid_bdev;
 	raid_base_bdev_cb configure_cb;
+	bool skip_rebuild;
 	int rc;
 
-	if (raid_bdev->num_base_bdevs_discovered == raid_bdev->num_base_bdevs_operational &&
-	    base_info->is_process_target == false) {
-		/* TODO: defer if rebuild in progress on another base bdev */
-		assert(raid_bdev->process == NULL);
-		assert(raid_bdev->state == RAID_BDEV_STATE_ONLINE);
-		base_info->is_process_target = true;
-		/* To assure is_process_target is set before is_configured when checked in raid_bdev_create_cb() */
-		spdk_for_each_channel(raid_bdev, raid_bdev_ch_sync, base_info, _raid_bdev_configure_base_bdev_cont);
-		return;
+	skip_rebuild = base_info->is_configured;
+	if (!skip_rebuild) {
+		if (raid_bdev->num_base_bdevs_discovered == raid_bdev->num_base_bdevs_operational &&
+		    base_info->is_process_target == false) {
+			/* TODO: defer if rebuild in progress on another base bdev */
+			assert(raid_bdev->process == NULL);
+			assert(raid_bdev->state == RAID_BDEV_STATE_ONLINE);
+			base_info->is_process_target = true;
+			/*
+			 * To assure is_process_target is set before is_configured
+			 * when checked in raid_bdev_create_cb()
+			 */
+			spdk_for_each_channel(raid_bdev, raid_bdev_ch_sync,
+					      base_info, _raid_bdev_configure_base_bdev_cont);
+			return;
+		}
+		raid_bdev->num_base_bdevs_discovered++;
 	}
-
 	base_info->is_configured = true;
 
-	raid_bdev->num_base_bdevs_discovered++;
 	assert(raid_bdev->num_base_bdevs_discovered <= raid_bdev->num_base_bdevs);
 	assert(raid_bdev->num_base_bdevs_operational <= raid_bdev->num_base_bdevs);
 	assert(raid_bdev->num_base_bdevs_operational >= raid_bdev->min_base_bdevs_operational);
@@ -3172,6 +3234,7 @@ raid_bdev_configure_base_bdev_cont(struct raid_base_bdev_info *base_info)
 	 * to the total number of base bdevs (num_base_bdevs) but can be less - when the array is
 	 * degraded.
 	 */
+	rc = 0;
 	if (raid_bdev->num_base_bdevs_discovered == raid_bdev->num_base_bdevs_operational) {
 		rc = raid_bdev_configure(raid_bdev, configure_cb, base_info->configure_cb_ctx);
 		if (rc != 0) {
@@ -3179,15 +3242,18 @@ raid_bdev_configure_base_bdev_cont(struct raid_base_bdev_info *base_info)
 		} else {
 			configure_cb = NULL;
 		}
-	} else if (base_info->is_process_target) {
+	} else if (raid_bdev->num_base_bdevs_discovered > raid_bdev->num_base_bdevs_operational) {
 		raid_bdev->num_base_bdevs_operational++;
-		rc = raid_bdev_start_rebuild(base_info);
-		if (rc != 0) {
-			SPDK_ERRLOG("Failed to start rebuild: %s\n", spdk_strerror(-rc));
-			_raid_bdev_remove_base_bdev(base_info, NULL, NULL);
+		if (skip_rebuild) {
+			spdk_for_each_channel(raid_bdev, raid_bdev_register_without_rebuild,
+					      base_info, raid_bdev_register_without_rebuild_done);
+		} else {
+			rc = raid_bdev_start_rebuild(base_info);
+			if (rc != 0) {
+				SPDK_ERRLOG("Failed to start rebuild: %s\n", spdk_strerror(-rc));
+				_raid_bdev_remove_base_bdev(base_info, NULL, NULL);
+			}
 		}
-	} else {
-		rc = 0;
 	}
 
 	if (configure_cb != NULL) {
@@ -3426,7 +3492,7 @@ out:
 }
 
 int
-raid_bdev_add_base_bdev(struct raid_bdev *raid_bdev, const char *name,
+raid_bdev_add_base_bdev(struct raid_bdev *raid_bdev, const char *name, bool skip_rebuild,
 			raid_base_bdev_cb cb_fn, void *cb_ctx)
 {
 	struct raid_base_bdev_info *base_info = NULL, *iter;
@@ -3482,7 +3548,11 @@ raid_bdev_add_base_bdev(struct raid_bdev *raid_bdev, const char *name,
 		return -ENOMEM;
 	}
 
-	rc = raid_bdev_configure_base_bdev(base_info, false, cb_fn, cb_ctx);
+	if (skip_rebuild) {
+		base_info->is_configured = true;
+		raid_bdev->num_base_bdevs_discovered++;
+	}
+	rc = raid_bdev_configure_base_bdev(base_info, skip_rebuild, cb_fn, cb_ctx);
 	if (rc != 0 && (rc != -ENODEV || raid_bdev->state != RAID_BDEV_STATE_CONFIGURING)) {
 		SPDK_ERRLOG("base bdev '%s' configure failed: %s\n", name, spdk_strerror(-rc));
 		free(base_info->name);

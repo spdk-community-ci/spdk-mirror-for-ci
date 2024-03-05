@@ -305,7 +305,7 @@ rpc_bdev_raid_create(struct spdk_jsonrpc_request *request,
 	for (i = 0; i < num_base_bdevs; i++) {
 		const char *base_bdev_name = req->base_bdevs.base_bdevs[i];
 
-		rc = raid_bdev_add_base_bdev(raid_bdev, base_bdev_name,
+		rc = raid_bdev_add_base_bdev(raid_bdev, base_bdev_name, false,
 					     rpc_bdev_raid_create_add_base_bdev_cb, ctx);
 		if (rc == -ENODEV) {
 			SPDK_DEBUGLOG(bdev_raid, "base bdev %s doesn't exist now\n", base_bdev_name);
@@ -448,6 +448,9 @@ struct rpc_bdev_raid_add_base_bdev {
 
 	/* Raid bdev name */
 	char			*raid_bdev;
+
+	/* Is bdev already rebuilt */
+	bool			skip_rebuild;
 };
 
 /*
@@ -472,6 +475,7 @@ free_rpc_bdev_raid_add_base_bdev(struct rpc_bdev_raid_add_base_bdev *req)
 static const struct spdk_json_object_decoder rpc_bdev_raid_add_base_bdev_decoders[] = {
 	{"base_bdev", offsetof(struct rpc_bdev_raid_add_base_bdev, base_bdev), spdk_json_decode_string},
 	{"raid_bdev", offsetof(struct rpc_bdev_raid_add_base_bdev, raid_bdev), spdk_json_decode_string},
+	{"skip_rebuild", offsetof(struct rpc_bdev_raid_add_base_bdev, skip_rebuild), spdk_json_decode_bool, true},
 };
 
 static void
@@ -526,7 +530,8 @@ rpc_bdev_raid_add_base_bdev(struct spdk_jsonrpc_request *request,
 		goto cleanup;
 	}
 
-	rc = raid_bdev_add_base_bdev(raid_bdev, req.base_bdev, rpc_bdev_raid_add_base_bdev_done, request);
+	rc = raid_bdev_add_base_bdev(raid_bdev, req.base_bdev, req.skip_rebuild,
+				     rpc_bdev_raid_add_base_bdev_done, request);
 	if (rc != 0) {
 		spdk_jsonrpc_send_error_response_fmt(request, rc,
 						     "Failed to add base bdev %s to RAID bdev %s: %s",

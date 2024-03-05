@@ -11174,6 +11174,7 @@ Name                    | Optional | Type        | Description
 ----------------------- | -------- | ----------- | -----------
 raid_bdev               | Required | string      | Raid bdev name
 base_bdev               | Required | string      | Base bdev name
+skip_rebuild            | Optional | bool        | Assume the bdev is already rebuilt
 
 #### Example
 

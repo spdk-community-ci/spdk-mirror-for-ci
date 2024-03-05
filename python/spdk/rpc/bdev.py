@@ -423,17 +423,20 @@ def bdev_raid_delete(client, name):
     return client.call('bdev_raid_delete', params)
 
 
-def bdev_raid_add_base_bdev(client, base_bdev, raid_bdev):
+def bdev_raid_add_base_bdev(client, base_bdev, raid_bdev, skip_rebuild=None):
     """Add base bdev to existing raid bdev
     Args:
         base_bdev: base bdev name
         raid_bdev: raid bdev name
+        skip_rebuild: assume the bdev is already rebuilt
     Returns:
         None
     """
     params = dict()
     params['base_bdev'] = base_bdev
     params['raid_bdev'] = raid_bdev
+    if skip_rebuild is not None:
+        params['skip_rebuild'] = skip_rebuild
     return client.call('bdev_raid_add_base_bdev', params)
 
 
