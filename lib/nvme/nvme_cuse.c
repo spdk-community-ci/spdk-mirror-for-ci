@@ -933,6 +933,9 @@ cuse_thread(void *arg)
 		rc = fuse_session_receive_buf(cuse_device->session, &buf);
 		if (rc > 0) {
 			fuse_session_process_buf(cuse_device->session, &buf);
+		} else if (rc < 0){
+			SPDK_ERRLOG("receive buf from fuse session failed: rc = %d\n", rc);
+			break;
 		}
 	}
 	free(buf.mem);
