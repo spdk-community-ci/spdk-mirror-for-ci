@@ -2,6 +2,11 @@
 
 ## v24.05: (Upcoming Release)
 
+### bdev
+
+`spdk_bdev_io_get_aux_buf` and `spdk_bdev_io_put_aux_buf` are deprecated and will be removed in the 24.09 release.
+We do not believe these are in use currently.
+
 ### event
 
 SPDK applications can now start with `--wait-for-rpc` and JSON configuration provided at the same time.
