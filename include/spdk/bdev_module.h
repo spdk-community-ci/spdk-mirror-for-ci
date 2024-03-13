@@ -443,6 +443,17 @@ struct spdk_bdev {
 	/** Size in bytes of a physical block for the backend */
 	uint32_t phys_blocklen;
 
+	/** Number of placement IDs */
+	uint16_t num_placement_ids;
+
+	/** Number of placement groups
+	 *
+	 * Placement groups are not supported yet, so bdev modules registering
+	 * bdevs with placement IDs must set this field to 1 signifying that
+	 * all placement hints apply to a default, implicit placement group.
+	 */
+	uint16_t num_placement_groups;
+
 	/** Number of blocks */
 	uint64_t blockcnt;
 
@@ -782,6 +793,12 @@ struct spdk_bdev_io {
 	/** Number of IO submission retries */
 	uint16_t num_retries;
 
+	/** Placement ID */
+	uint16_t placement_id;
+
+	/** Placement Group */
+	uint16_t placement_group;
+
 	/** A single iovec element for use by this bdev_io. */
 	struct iovec iov;
 
@@ -912,6 +929,10 @@ struct spdk_bdev_io {
 			/* The data buffer */
 			void *buf;
 		} zone_mgmt;
+		struct {
+			struct spdk_bdev_placement_events *events;
+			uint32_t count;
+		} placement_events;
 	} u;
 
 	/**

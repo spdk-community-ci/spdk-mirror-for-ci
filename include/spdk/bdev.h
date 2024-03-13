@@ -122,6 +122,7 @@ enum spdk_bdev_io_type {
 	SPDK_BDEV_IO_TYPE_SEEK_DATA,
 	SPDK_BDEV_IO_TYPE_COPY,
 	SPDK_BDEV_IO_TYPE_NVME_IOV_MD,
+	SPDK_BDEV_IO_TYPE_GET_PLACEMENT_EVENTS,
 	SPDK_BDEV_NUM_IO_TYPES /* Keep last */
 };
 
@@ -233,8 +234,19 @@ struct spdk_bdev_ext_io_opts {
 	 * is set, that flag will be excluded from any DIF operations for this IO.
 	 */
 	uint32_t dif_check_flags_exclude_mask;
+	/**
+	 * Placement ID for this IO. Valid placement IDs start at 1. 0 is used for IO to
+	 * bdevs that do not support placement IDs, IO where placement IDs do not apply,
+	 * or IO where no placement ID hint is desired.
+	 */
+	uint16_t placement_id;
+	/**
+	 * Placement group for this IO. SPDK currently does not support placement groups,
+	 * so this value must be set to 0.
+	 */
+	uint16_t placement_group;
 } __attribute__((packed));
-SPDK_STATIC_ASSERT(sizeof(struct spdk_bdev_ext_io_opts) == 44, "Incorrect size");
+SPDK_STATIC_ASSERT(sizeof(struct spdk_bdev_ext_io_opts) == 48, "Incorrect size");
 
 /**
  * Get the options for the bdev module.
@@ -582,6 +594,52 @@ uint32_t spdk_bdev_get_write_unit_size(const struct spdk_bdev *bdev);
  * Logical blocks are numbered from 0 to spdk_bdev_get_num_blocks(bdev) - 1, inclusive.
  */
 uint64_t spdk_bdev_get_num_blocks(const struct spdk_bdev *bdev);
+
+/**
+ * Get number of placement IDs supported by the bdev.
+ *
+ * 0 means that the bdev does not support placement IDs.
+ *
+ * \param bdev Block device to query.
+ * \return Number of placement IDs.
+ */
+uint16_t spdk_bdev_get_num_placement_ids(const struct spdk_bdev *bdev);
+
+/**
+ * Get placement unit size (in number of blocks)
+ *
+ * \param bdev Block device to query
+ * \return Size of placement unit (in blocks). Returns 0 if bdev does not
+ *	   support placement IDs
+ */
+uint64_t spdk_bdev_get_placement_unit_size(const struct spdk_bdev *bdev);
+
+enum spdk_bdev_placement_event_type {
+	SPDK_BDEV_PLACEMENT_EVENT_NEW_UNIT = 0x1,
+	SPDK_BDEV_PLACEMENT_EVENT_DATA_MOVED = 0x2,
+};
+
+struct spdk_bdev_placement_event {
+	enum spdk_bdev_placement_event_type	type;
+	/* Placement ID associated with the event */
+	uint16_t				id;
+	/* Placement group associated with the event */
+	uint16_t				group;
+};
+
+/**
+ * Get placement events from the bdev.
+ *
+ * Event data is consumed once read by the caller.
+ *
+ * \param bdev Block device to query
+ * \param events Pointer to array of event structure
+ * \param count Number of event structures in array
+ * \return Number of events available and filled in the events array
+ */
+uint32_t spdk_bdev_get_placement_events(const struct spdk_bdev *bdev,
+					struct spdk_bdev_placement_event *events,
+					uint32_t count);
 
 /**
  * Get the string of quality of service rate limit.
