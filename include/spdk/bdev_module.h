@@ -838,6 +838,12 @@ struct spdk_bdev_io {
 			/** Specify the Protection Information action. */
 			enum spdk_bdev_pi_action pi_action;
 
+			/** DIF context */
+			struct spdk_dif_ctx dif_ctx;
+
+			/** Contains details of the DIF error, if the verification has failed. */
+			struct spdk_dif_error dif_error;
+
 			struct {
 				/** Whether the buffer should be populated with the real data */
 				uint8_t populate : 1;

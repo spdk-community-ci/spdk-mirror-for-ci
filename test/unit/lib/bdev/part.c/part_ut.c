@@ -45,6 +45,11 @@ DEFINE_STUB(spdk_accel_append_copy, int,
 	     struct iovec *src_iovs, uint32_t src_iovcnt, struct spdk_memory_domain *src_domain,
 	     void *src_domain_ctx, int flags, spdk_accel_step_cb cb_fn, void *cb_arg), 0);
 DEFINE_STUB(spdk_accel_get_memory_domain, struct spdk_memory_domain *, (void), NULL);
+DEFINE_STUB(spdk_accel_submit_dif_verify, int,
+	    (struct spdk_io_channel *ch,
+	     struct iovec *iovs, size_t iovcnt, uint32_t num_blocks,
+	     const struct spdk_dif_ctx *ctx, struct spdk_dif_error *err,
+	     spdk_accel_completion_cb cb_fn, void *cb_arg), 0);
 
 DEFINE_RETURN_MOCK(spdk_memory_domain_pull_data, int);
 int

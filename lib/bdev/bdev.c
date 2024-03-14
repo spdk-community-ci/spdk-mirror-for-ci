@@ -3330,6 +3330,8 @@ bdev_io_split_done(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
 		/* If any child I/O failed, stop further splitting process. */
 		parent_io->u.bdev.split_current_offset_blocks += parent_io->u.bdev.split_remaining_num_blocks;
 		parent_io->u.bdev.split_remaining_num_blocks = 0;
+		/* If the IO failed due to a DIF verify error, copy the error details. */
+		parent_io->u.bdev.dif_error = bdev_io->u.bdev.dif_error;
 	}
 	parent_io->u.bdev.split_outstanding--;
 	if (parent_io->u.bdev.split_outstanding != 0) {
@@ -3577,14 +3579,15 @@ _bdev_io_ext_use_bounce_buffer(struct spdk_bdev_io *bdev_io)
 				       bdev_io->u.bdev.num_blocks * bdev_io->bdev->blocklen);
 }
 
-static inline void
-_bdev_io_submit_ext(struct spdk_bdev_desc *desc, struct spdk_bdev_io *bdev_io)
+static void
+_bdev_io_submit_ext_cont(void *cb_arg, int status)
 {
-	struct spdk_bdev_channel *ch = bdev_io->internal.ch;
-	bool needs_exec = bdev_io_needs_sequence_exec(desc, bdev_io);
+	struct spdk_bdev_io *bdev_io = cb_arg;
+	bool needs_exec = bdev_io_needs_sequence_exec(bdev_io->internal.desc, bdev_io);
 
-	if (spdk_unlikely(ch->flags & BDEV_CH_RESET_IN_PROGRESS)) {
-		bdev_io->internal.status = SPDK_BDEV_IO_STATUS_ABORTED;
+	if (spdk_unlikely(status)) {
+		SPDK_ERRLOG("Failed to submit IO, completing IO\n");
+		bdev_io->internal.status = SPDK_BDEV_IO_STATUS_FAILED;
 		bdev_io_complete_unsubmitted(bdev_io);
 		return;
 	}
@@ -3593,7 +3596,7 @@ _bdev_io_submit_ext(struct spdk_bdev_desc *desc, struct spdk_bdev_io *bdev_io)
 	 * support them, but we need to execute an accel sequence and the data buffer is from accel
 	 * memory domain (to avoid doing a push/pull from that domain).
 	 */
-	if ((bdev_io->internal.memory_domain && !desc->memory_domains_supported) ||
+	if ((bdev_io->internal.memory_domain && !bdev_io->internal.desc->memory_domains_supported) ||
 	    (needs_exec && bdev_io->internal.memory_domain == spdk_accel_get_memory_domain())) {
 		_bdev_io_ext_use_bounce_buffer(bdev_io);
 		return;
@@ -3611,6 +3614,70 @@ _bdev_io_submit_ext(struct spdk_bdev_desc *desc, struct spdk_bdev_io *bdev_io)
 	}
 
 	bdev_io_submit(bdev_io);
+}
+
+static inline int
+bdev_io_dif_verify(struct spdk_bdev *bdev, struct spdk_bdev_io *bdev_io)
+{
+	struct spdk_bdev_channel *ch = bdev_io->internal.ch;
+	struct spdk_dif_ctx_init_ext_opts dif_opts;
+	int rc;
+
+	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
+	dif_opts.dif_pi_format = SPDK_DIF_PI_FORMAT_16;
+	rc = spdk_dif_ctx_init(&bdev_io->u.bdev.dif_ctx,
+			       bdev->blocklen,
+			       bdev->md_len,
+			       bdev->md_interleave,
+			       bdev->dif_is_head_of_md,
+			       bdev->dif_type,
+			       bdev_io->u.bdev.dif_check_flags,
+			       bdev_io->u.bdev.offset_blocks & 0xFFFFFFFF,
+			       0xFFFF, SPDK_DIF_APPTAG_IGNORE,
+			       0, 0, &dif_opts);
+	if (rc != 0) {
+		SPDK_ERRLOG("Failed to init a DIF context, completing IO\n");
+		return rc;
+	}
+
+	rc = spdk_accel_submit_dif_verify(ch->accel_channel, bdev_io->u.bdev.iovs,
+					  bdev_io->u.bdev.iovcnt, bdev_io->u.bdev.num_blocks, &bdev_io->u.bdev.dif_ctx,
+					  &bdev_io->u.bdev.dif_error, _bdev_io_submit_ext_cont, bdev_io);
+	if (rc != 0) {
+		SPDK_ERRLOG("Failed to submit DIF verify, completing IO\n");
+		return rc;
+	}
+
+	return 0;
+}
+
+static inline void
+_bdev_io_submit_ext(struct spdk_bdev_desc *desc, struct spdk_bdev_io *bdev_io)
+{
+	struct spdk_bdev_channel *ch = bdev_io->internal.ch;
+	struct spdk_bdev *bdev = spdk_bdev_desc_get_bdev(desc);
+	int rc;
+
+	if (spdk_unlikely(ch->flags & BDEV_CH_RESET_IN_PROGRESS)) {
+		bdev_io->internal.status = SPDK_BDEV_IO_STATUS_ABORTED;
+		bdev_io_complete_unsubmitted(bdev_io);
+		return;
+	}
+
+	if (spdk_unlikely(bdev_io->u.bdev.pi_action == SPDK_BDEV_PI_ACTION_DIF_VERIFY &&
+			  spdk_bdev_get_dif_type(bdev) != SPDK_DIF_DISABLE &&
+			  spdk_bdev_is_md_interleaved(bdev) &&
+			  bdev_io->type == SPDK_BDEV_IO_TYPE_WRITE)) {
+		rc = bdev_io_dif_verify(bdev, bdev_io);
+		if (rc != 0) {
+			SPDK_ERRLOG("DIF verify failed\n");
+			_bdev_io_submit_ext_cont(bdev_io, rc);
+		}
+
+		return;
+	}
+
+	_bdev_io_submit_ext_cont(bdev_io, 0);
 }
 
 static void
@@ -5707,7 +5774,8 @@ spdk_bdev_writev_blocks_ext(struct spdk_bdev_desc *desc, struct spdk_io_channel 
 	dif_check_flags = bdev->dif_check_flags &
 			  ~(bdev_get_ext_io_opt(opts, dif_check_flags_exclude_mask, 0));
 
-	if (spdk_unlikely(pi_action != SPDK_BDEV_PI_ACTION_NONE)) {
+	if (spdk_unlikely(pi_action != SPDK_BDEV_PI_ACTION_NONE
+			  && pi_action != SPDK_BDEV_PI_ACTION_DIF_VERIFY)) {
 		return -EINVAL;
 	}
 
