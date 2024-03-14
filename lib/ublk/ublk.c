@@ -45,6 +45,7 @@ static uint32_t g_next_ublk_poll_group = 0;
 static uint32_t g_ublks_max = UBLK_DEFAULT_MAX_SUPPORTED_DEVS;
 static struct spdk_cpuset g_core_mask;
 static bool g_disable_user_copy = false;
+static bool g_use_fixed_files = true;
 
 struct ublk_queue;
 struct ublk_poll_group;
@@ -1141,7 +1142,11 @@ ublk_queue_user_copy(struct ublk_io *io, bool is_write)
 	} else {
 		io_uring_prep_write(sqe, 0, io->payload, nbytes, pos);
 	}
-	io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE);
+	if (g_use_fixed_files)  {
+		io_uring_sqe_set_flags(sqe, IOSQE_FIXED_FILE);
+	} else {
+		io_uring_sqe_set_flags(sqe, 0);
+	}
 	io_uring_sqe_set_data64(sqe, build_user_data(io->tag, 0));
 
 	io->user_copy = true;
@@ -1324,6 +1329,7 @@ ublksrv_queue_io_cmd(struct ublk_queue *q,
 	struct io_uring_sqe *sqe;
 	unsigned int cmd_op = 0;;
 	uint64_t user_data;
+	struct spdk_ublk_dev *ublk = q->dev;
 
 	/* each io should have operation of fetching or committing */
 	assert((io->cmd_op == UBLK_IO_FETCH_REQ) || (io->cmd_op == UBLK_IO_NEED_GET_DATA) ||
@@ -1340,10 +1346,15 @@ ublksrv_queue_io_cmd(struct ublk_queue *q,
 
 	/* These fields should be written once, never change */
 	ublk_set_sqe_cmd_op(sqe, cmd_op);
-	/* dev->cdev_fd */
-	sqe->fd		= 0;
 	sqe->opcode	= IORING_OP_URING_CMD;
-	sqe->flags	= IOSQE_FIXED_FILE;
+
+	if (g_use_fixed_files) {
+		sqe->flags = IOSQE_FIXED_FILE;
+		sqe->fd	= 0;
+	} else {
+		sqe->flags = 0;
+		sqe->fd	= ublk->cdev_fd;
+	}
 	sqe->rw_flags	= 0;
 	cmd->tag	= tag;
 	cmd->addr	= g_ublk_tgt.user_copy ? 0 : (__u64)(uintptr_t)(io->payload);
@@ -1551,7 +1562,11 @@ ublk_dev_init_io_cmds(struct io_uring *r, uint32_t q_depth)
 		sqe = ublk_uring_get_sqe(r, i);
 
 		/* These fields should be written once, never change */
-		sqe->flags = IOSQE_FIXED_FILE;
+		if (g_use_fixed_files)  {
+			sqe->flags = IOSQE_FIXED_FILE;
+		} else {
+			sqe->flags = 0;
+		}
 		sqe->rw_flags = 0;
 		sqe->ioprio = 0;
 		sqe->off = 0;
@@ -1590,17 +1605,17 @@ ublk_dev_queue_init(struct ublk_queue *q)
 		q->io_cmd_buf = NULL;
 		return rc;
 	}
-
-	rc = io_uring_register_files(&q->ring, &ublk->cdev_fd, 1);
-	if (rc != 0) {
-		SPDK_ERRLOG("Failed at uring register files: %s\n", spdk_strerror(-rc));
-		io_uring_queue_exit(&q->ring);
-		q->ring.ring_fd = -1;
-		munmap(q->io_cmd_buf, ublk_queue_cmd_buf_sz(q->q_depth));
-		q->io_cmd_buf = NULL;
-		return rc;
+	if (g_use_fixed_files)  {
+		rc = io_uring_register_files(&q->ring, &ublk->cdev_fd, 1);
+		if (rc != 0) {
+			SPDK_ERRLOG("Failed at uring register files: %s\n", spdk_strerror(-rc));
+			io_uring_queue_exit(&q->ring);
+			q->ring.ring_fd = -1;
+			munmap(q->io_cmd_buf, ublk_queue_cmd_buf_sz(q->q_depth));
+			q->io_cmd_buf = NULL;
+			return rc;
+		}
 	}
-
 	ublk_dev_init_io_cmds(&q->ring, q->q_depth);
 
 	return 0;
@@ -1610,7 +1625,9 @@ static void
 ublk_dev_queue_fini(struct ublk_queue *q)
 {
 	if (q->ring.ring_fd >= 0) {
-		io_uring_unregister_files(&q->ring);
+		if (g_use_fixed_files)  {
+			io_uring_unregister_files(&q->ring);
+		}
 		io_uring_queue_exit(&q->ring);
 		q->ring.ring_fd = -1;
 	}
