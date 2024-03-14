@@ -243,6 +243,8 @@ Modified `spdk_trace_init()` to take number of user created threads as a paramet
 
 Added `ublk_recover_disk` RPC to support recovering after restarting ublk target.
 
+Added 'ublk_use_fixed_files' RPC to cange configuration option for using IOSQE_FIXED_FILE in UBLK module.
+
 ### vhost
 
 Added `caw_iov` field to struct `spdk_scsi_task` to support SBC-3 compare_and_write IO.

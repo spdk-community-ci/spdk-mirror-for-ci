@@ -11713,6 +11713,50 @@ with an SPDK user space bdev.
 
 To export a device over ublk, first make sure the Linux kernel ublk driver is loaded by running 'modprobe ublk_drv'.
 
+### ublk_use_fixed_files {#rpc_ublk_use_fixed_files}
+
+Change configuration option for using IOSQE_FIXED_FILE in UBLK module. If 'state' is set to 'enable', io_uring
+operations will be performed using pre-registered file descriptor table indices passed in SQE. If 'state' is set
+to 'disable', regular file descriptors will be passed in SQE.
+The RPC call must be submitted when UBLK target is not running, changes of the fixed file state are not permitted
+if the UBLK target is already started.
+The config option is common for all io_urings on all devices created withing UBLK module.
+
+#### Parameters
+
+Name                    | Optional | Type        | Description
+----------------------- | -------- | ----------- | -----------
+state                   | Required | string      | Enable or disable of using fixed files in UBLK
+
+#### Response
+
+True if configuration option has been set; False if failed.
+
+#### Example
+
+Example request:
+
+~~~json
+{
+  "jsonrpc": "2.0",
+  "method": "ublk_use_fixed_files",
+  "id": 1,
+  "params": {
+    "state": "enable"
+  }
+}
+~~~
+
+Example response:
+
+~~~json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": true
+}
+~~~
+
 ### ublk_create_target {#rpc_ublk_create_target}
 
 Start to create ublk threads and initialize ublk target. It will return an error if user calls this RPC twice without

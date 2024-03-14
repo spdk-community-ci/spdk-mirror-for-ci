@@ -679,6 +679,34 @@ static const struct spdk_json_object_decoder rpc_ublk_create_target[] = {
 };
 
 int
+ublk_use_fixed_files(char *state)
+{
+	size_t i;
+	size_t len = strlen(state);
+
+	if (g_ublk_tgt.active == true) {
+		SPDK_ERRLOG("Changing of fixed files state is allowed only before UBLK target creation\n");
+		return -EBUSY;
+	}
+
+	for (i = 0; i < len; i++) {
+		state[i] = tolower(state[i]);
+	}
+
+	if ((len == strlen("enable")) && (strncmp(state, "enable", strlen("enable")) == 0)) {
+		g_use_fixed_files = true;
+	} else if ((len == strlen("disable")) && (strncmp(state, "disable", strlen("disable")) == 0)) {
+		g_use_fixed_files = false;
+	} else {
+		return -EINVAL;
+	}
+	SPDK_NOTICELOG("IOSQE_FIXED_FILE using has been %s for UBLK target\n",
+		       g_use_fixed_files == false ? "disabled" : "enabled");
+
+	return 0;
+}
+
+int
 ublk_create_target(const char *cpumask_str, const struct spdk_json_val *params)
 {
 	int rc;
@@ -740,6 +768,11 @@ ublk_create_target(const char *cpumask_str, const struct spdk_json_val *params)
 	g_ublk_tgt.ctrl_poller = SPDK_POLLER_REGISTER(ublk_ctrl_poller, NULL,
 				 UBLK_DEFAULT_CTRL_URING_POLLING_INTERVAL_US);
 
+	if (g_use_fixed_files == true) {
+		SPDK_NOTICELOG("IOSQE_FIXED_FILE flag is enabled for UBLK target\n");
+	} else {
+		SPDK_NOTICELOG("IOSQE_FIXED_FILE flag is disabled for UBLK target\n");
+	}
 	SPDK_NOTICELOG("UBLK target created successfully\n");
 
 	return 0;

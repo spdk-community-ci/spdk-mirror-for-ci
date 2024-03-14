@@ -2426,6 +2426,14 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.set_defaults(func=vmd_rescan)
 
     # ublk
+    def ublk_use_fixed_files(args):
+        rpc.ublk.ublk_use_fixed_files(args.client,
+                                      state=args.state)
+    p = subparsers.add_parser('ublk_use_fixed_files',
+                              help='Change fixed files state for ublk target')
+    p.add_argument('state', help='enable or disable. If set to disable, ublk will not use io_uring fixed file registration.')
+    p.set_defaults(func=ublk_use_fixed_files)
+
     def ublk_create_target(args):
         rpc.ublk.ublk_create_target(args.client,
                                     cpumask=args.cpumask,

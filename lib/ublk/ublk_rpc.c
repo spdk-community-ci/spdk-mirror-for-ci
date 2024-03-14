@@ -76,6 +76,50 @@ rpc_ublk_destroy_target(struct spdk_jsonrpc_request *request, const struct spdk_
 }
 SPDK_RPC_REGISTER("ublk_destroy_target", rpc_ublk_destroy_target, SPDK_RPC_RUNTIME)
 
+struct rpc_ublk_use_fixed_files {
+	char *state;
+};
+
+static const struct spdk_json_object_decoder rpc_ublk_use_fixed_files_decoders[] = {
+	{"state", offsetof(struct rpc_ublk_use_fixed_files, state),  spdk_json_decode_string},
+};
+
+static void
+free_rpc_ublk_use_fixed_files(struct rpc_ublk_use_fixed_files *req)
+{
+	free(req->state);
+}
+
+static void
+rpc_ublk_use_fixed_files(struct spdk_jsonrpc_request *request, const struct spdk_json_val *params)
+{
+	int rc = 0;
+	struct rpc_ublk_use_fixed_files req = {};
+
+	if (params != NULL) {
+		if (spdk_json_decode_object(params, rpc_ublk_use_fixed_files_decoders,
+					    SPDK_COUNTOF(rpc_ublk_use_fixed_files_decoders),
+					    &req)) {
+			SPDK_ERRLOG("spdk_json_decode_object failed\n");
+			rc = -EINVAL;
+			goto invalid;
+		}
+	}
+	rc = ublk_use_fixed_files(req.state);
+	if (rc != 0) {
+		goto invalid;
+	}
+	free_rpc_ublk_use_fixed_files(&req);
+	spdk_jsonrpc_send_bool_response(request, true);
+	return;
+invalid:
+	SPDK_ERRLOG("Can't change fixed file state: %s\n", spdk_strerror(-rc));
+	free_rpc_ublk_use_fixed_files(&req);
+	spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INTERNAL_ERROR, spdk_strerror(-rc));
+
+}
+SPDK_RPC_REGISTER("ublk_use_fixed_files", rpc_ublk_use_fixed_files, SPDK_RPC_RUNTIME)
+
 struct rpc_ublk_start_disk {
 	char		*bdev_name;
 	uint32_t	ublk_id;

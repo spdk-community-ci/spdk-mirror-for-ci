@@ -16,6 +16,11 @@ def ublk_destroy_target(client):
     return client.call('ublk_destroy_target')
 
 
+def ublk_use_fixed_files(client, state):
+    params = {'state': state}
+    return client.call('ublk_use_fixed_files', params)
+
+
 def ublk_start_disk(client, bdev_name, ublk_id=1, num_queues=1, queue_depth=128):
     params = {
         'bdev_name': bdev_name,
