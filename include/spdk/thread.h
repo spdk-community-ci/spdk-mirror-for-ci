@@ -1045,6 +1045,8 @@ struct spdk_iobuf_pool {
 
 /** iobuf channel */
 struct spdk_iobuf_channel {
+	/** Pool poller */
+	struct spdk_poller		*pool_poller;
 	/** Small buffer memory pool */
 	struct spdk_iobuf_pool		small;
 	/** Large buffer memory pool */

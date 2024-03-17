@@ -249,6 +249,8 @@ spdk_iobuf_get_opts(struct spdk_iobuf_opts *opts)
 	*opts = g_iobuf.opts;
 }
 
+static int iobuf_channel_poller(void *arg);
+
 int
 spdk_iobuf_channel_init(struct spdk_iobuf_channel *ch, const char *name,
 			uint32_t small_cache_size, uint32_t large_cache_size)
@@ -277,6 +279,7 @@ spdk_iobuf_channel_init(struct spdk_iobuf_channel *ch, const char *name,
 	}
 
 	iobuf_ch = spdk_io_channel_get_ctx(ioch);
+	ch->pool_poller = NULL;
 
 	for (i = 0; i < IOBUF_MAX_CHANNELS; ++i) {
 		if (iobuf_ch->channels[i] == NULL) {
@@ -331,6 +334,8 @@ spdk_iobuf_channel_init(struct spdk_iobuf_channel *ch, const char *name,
 		ch->large.cache_count++;
 	}
 
+	ch->pool_poller = SPDK_POLLER_REGISTER(iobuf_channel_poller, ch, 0);
+
 	return 0;
 error:
 	spdk_iobuf_channel_fini(ch);
@@ -352,6 +357,10 @@ spdk_iobuf_channel_fini(struct spdk_iobuf_channel *ch)
 	}
 	STAILQ_FOREACH(entry, ch->large.queue, stailq) {
 		assert(entry->module != ch->module);
+	}
+
+	if (ch->pool_poller) {
+		spdk_poller_unregister(&ch->pool_poller);
 	}
 
 	/* Release cached buffers back to the pool */
@@ -466,6 +475,61 @@ spdk_iobuf_entry_abort(struct spdk_iobuf_channel *ch, struct spdk_iobuf_entry *e
 }
 
 #define IOBUF_BATCH_SIZE 32
+
+static int
+_iobuf_get_poll(struct spdk_iobuf_pool *pool)
+{
+	struct spdk_iobuf_entry *entry;
+	int num_entry = 0;
+	void *buf;
+
+	while (!STAILQ_EMPTY(pool->queue)) {
+		buf = (void *)STAILQ_FIRST(&pool->cache);
+		if (buf) {
+			STAILQ_REMOVE_HEAD(&pool->cache, stailq);
+			assert(pool->cache_count > 0);
+			pool->cache_count--;
+		} else {
+			struct spdk_iobuf_buffer *bufs[IOBUF_BATCH_SIZE];
+			size_t sz, i;
+
+			/* If we're going to dequeue, we may as well dequeue a batch. */
+			sz = spdk_ring_dequeue(pool->pool, (void **)bufs, spdk_min(IOBUF_BATCH_SIZE,
+						spdk_max(pool->cache_size, 1)));
+			if (sz == 0) {
+				break;
+			}
+
+			for (i = 0; i < (sz - 1); i++) {
+				STAILQ_INSERT_HEAD(&pool->cache, bufs[i], stailq);
+				pool->cache_count++;
+			}
+
+			/* The last one is the one we'll return */
+			buf = bufs[i];
+		}
+
+		num_entry ++;
+		entry = STAILQ_FIRST(pool->queue);
+		STAILQ_REMOVE_HEAD(pool->queue, stailq);
+		entry->cb_fn(entry, buf);
+	}
+
+	return num_entry;
+}
+
+static int
+iobuf_channel_poller(void *arg)
+{
+	struct spdk_iobuf_channel *ch = arg;
+	int num_entry = 0;
+
+	assert(spdk_io_channel_get_thread(ch->parent) == spdk_get_thread());
+	num_entry += _iobuf_get_poll(&ch->small);
+	num_entry += _iobuf_get_poll(&ch->large);
+
+	return num_entry;
+}
 
 void *
 spdk_iobuf_get(struct spdk_iobuf_channel *ch, uint64_t len,
