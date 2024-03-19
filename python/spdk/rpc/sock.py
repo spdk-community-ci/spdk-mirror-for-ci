@@ -27,7 +27,8 @@ def sock_impl_set_options(client,
                           enable_zerocopy_send_client=None,
                           zerocopy_threshold=None,
                           tls_version=None,
-                          enable_ktls=None):
+                          enable_ktls=None,
+                          enable_new_session_tickets=None):
     """Set parameters for the socket layer implementation.
 
     Args:
@@ -42,6 +43,7 @@ def sock_impl_set_options(client,
         zerocopy_threshold: set zerocopy_threshold in bytes(optional)
         tls_version: set TLS protocol version (optional)
         enable_ktls: enable or disable Kernel TLS (optional)
+        enable_new_session_tickets: enable NewSessionTickets after TLS handshake (optional)
     """
     params = {}
 
@@ -66,6 +68,8 @@ def sock_impl_set_options(client,
         params['tls_version'] = tls_version
     if enable_ktls is not None:
         params['enable_ktls'] = enable_ktls
+    if enable_new_session_tickets is not None:
+        params['enable_new_session_tickets'] = enable_new_session_tickets
 
     return client.call('sock_impl_set_options', params)
 
