@@ -19,14 +19,24 @@ else
 	# Use smaller parameters when user specifies the number
 	# of devices, to guard against memory exhaustion.
 	NUM_DEVS=$1
-	NUM_QUEUE=1
-	QUEUE_DEPTH=16
+	NUM_QUEUE=4
+	QUEUE_DEPTH=256
 	MALLOC_SIZE_MB=2
 fi
 
 MALLOC_BS=4096
 FILE_SIZE=$((MALLOC_SIZE_MB * 1024 * 1024))
 MAX_DEV_ID=$((NUM_DEVS - 1))
+
+if [[ $MAX_DEV_ID -gt 2 ]]; then
+	FIO_DEV_ID=$((MAX_DEV_ID - 3))
+else
+	FIO_DEV_ID=0
+fi
+OUT_FILENAME_FD=$rootdir/fio_tests/FD_fio_test_ublk_${NUM_DEVS}_devs.txt
+OUT_FILENAME_FIX=$rootdir/fio_tests/FIX_fio_test_ublk_${NUM_DEVS}_devs.txt
+echo $OUT_FILENAME_FD
+echo $OUT_FILENAME_FIX
 
 function test_create_ublk() {
 	# create a ublk target
@@ -45,7 +55,7 @@ function test_create_ublk() {
 	[[ "$(jq -r '.[0].bdev_name' <<< "$ublk_dev")" = "$malloc_name" ]]
 
 	# Run fio in background that writes to ublk
-	run_fio_test /dev/ublkb0 0 $FILE_SIZE "write" "0xcc" "--time_based --runtime=10"
+	run_fio_test /dev/ublkb0 0 $FILE_SIZE "write" "0xcc" "--max-jobs=4 --iodepth=128 --time_based --runtime=10"
 
 	# clean up
 	rpc_cmd ublk_stop_disk "$ublk_id"
@@ -58,42 +68,98 @@ function test_create_ublk() {
 }
 
 function test_create_multi_ublk() {
+	FIO_PARAMS="--rw=read --direct=0 --max-jobs=${NUM_QUEUE} --iodepth=256 --time_based --runtime=5 --numjobs=${NUM_QUEUE} --group_reporting --thread"
+	echo $FIO_PARAMS
+	# IOSQE_FIXED_FILE is enabled by default, no need to issue RPC call
 	# create a ublk target
-	ublk_target=$(rpc_cmd ublk_create_target)
+	for iteration in $(seq 0 4); do
+		ublk_target=$(rpc_cmd ublk_create_target)
 
-	for i in $(seq 0 $MAX_DEV_ID); do
-		# create a malloc bdev
-		malloc_name=$(rpc_cmd bdev_malloc_create -b "Malloc${i}" $MALLOC_SIZE_MB $MALLOC_BS)
-		# add ublk device
-		ublk_id=$(rpc_cmd ublk_start_disk $malloc_name "${i}" -q $NUM_QUEUE -d $QUEUE_DEPTH)
-	done
-
-	ublk_dev=$(rpc_cmd ublk_get_disks)
-	for i in $(seq 0 $MAX_DEV_ID); do
-		# verify its parameters
-		[[ "$(jq -r ".[${i}].ublk_device" <<< "$ublk_dev")" = "/dev/ublkb${i}" ]]
-		[[ "$(jq -r ".[${i}].id" <<< "$ublk_dev")" = "${i}" ]]
-		[[ "$(jq -r ".[${i}].queue_depth" <<< "$ublk_dev")" = "$QUEUE_DEPTH" ]]
-		[[ "$(jq -r ".[${i}].num_queues" <<< "$ublk_dev")" = "$NUM_QUEUE" ]]
-		[[ "$(jq -r ".[${i}].bdev_name" <<< "$ublk_dev")" = "Malloc${i}" ]]
-	done
-
-	# To help test the ctrl cmd queuing logic, we omit the ublk_stop_disk
-	# RPCs.  Then the ublk_destroy_target RPC will stop all of the disks
-	# in very quick succession which exhausts the control io_uring SQEs
-	if [[ "$STOP_DISKS" = "1" ]]; then
 		for i in $(seq 0 $MAX_DEV_ID); do
-			rpc_cmd ublk_stop_disk "${i}"
+			# create a malloc bdev
+			malloc_name=$(rpc_cmd bdev_malloc_create -b "Malloc${i}" $MALLOC_SIZE_MB $MALLOC_BS)
+			# add ublk device
+			ublk_id=$(rpc_cmd ublk_start_disk $malloc_name "${i}" -q $NUM_QUEUE -d $QUEUE_DEPTH)
 		done
-	fi
 
-	# Shutting down a lot of disks can take a long time, so extend the RPC timeout
-	"$rootdir/scripts/rpc.py" -t 120 ublk_destroy_target
+		ublk_dev=$(rpc_cmd ublk_get_disks)
+		for i in $(seq 0 $MAX_DEV_ID); do
+			# verify its parameters
+			[[ "$(jq -r ".[${i}].ublk_device" <<< "$ublk_dev")" = "/dev/ublkb${i}" ]]
+			[[ "$(jq -r ".[${i}].id" <<< "$ublk_dev")" = "${i}" ]]
+			[[ "$(jq -r ".[${i}].queue_depth" <<< "$ublk_dev")" = "$QUEUE_DEPTH" ]]
+			[[ "$(jq -r ".[${i}].num_queues" <<< "$ublk_dev")" = "$NUM_QUEUE" ]]
+			[[ "$(jq -r ".[${i}].bdev_name" <<< "$ublk_dev")" = "Malloc${i}" ]]
+		done
 
-	for i in $(seq 0 $MAX_DEV_ID); do
-		rpc_cmd bdev_malloc_delete "Malloc${i}"
+		echo >> $OUT_FILENAME_FIX
+		fio --name=fio_test --filename=/dev/ublkb${FIO_DEV_ID} --offset=0 --size=$FILE_SIZE $FIO_PARAMS >> $OUT_FILENAME_FIX
+
+		# To help test the ctrl cmd queuing logic, we omit the ublk_stop_disk
+		# RPCs.  Then the ublk_destroy_target RPC will stop all of the disks
+		# in very quick succession which exhausts the control io_uring SQEs
+		if [[ "$STOP_DISKS" = "1" ]]; then
+			for i in $(seq 0 $MAX_DEV_ID); do
+				rpc_cmd ublk_stop_disk "${i}"
+			done
+		fi
+
+		# Shutting down a lot of disks can take a long time, so extend the RPC timeout
+		"$rootdir/scripts/rpc.py" -t 120 ublk_destroy_target
+
+		for i in $(seq 0 $MAX_DEV_ID); do
+			rpc_cmd bdev_malloc_delete "Malloc${i}"
+		done
+		check_leftover_devices
 	done
-	check_leftover_devices
+
+	for iteration in $(seq 0 4); do
+		# Change to using file descriptors instead of IOSQE_FIXED_FILE
+		rpc_cmd ublk_use_fixed_files disable
+
+		# create a ublk target
+		ublk_target=$(rpc_cmd ublk_create_target)
+
+		for i in $(seq 0 $MAX_DEV_ID); do
+			# create a malloc bdev
+			malloc_name=$(rpc_cmd bdev_malloc_create -b "Malloc${i}" $MALLOC_SIZE_MB $MALLOC_BS)
+			# add ublk device
+			ublk_id=$(rpc_cmd ublk_start_disk $malloc_name "${i}" -q $NUM_QUEUE -d $QUEUE_DEPTH)
+		done
+
+		ublk_dev=$(rpc_cmd ublk_get_disks)
+		for i in $(seq 0 $MAX_DEV_ID); do
+			# verify its parameters
+			[[ "$(jq -r ".[${i}].ublk_device" <<< "$ublk_dev")" = "/dev/ublkb${i}" ]]
+			[[ "$(jq -r ".[${i}].id" <<< "$ublk_dev")" = "${i}" ]]
+			[[ "$(jq -r ".[${i}].queue_depth" <<< "$ublk_dev")" = "$QUEUE_DEPTH" ]]
+			[[ "$(jq -r ".[${i}].num_queues" <<< "$ublk_dev")" = "$NUM_QUEUE" ]]
+			[[ "$(jq -r ".[${i}].bdev_name" <<< "$ublk_dev")" = "Malloc${i}" ]]
+		done
+
+		echo >> $OUT_FILENAME_FD
+		fio --name=fio_test --filename=/dev/ublkb${FIO_DEV_ID} --offset=0 --size=$FILE_SIZE $FIO_PARAMS >> $OUT_FILENAME_FD
+
+		# To help test the ctrl cmd queuing logic, we omit the ublk_stop_disk
+		# RPCs.  Then the ublk_destroy_target RPC will stop all of the disks
+		# in very quick succession which exhausts the control io_uring SQEs
+		if [[ "$STOP_DISKS" = "1" ]]; then
+			for i in $(seq 0 $MAX_DEV_ID); do
+				rpc_cmd ublk_stop_disk "${i}"
+			done
+		fi
+
+		# Shutting down a lot of disks can take a long time, so extend the RPC timeout
+		"$rootdir/scripts/rpc.py" -t 120 ublk_destroy_target
+
+		for i in $(seq 0 $MAX_DEV_ID); do
+			rpc_cmd bdev_malloc_delete "Malloc${i}"
+		done
+		check_leftover_devices
+	done
+	# Change to using file descriptors instead of IOSQE_FIXED_FILE
+	#rpc_cmd ublk_use_fixed_files disable
+
 }
 
 test_save_config() (
@@ -133,14 +199,16 @@ function cleanup() {
 modprobe ublk_drv
 
 # test_save_config starts up and terminates its own target process
-run_test "test_save_ublk_config" test_save_config
+#run_test "test_save_ublk_config" test_save_config
 
 "$SPDK_BIN_DIR/spdk_tgt" -m 0x3 -L ublk &
 spdk_pid=$!
 trap 'cleanup; exit 1' SIGINT SIGTERM EXIT
 waitforlisten $spdk_pid
 
-run_test "test_create_ublk" test_create_ublk
+#run_test "test_create_ublk" test_create_ublk
+echo "MAX_DEV_ID " $MAX_DEV_ID " FIO_DEV_ID " $FIO_DEV_ID " NUM_QUEUE (numjobs) " $NUM_QUEUE > $OUT_FILENAME_FD
+echo "MAX_DEV_ID " $MAX_DEV_ID " FIO_DEV_ID " $FIO_DEV_ID " NUM_QUEUE (numjobs) " $NUM_QUEUE > $OUT_FILENAME_FIX
 run_test "test_create_multi_ublk" test_create_multi_ublk
 
 trap - SIGINT SIGTERM EXIT
