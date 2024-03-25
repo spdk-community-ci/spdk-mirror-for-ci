@@ -200,7 +200,7 @@ static const bool g_nvme_tcp_ddgst[] = {
 	[SPDK_NVME_TCP_PDU_TYPE_R2T]            = false
 };
 
-static uint32_t
+static inline uint32_t
 nvme_tcp_pdu_calc_header_digest(struct nvme_tcp_pdu *pdu)
 {
 	uint32_t crc32c;
@@ -211,7 +211,7 @@ nvme_tcp_pdu_calc_header_digest(struct nvme_tcp_pdu *pdu)
 	return crc32c;
 }
 
-static uint32_t
+static inline uint32_t
 nvme_tcp_pdu_calc_data_digest(struct nvme_tcp_pdu *pdu)
 {
 	uint32_t crc32c = SPDK_CRC32C_XOR;
@@ -308,7 +308,7 @@ _nvme_tcp_sgl_append_multi_with_md(struct spdk_iov_sgl *s, struct iovec *iov, in
 	return true;
 }
 
-static int
+static inline int
 nvme_tcp_build_iovs(struct iovec *iov, int iovcnt, struct nvme_tcp_pdu *pdu,
 		    bool hdgst_enable, bool ddgst_enable, uint32_t *_mapped_length)
 {
@@ -474,7 +474,7 @@ nvme_tcp_readv_data(struct spdk_sock *sock, struct iovec *iov, int iovcnt)
 }
 
 
-static int
+static inline int
 nvme_tcp_read_payload_data(struct spdk_sock *sock, struct nvme_tcp_pdu *pdu)
 {
 	struct iovec iov[NVME_TCP_MAX_SGL_DESCRIPTORS + 1];
@@ -495,14 +495,14 @@ _nvme_tcp_pdu_set_data(struct nvme_tcp_pdu *pdu, void *data, uint32_t data_len)
 	pdu->data_iovcnt = 1;
 }
 
-static void
+static inline void
 nvme_tcp_pdu_set_data(struct nvme_tcp_pdu *pdu, void *data, uint32_t data_len)
 {
 	_nvme_tcp_pdu_set_data(pdu, data, data_len);
 	pdu->data_len = data_len;
 }
 
-static void
+static inline void
 nvme_tcp_pdu_set_data_buf(struct nvme_tcp_pdu *pdu,
 			  struct iovec *iov, int iovcnt,
 			  uint32_t data_offset, uint32_t data_len)
@@ -550,7 +550,7 @@ nvme_tcp_pdu_set_data_buf(struct nvme_tcp_pdu *pdu,
 	}
 }
 
-static void
+static inline void
 nvme_tcp_pdu_calc_psh_len(struct nvme_tcp_pdu *pdu, bool hdgst_enable)
 {
 	uint8_t psh_len, pdo, padding_len;
