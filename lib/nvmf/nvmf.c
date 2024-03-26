@@ -807,11 +807,12 @@ nvmf_listen_opts_copy(struct spdk_nvmf_listen_opts *opts,
 	SET_FIELD(secure_channel);
 	SET_FIELD(ana_state);
 	SET_FIELD(sock_impl);
+	SET_FIELD(cipher_suites);
 #undef SET_FIELD
 
 	/* Do not remove this statement, you should always update this statement when you adding a new field,
 	 * and do not forget to add the SET_FIELD statement for your added field. */
-	SPDK_STATIC_ASSERT(sizeof(struct spdk_nvmf_listen_opts) == 32, "Incorrect size");
+	SPDK_STATIC_ASSERT(sizeof(struct spdk_nvmf_listen_opts) == 40, "Incorrect size");
 }
 
 void

@@ -1380,6 +1380,7 @@ spdk_nvmf_subsystem_listener_opts_init(struct spdk_nvmf_listener_opts *opts, siz
 	SET_FIELD(secure_channel, false);
 	SET_FIELD(ana_state, SPDK_NVME_ANA_OPTIMIZED_STATE);
 	SET_FIELD(sock_impl, NULL);
+	SET_FIELD(cipher_suites, 0);
 
 #undef FIELD_OK
 #undef SET_FIELD
@@ -1408,9 +1409,10 @@ listener_opts_copy(struct spdk_nvmf_listener_opts *src, struct spdk_nvmf_listene
 	SET_FIELD(secure_channel);
 	SET_FIELD(ana_state);
 	SET_FIELD(sock_impl);
+	SET_FIELD(cipher_suites);
 	/* We should not remove this statement, but need to update the assert statement
 	 * if we add a new field, and also add a corresponding SET_FIELD statement. */
-	SPDK_STATIC_ASSERT(sizeof(struct spdk_nvmf_listener_opts) == 24, "Incorrect size");
+	SPDK_STATIC_ASSERT(sizeof(struct spdk_nvmf_listener_opts) == 32, "Incorrect size");
 
 #undef SET_FIELD
 #undef FIELD_OK

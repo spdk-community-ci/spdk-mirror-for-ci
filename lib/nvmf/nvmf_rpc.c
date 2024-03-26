@@ -674,6 +674,7 @@ static const struct spdk_json_object_decoder nvmf_rpc_listener_decoder[] = {
 	{"listen_address", offsetof(struct nvmf_rpc_listener_ctx, address), decode_rpc_listen_address},
 	{"tgt_name", offsetof(struct nvmf_rpc_listener_ctx, tgt_name), spdk_json_decode_string, true},
 	{"secure_channel", offsetof(struct nvmf_rpc_listener_ctx, listener_opts.secure_channel), spdk_json_decode_bool, true},
+	{"cipher_suites", offsetof(struct nvmf_rpc_listener_ctx, listener_opts.cipher_suites), spdk_json_decode_uint8, true},
 	{"ana_state", offsetof(struct nvmf_rpc_listener_ctx, ana_state_str), spdk_json_decode_string, true},
 	{"sock_impl", offsetof(struct nvmf_rpc_listener_ctx, listener_opts.sock_impl), spdk_json_decode_string, true},
 };
@@ -949,6 +950,7 @@ rpc_nvmf_subsystem_add_listener(struct spdk_jsonrpc_request *request,
 		return;
 	}
 	ctx->opts.secure_channel = ctx->listener_opts.secure_channel;
+	ctx->opts.cipher_suites = ctx->listener_opts.cipher_suites;
 
 	if (ctx->ana_state_str) {
 		if (rpc_ana_state_parse(ctx->ana_state_str, &ctx->ana_state)) {

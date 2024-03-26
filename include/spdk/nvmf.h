@@ -149,8 +149,16 @@ struct spdk_nvmf_listen_opts {
 
 	/* The socket implementation to use for the listener. */
 	char *sock_impl;
+
+	/**
+	 * Cipher suites to be presented during TCP TLS negotiation.
+	 */
+	uint8_t cipher_suites;
+
+	/* char *sock_impl enforces 8-byte alignment. */
+	uint8_t padding[7];
 } __attribute__((packed));
-SPDK_STATIC_ASSERT(sizeof(struct spdk_nvmf_listen_opts) == 32, "Incorrect size");
+SPDK_STATIC_ASSERT(sizeof(struct spdk_nvmf_listen_opts) == 40, "Incorrect size");
 
 /**
  * Initialize listen options
@@ -774,8 +782,13 @@ struct spdk_nvmf_listener_opts {
 	/* The socket implementation to use for the listener. */
 	char *sock_impl;
 
+	/* Parameter determining cipher suites in TCP TLS presented during negotiation. */
+	uint8_t cipher_suites;
+
+	/* char *sock_impl enforces 8-byte alignment. */
+	uint8_t padding[7];
 } __attribute__((packed));
-SPDK_STATIC_ASSERT(sizeof(struct spdk_nvmf_listener_opts) == 24, "Incorrect size");
+SPDK_STATIC_ASSERT(sizeof(struct spdk_nvmf_listener_opts) == 32, "Incorrect size");
 
 /**
  * Initialize options structure for listener creation.

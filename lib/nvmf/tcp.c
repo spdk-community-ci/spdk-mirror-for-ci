@@ -1011,7 +1011,22 @@ nvmf_tcp_listen(struct spdk_nvmf_transport *transport, const struct spdk_nvme_tr
 			impl_opts.tls_version = SPDK_TLS_VERSION_1_3;
 			impl_opts.get_key = tcp_sock_get_key;
 			impl_opts.get_key_ctx = ttransport;
-			impl_opts.tls_cipher_suites = "TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256";
+
+			switch (listen_opts->cipher_suites) {
+			case NVME_TCP_CIPHER_AES_128_GCM_SHA256:
+				impl_opts.tls_cipher_suites = "TLS_AES_128_GCM_SHA256";
+				break;
+			case NVME_TCP_CIPHER_AES_256_GCM_SHA384:
+				impl_opts.tls_cipher_suites = "TLS_AES_256_GCM_SHA384";
+				break;
+			case NVME_TCP_ALL_CIPHERS:
+				impl_opts.tls_cipher_suites = "TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256";
+				break;
+			default:
+				SPDK_ERRLOG("Unsupported cipher suite\n");
+				free(port);
+				return -EINVAL;
+			}
 		}
 
 		opts.impl_opts = &impl_opts;
