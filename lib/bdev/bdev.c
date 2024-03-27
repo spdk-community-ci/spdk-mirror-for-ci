@@ -2490,6 +2490,12 @@ bdev_channel_get_io(struct spdk_bdev_channel *channel)
 		bdev_io = spdk_mempool_get(g_bdev_mgr.bdev_io_pool);
 	}
 
+	if (bdev_io) {
+		__builtin_prefetch(&bdev_io->u);
+		__builtin_prefetch(&bdev_io->internal);
+		__builtin_prefetch(&bdev_io->driver_ctx);
+	}
+
 	return bdev_io;
 }
 

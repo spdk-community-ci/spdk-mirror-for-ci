@@ -1347,6 +1347,11 @@ bdev_nvme_io_complete_nvme_status(struct nvme_bdev_io *bio,
 
 	assert(!bdev_nvme_io_type_is_admin(bdev_io->type));
 
+	/* We know the bdev layer is going to want to touch some of the fields in bdev_io, so start fetching
+	 * them now. */
+	__builtin_prefetch(bdev_io);
+	__builtin_prefetch(&bdev_io->internal);
+
 	if (spdk_likely(spdk_nvme_cpl_is_success(cpl))) {
 		bdev_nvme_update_io_path_stat(bio);
 		goto complete;
