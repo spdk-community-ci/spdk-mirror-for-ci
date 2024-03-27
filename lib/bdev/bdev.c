@@ -3617,7 +3617,8 @@ _bdev_io_submit_ext_cont(void *cb_arg, int status)
 }
 
 static inline int
-bdev_io_dif_verify(struct spdk_bdev *bdev, struct spdk_bdev_io *bdev_io)
+bdev_io_dif_verify(struct spdk_bdev *bdev, struct spdk_bdev_io *bdev_io,
+		   spdk_accel_completion_cb cb_fn)
 {
 	struct spdk_bdev_channel *ch = bdev_io->internal.ch;
 	struct spdk_dif_ctx_init_ext_opts dif_opts;
@@ -3642,7 +3643,7 @@ bdev_io_dif_verify(struct spdk_bdev *bdev, struct spdk_bdev_io *bdev_io)
 
 	rc = spdk_accel_submit_dif_verify(ch->accel_channel, bdev_io->u.bdev.iovs,
 					  bdev_io->u.bdev.iovcnt, bdev_io->u.bdev.num_blocks, &bdev_io->u.bdev.dif_ctx,
-					  &bdev_io->u.bdev.dif_error, _bdev_io_submit_ext_cont, bdev_io);
+					  &bdev_io->u.bdev.dif_error, cb_fn, bdev_io);
 	if (rc != 0) {
 		SPDK_ERRLOG("Failed to submit DIF verify, completing IO\n");
 		return rc;
@@ -3668,7 +3669,7 @@ _bdev_io_submit_ext(struct spdk_bdev_desc *desc, struct spdk_bdev_io *bdev_io)
 			  spdk_bdev_get_dif_type(bdev) != SPDK_DIF_DISABLE &&
 			  spdk_bdev_is_md_interleaved(bdev) &&
 			  bdev_io->type == SPDK_BDEV_IO_TYPE_WRITE)) {
-		rc = bdev_io_dif_verify(bdev, bdev_io);
+		rc = bdev_io_dif_verify(bdev, bdev_io, _bdev_io_submit_ext_cont);
 		if (rc != 0) {
 			SPDK_ERRLOG("DIF verify failed\n");
 			_bdev_io_submit_ext_cont(bdev_io, rc);
@@ -5537,7 +5538,8 @@ spdk_bdev_readv_blocks_ext(struct spdk_bdev_desc *desc, struct spdk_io_channel *
 	dif_check_flags = bdev->dif_check_flags &
 			  ~(bdev_get_ext_io_opt(opts, dif_check_flags_exclude_mask, 0));
 
-	if (spdk_unlikely(pi_action != SPDK_BDEV_PI_ACTION_NONE)) {
+	if (spdk_unlikely(pi_action != SPDK_BDEV_PI_ACTION_NONE
+			  && pi_action != SPDK_BDEV_PI_ACTION_DIF_VERIFY)) {
 		return -EINVAL;
 	}
 
@@ -7277,11 +7279,26 @@ _bdev_io_complete(void *ctx)
 }
 
 static inline void
+bdev_io_complete_cont(void *ctx, int status)
+{
+	struct spdk_bdev_io *bdev_io = ctx;
+
+	if (spdk_unlikely(status)) {
+		SPDK_ERRLOG("IO failed\n");
+		bdev_io->internal.status = SPDK_BDEV_IO_STATUS_FAILED;
+	}
+
+	_bdev_io_complete(bdev_io);
+}
+
+static inline void
 bdev_io_complete(void *ctx)
 {
 	struct spdk_bdev_io *bdev_io = ctx;
 	struct spdk_bdev_channel *bdev_ch = bdev_io->internal.ch;
+	struct spdk_bdev *bdev = bdev_ch->bdev;
 	uint64_t tsc, tsc_diff;
+	int rc;
 
 	if (spdk_unlikely(bdev_io->internal.in_submit_request)) {
 		/*
@@ -7305,7 +7322,21 @@ bdev_io_complete(void *ctx)
 	}
 
 	bdev_io_update_io_stat(bdev_io, tsc_diff);
-	_bdev_io_complete(bdev_io);
+
+	if (spdk_unlikely(bdev_io->u.bdev.pi_action == SPDK_BDEV_PI_ACTION_DIF_VERIFY &&
+			  spdk_bdev_get_dif_type(bdev) != SPDK_DIF_DISABLE &&
+			  spdk_bdev_is_md_interleaved(bdev) &&
+			  bdev_io->type == SPDK_BDEV_IO_TYPE_READ)) {
+		rc = bdev_io_dif_verify(bdev, bdev_io, bdev_io_complete_cont);
+		if (rc != 0) {
+			SPDK_ERRLOG("DIF verify failed\n");
+			bdev_io_complete_cont(bdev_io, rc);
+		}
+
+		return;
+	}
+
+	bdev_io_complete_cont(bdev_io, 0);
 }
 
 /* The difference between this function and bdev_io_complete() is that this should be called to
