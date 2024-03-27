@@ -3652,6 +3652,42 @@ bdev_io_dif_verify(struct spdk_bdev *bdev, struct spdk_bdev_io *bdev_io,
 	return 0;
 }
 
+static inline int
+bdev_io_dif_generate(struct spdk_bdev *bdev, struct spdk_bdev_io *bdev_io,
+		     spdk_accel_completion_cb cb_fn)
+{
+	struct spdk_bdev_channel *ch = bdev_io->internal.ch;
+	struct spdk_dif_ctx_init_ext_opts dif_opts;
+	int rc;
+
+	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
+	dif_opts.dif_pi_format = SPDK_DIF_PI_FORMAT_16;
+	rc = spdk_dif_ctx_init(&bdev_io->u.bdev.dif_ctx,
+			       bdev->blocklen,
+			       bdev->md_len,
+			       bdev->md_interleave,
+			       bdev->dif_is_head_of_md,
+			       bdev->dif_type,
+			       bdev_io->u.bdev.dif_check_flags,
+			       bdev_io->u.bdev.offset_blocks & 0xFFFFFFFF,
+			       0xFFFF, SPDK_DIF_APPTAG_IGNORE,
+			       0, 0, &dif_opts);
+	if (rc != 0) {
+		SPDK_ERRLOG("Failed to init a DIF context, completing IO\n");
+		return rc;
+	}
+
+	rc = spdk_accel_submit_dif_generate(ch->accel_channel, bdev_io->u.bdev.iovs,
+					    bdev_io->u.bdev.iovcnt, bdev_io->u.bdev.num_blocks, &bdev_io->u.bdev.dif_ctx,
+					    cb_fn, bdev_io);
+	if (rc != 0) {
+		SPDK_ERRLOG("Failed to submit DIF generate, completing IO\n");
+		return rc;
+	}
+
+	return 0;
+}
+
 static inline void
 _bdev_io_submit_ext(struct spdk_bdev_desc *desc, struct spdk_bdev_io *bdev_io)
 {
@@ -3665,17 +3701,34 @@ _bdev_io_submit_ext(struct spdk_bdev_desc *desc, struct spdk_bdev_io *bdev_io)
 		return;
 	}
 
-	if (spdk_unlikely(bdev_io->u.bdev.pi_action == SPDK_BDEV_PI_ACTION_DIF_VERIFY &&
-			  spdk_bdev_get_dif_type(bdev) != SPDK_DIF_DISABLE &&
+	if (spdk_unlikely(spdk_bdev_get_dif_type(bdev) != SPDK_DIF_DISABLE &&
 			  spdk_bdev_is_md_interleaved(bdev) &&
 			  bdev_io->type == SPDK_BDEV_IO_TYPE_WRITE)) {
-		rc = bdev_io_dif_verify(bdev, bdev_io, _bdev_io_submit_ext_cont);
-		if (rc != 0) {
-			SPDK_ERRLOG("DIF verify failed\n");
-			_bdev_io_submit_ext_cont(bdev_io, rc);
-		}
+		switch (bdev_io->u.bdev.pi_action) {
+		case SPDK_BDEV_PI_ACTION_DIF_VERIFY:
+			rc = bdev_io_dif_verify(bdev, bdev_io, _bdev_io_submit_ext_cont);
+			if (rc != 0) {
+				SPDK_ERRLOG("DIF verify failed\n");
+				_bdev_io_submit_ext_cont(bdev_io, rc);
+			}
 
-		return;
+			return;
+		case SPDK_BDEV_PI_ACTION_DIF_INSERT_IN_PLACE:
+			rc = bdev_io_dif_generate(bdev, bdev_io, _bdev_io_submit_ext_cont);
+			if (rc != 0) {
+				SPDK_ERRLOG("DIF generate failed\n");
+				_bdev_io_submit_ext_cont(bdev_io, rc);
+			}
+
+			return;
+		case SPDK_BDEV_PI_ACTION_NONE:
+		case SPDK_BDEV_PI_ACTION_DIF_INSERT:
+		case SPDK_BDEV_PI_ACTION_DIF_STRIP:
+		case SPDK_BDEV_PI_ACTION_AUTO:
+			break;
+		default:
+			break;
+		}
 	}
 
 	_bdev_io_submit_ext_cont(bdev_io, 0);
@@ -5777,7 +5830,8 @@ spdk_bdev_writev_blocks_ext(struct spdk_bdev_desc *desc, struct spdk_io_channel 
 			  ~(bdev_get_ext_io_opt(opts, dif_check_flags_exclude_mask, 0));
 
 	if (spdk_unlikely(pi_action != SPDK_BDEV_PI_ACTION_NONE
-			  && pi_action != SPDK_BDEV_PI_ACTION_DIF_VERIFY)) {
+			  && pi_action != SPDK_BDEV_PI_ACTION_DIF_VERIFY
+			  && pi_action != SPDK_BDEV_PI_ACTION_DIF_INSERT_IN_PLACE)) {
 		return -EINVAL;
 	}
 

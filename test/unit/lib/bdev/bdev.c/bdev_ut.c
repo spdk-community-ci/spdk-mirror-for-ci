@@ -36,6 +36,11 @@ DEFINE_STUB(spdk_accel_submit_dif_verify, int,
 	     struct iovec *iovs, size_t iovcnt, uint32_t num_blocks,
 	     const struct spdk_dif_ctx *ctx, struct spdk_dif_error *err,
 	     spdk_accel_completion_cb cb_fn, void *cb_arg), 0);
+DEFINE_STUB(spdk_accel_submit_dif_generate, int,
+	    (struct spdk_io_channel *ch,
+	     struct iovec *iovs, size_t iovcnt, uint32_t num_blocks,
+	     const struct spdk_dif_ctx *ctx,
+	     spdk_accel_completion_cb cb_fn, void *cb_arg), 0);
 
 static bool g_memory_domain_pull_data_called;
 static bool g_memory_domain_push_data_called;
