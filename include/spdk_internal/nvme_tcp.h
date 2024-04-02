@@ -589,6 +589,8 @@ nvme_tcp_generate_psk_identity(char *out_id, size_t out_id_len, const char *host
 	int rc;
 
 	assert(out_id != NULL);
+	assert(hostnqn != NULL);
+	assert(subnqn != NULL);
 
 	if (out_id_len < strlen(PSK_ID_PREFIX) + strlen(hostnqn) + strlen(subnqn) + 5) {
 		SPDK_ERRLOG("Out buffer too small!\n");
@@ -631,6 +633,8 @@ nvme_tcp_derive_retained_psk(const uint8_t *psk_in, uint64_t psk_in_size, const 
 	size_t pos, labellen, nqnlen;
 	const EVP_MD *hash;
 	int rc, hkdf_info_size;
+
+	assert(hostnqn != NULL);
 
 	labellen = strlen(label);
 	nqnlen = strlen(hostnqn);
@@ -724,6 +728,8 @@ nvme_tcp_derive_tls_psk(const uint8_t *psk_in, uint64_t psk_in_size, const char 
 	size_t pos, labellen, idlen;
 	const EVP_MD *hash;
 	int rc, hkdf_info_size;
+
+	assert(psk_identity != NULL);
 
 	if (tls_cipher_suite == NVME_TCP_CIPHER_AES_128_GCM_SHA256) {
 		digest_len = SHA256_DIGEST_LENGTH;
