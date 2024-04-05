@@ -19,6 +19,7 @@ SPDK_LOG_REGISTER_COMPONENT(idxd);
 
 DEFINE_STUB(spdk_pci_idxd_get_driver, struct spdk_pci_driver *, (void), NULL);
 DEFINE_STUB_V(idxd_impl_register, (struct spdk_idxd_impl *impl));
+DEFINE_STUB(idxd_wq_setup, int, (struct spdk_idxd_device *idxd), 0);
 DEFINE_STUB_V(spdk_pci_device_detach, (struct spdk_pci_device *device));
 DEFINE_STUB(spdk_pci_device_claim, int, (struct spdk_pci_device *dev), 0);
 DEFINE_STUB(spdk_pci_device_get_device_id, uint16_t, (struct spdk_pci_device *dev), 0);

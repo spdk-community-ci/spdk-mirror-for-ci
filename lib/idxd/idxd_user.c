@@ -205,10 +205,9 @@ idxd_wq_config(struct spdk_user_idxd_device *user_idxd)
 	SPDK_DEBUGLOG(idxd, "Total ring slots available 0x%x\n", wqcap.total_wq_size);
 
 	idxd->total_wq_size = wqcap.total_wq_size;
-	/* Spread the channels we allow per device based on the total number of WQE to try
-	 * and achieve optimal performance for common cases.
-	 */
-	idxd->chan_per_device = (idxd->total_wq_size >= 128) ? 8 : 4;
+	if (idxd_wq_setup(idxd) < 0) {
+		return -EINVAL;
+	}
 
 	table_offsets.raw[0] = spdk_mmio_read_8(&user_idxd->registers->offsets.raw[0]);
 	table_offsets.raw[1] = spdk_mmio_read_8(&user_idxd->registers->offsets.raw[1]);
@@ -550,7 +549,6 @@ idxd_attach(struct spdk_pci_device *device)
 	user_idxd->device = device;
 	idxd->impl = &g_user_idxd_impl;
 	idxd->socket_id = device->socket_id;
-	pthread_mutex_init(&idxd->num_channels_lock, NULL);
 
 	/* Enable PCI busmaster. */
 	spdk_pci_device_cfg_read32(device, &cmd_reg, 4);
