@@ -161,7 +161,6 @@ kernel_idxd_probe(void *cb_ctx, spdk_idxd_attach_cb attach_cb, spdk_idxd_probe_c
 
 			/* Since we only use a single WQ, the total size is the size of this WQ */
 			kernel_idxd->idxd.total_wq_size = accfg_wq_get_size(wq);
-			kernel_idxd->idxd.chan_per_device = (kernel_idxd->idxd.total_wq_size >= 128) ? 8 : 4;
 
 			kernel_idxd->idxd.batch_size = accfg_wq_get_max_batch_size(wq);
 
@@ -169,7 +168,7 @@ kernel_idxd_probe(void *cb_ctx, spdk_idxd_attach_cb attach_cb, spdk_idxd_probe_c
 			break;
 		}
 
-		if (kernel_idxd->idxd.total_wq_size > 0) {
+		if (kernel_idxd->idxd.total_wq_size > 0 && idxd_wq_setup(&kernel_idxd->idxd) == 0) {
 			/* This device has at least 1 WQ available, so ask the user if they want to use it. */
 			attach_cb(cb_ctx, &kernel_idxd->idxd);
 		} else {

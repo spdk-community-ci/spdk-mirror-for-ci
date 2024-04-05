@@ -145,6 +145,8 @@ struct spdk_idxd_device {
 	uint32_t			version;
 };
 
+int idxd_wq_setup(struct spdk_idxd_device *idxd);
+
 void idxd_impl_register(struct spdk_idxd_impl *impl);
 
 #define SPDK_IDXD_IMPL_REGISTER(name, impl) \

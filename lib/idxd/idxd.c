@@ -415,6 +415,18 @@ idxd_device_destruct(struct spdk_idxd_device *idxd)
 }
 
 int
+idxd_wq_setup(struct spdk_idxd_device *idxd)
+{
+	/* Spread the channels we allow per device based on the total number of WQE to try
+	 * and achieve optimal performance for common cases.
+	 */
+
+	idxd->chan_per_device = (idxd->total_wq_size >= 128) ? 8 : 4;
+	pthread_mutex_init(&idxd->num_channels_lock, NULL);
+	return 0;
+}
+
+int
 spdk_idxd_probe(void *cb_ctx, spdk_idxd_attach_cb attach_cb,
 		spdk_idxd_probe_cb probe_cb)
 {
