@@ -1284,7 +1284,7 @@ else
 fi
 
 # ISA-L-crypto complements ISA-L functionality, it is only enabled together with ISA-L
-if [[ "${CONFIG[ISAL]}" = "y" ]]; then
+if [[ "${CONFIG[ISAL]}" = "y" && "${CONFIG[CRYPTO]}" = "y" ]]; then
 	if [ ! -f "$rootdir"/isa-l-crypto/autogen.sh ]; then
 		echo "ISA-L-crypto is required but was not found, please init the submodule with:"
 		echo "  git submodule update --init"
