@@ -205,13 +205,11 @@ function install_nvmecli() {
 }
 
 # This function install version of nvme-cli, that support listing spdk nvme
-# devices, should be remove after changes present in nvme-cli upstream.
+# devices, should be removed after changes present in nvme-cli upstream.
 function install_nvmecli_plugin() {
 	rm -rf "$GIT_REPOS/nvme-cli-plugin"
 
 	git clone $GIT_REPO_NVME_CLI "$GIT_REPOS/nvme-cli-plugin"
-	git -C "$GIT_REPOS/nvme-cli-plugin" fetch $GIT_REPO_NVME_CLI refs/changes/95/16795/12
-	git -C "$GIT_REPOS/nvme-cli-plugin" checkout FETCH_HEAD
 
 	meson setup --force-fallback-for=libnvme,json-c \
 		"$GIT_REPOS/nvme-cli-plugin/.build" \
