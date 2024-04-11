@@ -91,7 +91,7 @@ function usage() {
 	echo "                  Use with caution."
 	echo "DEV_TYPE"
 	echo "                  Perform action only against selected type of devices. Supported:"
-	echo "                    IOAT|DSA|IAA|VIRTIO|VMD|NVME."
+	echo "                    IOAT|DSA|IAA|VIRTIO|VMD|NVME|AE4DMA."
 	echo "                  Default is to select all types."
 	exit 0
 }
@@ -354,6 +354,7 @@ function collect_driver() {
 		[[ -n ${iaa_d["$bdf"]} ]] && driver=idxd
 		[[ -n ${virtio_d["$bdf"]} ]] && driver=virtio-pci
 		[[ -n ${vmd_d["$bdf"]} ]] && driver=vmd
+		[[ -n ${ae4dma_d["$bdf"]} ]] && driver=ae4dma
 	fi 2> /dev/null
 	echo "$driver"
 }
@@ -707,6 +708,7 @@ function status_linux() {
 		desc=${desc:-${iaa_d["$bdf"]:+IAA}}
 		desc=${desc:-${virtio_d["$bdf"]:+virtio}}
 		desc=${desc:-${vmd_d["$bdf"]:+VMD}}
+		desc=${desc:-${ae4dma_d["$bdf"]:+AE4DMA}}
 
 		printf '%-25s %-15s %-6s %-6s %-7s %-16s %-10s %s\n' \
 			"$desc" "$bdf" "${pci_ids_vendor["$bdf"]#0x}" "${pci_ids_device["$bdf"]#0x}" \
@@ -762,6 +764,7 @@ function status_freebsd() {
 	status_print "DSA" "${!dsa_d[@]}"
 	status_print "IAA" "${!iaa_d[@]}"
 	status_print "VMD" "${!vmd_d[@]}"
+	status_print "AE4DMA" "${!ae4dma_d[@]}"
 }
 
 function configure_freebsd_pci() {
@@ -772,6 +775,7 @@ function configure_freebsd_pci() {
 	BDFS+=("${!dsa_d[@]}")
 	BDFS+=("${!iaa_d[@]}")
 	BDFS+=("${!vmd_d[@]}")
+	BDFS+=("${!ae4dma_d[@]}")
 
 	# Drop the domain part from all the addresses
 	BDFS=("${BDFS[@]#*:}")

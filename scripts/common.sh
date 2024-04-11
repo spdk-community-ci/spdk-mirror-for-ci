@@ -435,6 +435,7 @@ map_supported_devices() {
 	local -gA nvme_d
 	local -gA ioat_d dsa_d iaa_d
 	local -gA virtio_d
+	local -gA ae4dma_d
 	local -gA vmd_d nvme_vmd_d vmd_nvme_d vmd_nvme_count
 	local -gA all_devices_d types_d all_devices_type_d
 
@@ -444,6 +445,7 @@ map_supported_devices() {
 	ids+="|PCI_DEVICE_ID_VIRTIO" dev_types+="|VIRTIO"
 	ids+="|PCI_DEVICE_ID_INTEL_VMD" dev_types+="|VMD"
 	ids+="|SPDK_PCI_CLASS_NVME" dev_types+="|NVME"
+	ids+="|PCIE_DEVICE_ID_AMD_AE4DMA" dev_types+="|AE4DMA"
 
 	[[ -e $rootdir/include/spdk/pci_ids.h ]] || return 1
 
@@ -454,6 +456,7 @@ map_supported_devices() {
 		bdfs=(${pci_bus_cache["0x8086:$dev_id"]})
 		[[ $dev_type == *NVME* ]] && bdfs=(${pci_bus_cache["$dev_id"]})
 		[[ $dev_type == *VIRT* ]] && bdfs=(${pci_bus_cache["0x1af4:$dev_id"]})
+		[[ $dev_type == *AE4DMA* ]] && bdfs=(${pci_bus_cache["0x1022:$dev_id"]})
 		[[ $dev_type =~ ($dev_types) ]] && dev_type=${BASH_REMATCH[1],,}
 		types_d["$dev_type"]=1
 		for bdf in "${bdfs[@]}"; do

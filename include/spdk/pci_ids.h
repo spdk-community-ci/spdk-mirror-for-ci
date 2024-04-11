@@ -119,6 +119,8 @@ extern "C" {
 #define PCI_ROOT_PORT_C_INTEL_ICX	0x347c
 #define PCI_ROOT_PORT_D_INTEL_ICX	0x347d
 
+#define PCIE_DEVICE_ID_AMD_AE4DMA_EPYC8XX4 0x14dc
+#define PCIE_DEVICE_ID_AMD_AE4DMA_EPYC9XX4 0x149b
 
 
 #ifdef __cplusplus
