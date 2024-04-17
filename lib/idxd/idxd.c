@@ -148,9 +148,23 @@ idxd_vtophys_iter_next(struct idxd_vtophys_iter *iter,
 	return len;
 }
 
+static void
+idxd_batches_free(struct spdk_idxd_io_channel *chan)
+{
+	struct idxd_batch *batch, *tmp;
+
+	TAILQ_FOREACH_SAFE(batch, &chan->batch_pool, link, tmp) {
+		spdk_free(batch->user_ops);
+		spdk_free(batch->user_desc);
+		TAILQ_REMOVE(&chan->batch_pool, batch, link);
+	}
+	free(chan->batch_base);
+	chan->batch_base = NULL;
+}
+
 /* helper function for DSA specific spdk_idxd_get_channel() stuff */
 static int
-_dsa_alloc_batches(struct spdk_idxd_io_channel *chan, int num_descriptors)
+idxd_batches_alloc(struct spdk_idxd_io_channel *chan, int num_descriptors)
 {
 	struct idxd_batch *batch;
 	struct idxd_hw_desc *desc;
@@ -172,14 +186,14 @@ _dsa_alloc_batches(struct spdk_idxd_io_channel *chan, int num_descriptors)
 						       SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
 		if (batch->user_desc == NULL) {
 			SPDK_ERRLOG("Failed to allocate batch descriptor memory\n");
-			goto error_user;
+			goto error;
 		}
 
 		rc = _vtophys(chan, batch->user_desc, &batch->user_desc_addr,
 			      batch->size * sizeof(struct idxd_hw_desc));
 		if (rc) {
 			SPDK_ERRLOG("Failed to translate batch descriptor memory\n");
-			goto error_user;
+			goto error;
 		}
 
 		batch->user_ops = op = spdk_zmalloc(batch->size * sizeof(struct idxd_ops),
@@ -187,14 +201,14 @@ _dsa_alloc_batches(struct spdk_idxd_io_channel *chan, int num_descriptors)
 						    SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
 		if (batch->user_ops == NULL) {
 			SPDK_ERRLOG("Failed to allocate user completion memory\n");
-			goto error_user;
+			goto error;
 		}
 
 		for (j = 0; j < batch->size; j++) {
 			rc = _vtophys(chan, &op->hw, &desc->completion_addr, sizeof(struct dsa_hw_comp_record));
 			if (rc) {
 				SPDK_ERRLOG("Failed to translate batch entry completion memory\n");
-				goto error_user;
+				goto error;
 			}
 			op++;
 			desc++;
@@ -205,13 +219,8 @@ _dsa_alloc_batches(struct spdk_idxd_io_channel *chan, int num_descriptors)
 	}
 	return 0;
 
-error_user:
-	TAILQ_FOREACH(batch, &chan->batch_pool, link) {
-		spdk_free(batch->user_ops);
-		batch->user_ops = NULL;
-		spdk_free(batch->user_desc);
-		batch->user_desc = NULL;
-	}
+error:
+	idxd_batches_free(chan);
 	return rc;
 }
 
@@ -274,7 +283,7 @@ spdk_idxd_get_channel(struct spdk_idxd_device *idxd)
 
 	if (idxd->type == IDXD_DEV_TYPE_DSA) {
 		comp_rec_size = sizeof(struct dsa_hw_comp_record);
-		if (_dsa_alloc_batches(chan, num_descriptors)) {
+		if (idxd_batches_alloc(chan, num_descriptors)) {
 			goto error;
 		}
 	} else {
@@ -296,6 +305,7 @@ spdk_idxd_get_channel(struct spdk_idxd_device *idxd)
 	return chan;
 
 error:
+	idxd_batches_free(chan);
 	spdk_free(chan->ops_base);
 	chan->ops_base = NULL;
 	spdk_free(chan->desc_base);
@@ -309,8 +319,6 @@ static int idxd_batch_cancel(struct spdk_idxd_io_channel *chan, int status);
 void
 spdk_idxd_put_channel(struct spdk_idxd_io_channel *chan)
 {
-	struct idxd_batch *batch;
-
 	assert(chan != NULL);
 	assert(chan->idxd != NULL);
 
@@ -325,12 +333,7 @@ spdk_idxd_put_channel(struct spdk_idxd_io_channel *chan)
 
 	spdk_free(chan->ops_base);
 	spdk_free(chan->desc_base);
-	while ((batch = TAILQ_FIRST(&chan->batch_pool))) {
-		TAILQ_REMOVE(&chan->batch_pool, batch, link);
-		spdk_free(batch->user_ops);
-		spdk_free(batch->user_desc);
-	}
-	free(chan->batch_base);
+	idxd_batches_free(chan);
 	free(chan);
 }
 
