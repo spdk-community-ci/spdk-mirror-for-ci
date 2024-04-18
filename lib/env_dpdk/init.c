@@ -152,11 +152,9 @@ push_arg(char *args[], int *argcount, char *arg)
 #define SPDK_IOMMU_VA_REQUIRED_WIDTH 48
 #define VTD_CAP_MGAW_SHIFT 16
 #define VTD_CAP_MGAW_MASK (0x3F << VTD_CAP_MGAW_SHIFT)
-#define RD_AMD_CAP_VASIZE_SHIFT 15
-#define RD_AMD_CAP_VASIZE_MASK (0x7F << RD_AMD_CAP_VASIZE_SHIFT)
 
-static int
-get_iommu_width(void)
+static bool
+iommu_supports_va(void)
 {
 	int width = 0;
 	glob_t glob_results = {};
@@ -183,10 +181,10 @@ get_iommu_width(void)
 					width = mgaw;
 				}
 			} else if (strstr(filename, "amd-iommu") != NULL) {
-				/* We have an AMD IOMMU */
-				int mgaw = ((cap_reg & RD_AMD_CAP_VASIZE_MASK) >> RD_AMD_CAP_VASIZE_SHIFT) + 1;
+				/* We have an AMD IOMMU, VA width not available, assume VA supported */
+				int mgaw = SPDK_IOMMU_VA_REQUIRED_WIDTH;
 
-				if (width == 0 || (mgaw > 0 && mgaw < width)) {
+				if (width == 0 || mgaw < width) {
 					width = mgaw;
 				}
 			}
@@ -196,7 +194,10 @@ get_iommu_width(void)
 	}
 
 	globfree(&glob_results);
-	return width;
+	if (width >= SPDK_IOMMU_VA_REQUIRED_WIDTH) {
+		return true;
+	}
+	return false;
 }
 
 #endif
@@ -446,7 +447,7 @@ build_eal_cmdline(const struct spdk_env_opts *opts)
 		 * virtual machines) don't have an IOMMU capable of handling the full virtual
 		 * address space and DPDK doesn't currently catch that. Add a check in SPDK
 		 * and force iova-mode=pa here. */
-		if (!no_huge && get_iommu_width() < SPDK_IOMMU_VA_REQUIRED_WIDTH) {
+		if (!no_huge && !iommu_supports_va()) {
 			args = push_arg(args, &argcount, _sprintf_alloc("--iova-mode=pa"));
 			if (args == NULL) {
 				return -1;
