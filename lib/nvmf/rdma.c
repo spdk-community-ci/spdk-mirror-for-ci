@@ -2098,9 +2098,7 @@ nvmf_rdma_request_process(struct spdk_nvmf_rdma_transport *rtransport,
 				break;
 			}
 
-			if (spdk_unlikely(spdk_nvmf_request_get_dif_ctx(&rdma_req->req, &rdma_req->req.dif.dif_ctx))) {
-				rdma_req->req.dif_enabled = true;
-			}
+			spdk_nvmf_request_get_dif_ctx(&rdma_req->req);
 
 			nvmf_rdma_check_fused_ordering(rtransport, rqpair, rdma_req);
 
