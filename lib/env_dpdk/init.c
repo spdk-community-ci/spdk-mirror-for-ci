@@ -181,7 +181,7 @@ iommu_supports_va(void)
 					width = mgaw;
 				}
 			} else if (strstr(filename, "amd-iommu") != NULL) {
-				/* We have an AMD IOMMU, VA width not available, assume VA supported */
+				/* We have an AMD IOMMU, assume it supports the required width */
 				int mgaw = SPDK_IOMMU_VA_REQUIRED_WIDTH;
 
 				if (width == 0 || mgaw < width) {
