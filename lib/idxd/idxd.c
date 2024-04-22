@@ -251,6 +251,21 @@ _dsa_alloc_batches(struct spdk_idxd_io_channel *chan, int num_descriptors)
 	return 0;
 }
 
+static void
+_idxd_free_ops(struct spdk_idxd_io_channel *chan)
+{
+	struct idxd_ops *op, *tmp;
+
+	STAILQ_FOREACH_SAFE(op, &chan->ops_outstanding, link, tmp) {
+		STAILQ_REMOVE(&chan->ops_outstanding, op, idxd_ops, link);
+		spdk_free(op);
+	}
+	STAILQ_FOREACH_SAFE(op, &chan->ops_pool, link, tmp) {
+		STAILQ_REMOVE(&chan->ops_pool, op, idxd_ops, link);
+		spdk_free(op);
+	}
+}
+
 struct spdk_idxd_io_channel *
 spdk_idxd_get_channel(struct spdk_idxd_device *idxd)
 {
@@ -309,14 +324,6 @@ spdk_idxd_get_channel(struct spdk_idxd_device *idxd)
 		goto error;
 	}
 
-	chan->ops_base = op = spdk_zmalloc(num_descriptors * sizeof(struct idxd_ops),
-					   0x40, NULL,
-					   SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
-	if (chan->ops_base == NULL) {
-		SPDK_ERRLOG("Failed to allocate idxd_ops memory\n");
-		goto error;
-	}
-
 	if (idxd->type == IDXD_DEV_TYPE_DSA) {
 		comp_rec_size = sizeof(struct dsa_hw_comp_record);
 		if (_dsa_alloc_batches(chan, num_descriptors)) {
@@ -327,6 +334,13 @@ spdk_idxd_get_channel(struct spdk_idxd_device *idxd)
 	}
 
 	for (i = 0; i < num_descriptors; i++) {
+		op = spdk_zmalloc(sizeof(struct idxd_ops), 0x40, NULL,
+				  SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
+		if (op == NULL) {
+			SPDK_ERRLOG("Failed to allocate idxd_ops memory\n");
+			goto error;
+		}
+
 		STAILQ_INSERT_TAIL(&chan->ops_pool, op, link);
 		op->desc = desc;
 		rc = _vtophys(chan, &op->hw, &desc->completion_addr, comp_rec_size);
@@ -334,7 +348,6 @@ spdk_idxd_get_channel(struct spdk_idxd_device *idxd)
 			SPDK_ERRLOG("Failed to translate completion memory\n");
 			goto error;
 		}
-		op++;
 		desc++;
 	}
 
@@ -342,8 +355,7 @@ spdk_idxd_get_channel(struct spdk_idxd_device *idxd)
 
 error:
 	_dsa_dealloc_batches(chan);
-	spdk_free(chan->ops_base);
-	chan->ops_base = NULL;
+	_idxd_free_ops(chan);
 	spdk_free(chan->desc_base);
 	chan->desc_base = NULL;
 	free(chan);
@@ -373,7 +385,8 @@ spdk_idxd_put_channel(struct spdk_idxd_io_channel *chan)
 	spdk_bit_array_clear(chan->idxd->wq_array, channel_num);
 	pthread_mutex_unlock(&chan->idxd->wq_array_lock);
 
-	spdk_free(chan->ops_base);
+	_idxd_free_ops(chan);
+
 	spdk_free(chan->desc_base);
 	_dsa_dealloc_batches(chan);
 	free(chan);

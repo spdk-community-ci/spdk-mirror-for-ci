@@ -84,7 +84,6 @@ struct spdk_idxd_io_channel {
 	STAILQ_HEAD(, idxd_ops)			ops_pool;
 	/* Current list of outstanding operations to poll. */
 	STAILQ_HEAD(op_head, idxd_ops)		ops_outstanding;
-	void					*ops_base;
 
 	TAILQ_HEAD(, idxd_batch)		batch_pool;
 	void					*batch_base;
