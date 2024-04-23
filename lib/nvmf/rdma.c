@@ -1463,13 +1463,20 @@ nvmf_rdma_fill_wr_sgl(struct spdk_nvmf_rdma_device *device,
 	struct spdk_rdma_memory_translation mem_translation;
 	struct ibv_sge	*sg_ele;
 	struct iovec *iov;
+	struct iovec *rdma_iov;
 	uint32_t lkey, remaining;
 	int rc;
+
+	if (spdk_likely(!rdma_req->req.stripped_data)) {
+		rdma_iov = rdma_req->req.iov;
+	} else {
+		rdma_iov = rdma_req->req.stripped_data->iov;
+	}
 
 	wr->num_sge = 0;
 
 	while (total_length && wr->num_sge < SPDK_NVMF_MAX_SGL_ENTRIES) {
-		iov = &rdma_req->req.iov[rdma_req->iovpos];
+		iov = rdma_iov + rdma_req->iovpos;
 		rc = spdk_rdma_get_translation(device->map, iov->iov_base, iov->iov_len, &mem_translation);
 		if (spdk_unlikely(rc)) {
 			return rc;
@@ -1513,29 +1520,19 @@ nvmf_rdma_fill_wr_sgl_with_dif(struct spdk_nvmf_rdma_device *device,
 	struct spdk_dif_ctx *dif_ctx = &rdma_req->req.dif.dif_ctx;
 	struct ibv_sge *sg_ele;
 	struct iovec *iov;
-	struct iovec *rdma_iov;
 	uint32_t lkey, remaining;
 	uint32_t remaining_data_block, data_block_size, md_size;
 	uint32_t sge_len;
 	int rc;
 
 	data_block_size = dif_ctx->block_size - dif_ctx->md_size;
+	md_size = dif_ctx->md_size;
 
-	if (spdk_likely(!rdma_req->req.stripped_data)) {
-		rdma_iov = rdma_req->req.iov;
-		remaining_data_block = data_block_size;
-		md_size = dif_ctx->md_size;
-	} else {
-		rdma_iov = rdma_req->req.stripped_data->iov;
-		total_length = total_length / dif_ctx->block_size * data_block_size;
-		remaining_data_block = total_length;
-		md_size = 0;
-	}
-
+	remaining_data_block = data_block_size;
 	wr->num_sge = 0;
 
 	while (total_length && (num_extra_wrs || wr->num_sge < SPDK_NVMF_MAX_SGL_ENTRIES)) {
-		iov = rdma_iov + rdma_req->iovpos;
+		iov = &rdma_req->req.iov[rdma_req->iovpos];
 		rc = spdk_rdma_get_translation(device->map, iov->iov_base, iov->iov_len, &mem_translation);
 		if (spdk_unlikely(rc)) {
 			return rc;
@@ -1657,14 +1654,17 @@ nvmf_rdma_request_fill_iovs(struct spdk_nvmf_rdma_transport *rtransport,
 			  (req->length > req->dif.dif_ctx.block_size))) {
 		rc = nvmf_request_get_stripped_buffers(req, &rgroup->group,
 						       &rtransport->transport, req->dif.orig_length);
-		if (rc != 0) {
+		if (rc == 0) {
+			assert(req->stripped_data);
+			length = req->dif.orig_length;
+		} else {
 			SPDK_INFOLOG(rdma, "Get stripped buffers fail %d, fallback to req.iov.\n", rc);
 		}
 	}
 
 	rdma_req->iovpos = 0;
 
-	if (spdk_unlikely(req->dif_enabled)) {
+	if (spdk_unlikely(req->dif_enabled && !req->stripped_data)) {
 		num_wrs = nvmf_rdma_calc_num_wrs(length, rtransport->transport.opts.io_unit_size,
 						 req->dif.dif_ctx.block_size);
 		if (num_wrs > 1) {
@@ -1713,6 +1713,7 @@ nvmf_rdma_request_fill_iovs_multi_sgl(struct spdk_nvmf_rdma_transport *rtranspor
 	struct spdk_nvme_sgl_descriptor		*inline_segment, *desc;
 	uint32_t				num_sgl_descriptors;
 	uint32_t				lengths[SPDK_NVMF_MAX_SGL_ENTRIES], total_length = 0;
+	uint32_t				elba_lengths[SPDK_NVMF_MAX_SGL_ENTRIES];
 	uint32_t				i;
 	int					rc;
 
@@ -1728,13 +1729,16 @@ nvmf_rdma_request_fill_iovs_multi_sgl(struct spdk_nvmf_rdma_transport *rtranspor
 
 	desc = (struct spdk_nvme_sgl_descriptor *)rdma_req->recv->buf + inline_segment->address;
 	for (i = 0; i < num_sgl_descriptors; i++) {
+		lengths[i] = desc->keyed.length;
+
 		if (spdk_likely(!req->dif_enabled)) {
-			lengths[i] = desc->keyed.length;
+			total_length += lengths[i];
 		} else {
-			req->dif.orig_length += desc->keyed.length;
-			lengths[i] = spdk_dif_get_length_with_md(desc->keyed.length, &req->dif.dif_ctx);
+			req->dif.orig_length += lengths[i];
+
+			elba_lengths[i] = spdk_dif_get_length_with_md(lengths[i], &req->dif.dif_ctx);
+			total_length += elba_lengths[i];
 		}
-		total_length += lengths[i];
 		desc++;
 	}
 
@@ -1783,11 +1787,11 @@ nvmf_rdma_request_fill_iovs_multi_sgl(struct spdk_nvmf_rdma_transport *rtranspor
 			goto err_exit;
 		}
 
-		if (spdk_likely(!req->dif_enabled)) {
+		if (spdk_likely(!req->dif_enabled || req->stripped_data)) {
 			rc = nvmf_rdma_fill_wr_sgl(device, rdma_req, current_wr, lengths[i]);
 		} else {
 			rc = nvmf_rdma_fill_wr_sgl_with_dif(device, rdma_req, current_wr,
-							    lengths[i], 0);
+							    elba_lengths[i], 0);
 		}
 		if (spdk_unlikely(rc != 0)) {
 			rc = -ENOMEM;
