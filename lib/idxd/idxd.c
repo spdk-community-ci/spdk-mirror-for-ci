@@ -258,10 +258,12 @@ _idxd_free_ops(struct spdk_idxd_io_channel *chan)
 
 	STAILQ_FOREACH_SAFE(op, &chan->ops_outstanding, link, tmp) {
 		STAILQ_REMOVE(&chan->ops_outstanding, op, idxd_ops, link);
+		spdk_free(op->desc);
 		spdk_free(op);
 	}
 	STAILQ_FOREACH_SAFE(op, &chan->ops_pool, link, tmp) {
 		STAILQ_REMOVE(&chan->ops_pool, op, idxd_ops, link);
+		spdk_free(op->desc);
 		spdk_free(op);
 	}
 }
@@ -316,13 +318,6 @@ spdk_idxd_get_channel(struct spdk_idxd_device *idxd)
 
 	/* Allocate descriptors and completions */
 	num_descriptors = idxd->total_wq_size / idxd->chan_per_device;
-	chan->desc_base = desc = spdk_zmalloc(num_descriptors * sizeof(struct idxd_hw_desc),
-					      0x40, NULL,
-					      SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
-	if (chan->desc_base == NULL) {
-		SPDK_ERRLOG("Failed to allocate DSA descriptor memory\n");
-		goto error;
-	}
 
 	if (idxd->type == IDXD_DEV_TYPE_DSA) {
 		comp_rec_size = sizeof(struct dsa_hw_comp_record);
@@ -340,15 +335,20 @@ spdk_idxd_get_channel(struct spdk_idxd_device *idxd)
 			SPDK_ERRLOG("Failed to allocate idxd_ops memory\n");
 			goto error;
 		}
-
-		STAILQ_INSERT_TAIL(&chan->ops_pool, op, link);
+		desc = spdk_zmalloc(sizeof(struct idxd_hw_desc), 0x40, NULL,
+				    SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
+		if (desc == NULL) {
+			SPDK_ERRLOG("Failed to allocate DSA descriptor memory\n");
+			spdk_free(op);
+			goto error;
+		}
 		op->desc = desc;
+		STAILQ_INSERT_TAIL(&chan->ops_pool, op, link);
 		rc = _vtophys(chan, &op->hw, &desc->completion_addr, comp_rec_size);
 		if (rc) {
 			SPDK_ERRLOG("Failed to translate completion memory\n");
 			goto error;
 		}
-		desc++;
 	}
 
 	return chan;
@@ -356,8 +356,6 @@ spdk_idxd_get_channel(struct spdk_idxd_device *idxd)
 error:
 	_dsa_dealloc_batches(chan);
 	_idxd_free_ops(chan);
-	spdk_free(chan->desc_base);
-	chan->desc_base = NULL;
 	free(chan);
 	return NULL;
 }
@@ -386,8 +384,6 @@ spdk_idxd_put_channel(struct spdk_idxd_io_channel *chan)
 	pthread_mutex_unlock(&chan->idxd->wq_array_lock);
 
 	_idxd_free_ops(chan);
-
-	spdk_free(chan->desc_base);
 	_dsa_dealloc_batches(chan);
 	free(chan);
 }
