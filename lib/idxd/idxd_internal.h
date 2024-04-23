@@ -80,7 +80,6 @@ struct spdk_idxd_io_channel {
 	 * User descriptors (those included in a batch) are managed independently from
 	 * data descriptors and are located in the batch structure.
 	 */
-	void					*desc_base;
 	STAILQ_HEAD(, idxd_ops)			ops_pool;
 	/* Current list of outstanding operations to poll. */
 	STAILQ_HEAD(op_head, idxd_ops)		ops_outstanding;
