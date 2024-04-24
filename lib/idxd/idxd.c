@@ -262,15 +262,90 @@ idxd_ops_free(struct spdk_idxd_io_channel *chan)
 	}
 }
 
+static int
+idxd_desc_alloc(struct spdk_idxd_io_channel *chan)
+{
+	struct spdk_idxd_device *idxd = chan->idxd;
+	struct idxd_hw_desc *desc;
+	struct idxd_ops *op;
+	uint32_t comp_rec_size;
+	uint32_t desc_num;
+	int rc;
+
+	op = spdk_zmalloc(sizeof(struct idxd_ops), 0x40, NULL,
+			  SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
+	if (op == NULL) {
+		SPDK_ERRLOG("Failed to allocate idxd_ops memory\n");
+		return -ENOMEM;
+	}
+	desc = spdk_zmalloc(sizeof(struct idxd_hw_desc), 0x40, NULL,
+			    SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
+	if (desc == NULL) {
+		SPDK_ERRLOG("Failed to allocate DSA descriptor memory\n");
+		rc = -ENOMEM;
+		goto error_op;
+	}
+	op->desc = desc;
+
+	pthread_mutex_lock(&idxd->wq_array_lock);
+	desc_num = spdk_bit_array_find_first_clear(idxd->wq_array, 0);
+	if (desc_num == UINT32_MAX) {
+		/* too many channels sharing this device */
+		SPDK_ERRLOG("Too many channels sharing this device\n");
+		rc = -ENOMEM;
+		goto error_desc;
+	}
+	rc = spdk_bit_array_set(idxd->wq_array, desc_num);
+	if (rc != 0) {
+		/* Should never happen since we found the channel_num
+		* under the lock */
+		assert(false);
+		rc = -EINVAL;
+		goto error_desc;
+	}
+	op->desc_num = (uint16_t)desc_num;
+	op->portal_offset = (uint16_t)((op->desc_num * PORTAL_STRIDE) &PORTAL_MASK);
+
+	STAILQ_INSERT_TAIL(&chan->ops_pool, op, link);
+
+	if (idxd->type == IDXD_DEV_TYPE_DSA) {
+		comp_rec_size = sizeof(struct dsa_hw_comp_record);
+		rc = idxd_batch_alloc(chan);
+		if (rc) {
+			rc = -EINVAL;
+			goto error_wq;
+		}
+	} else {
+		comp_rec_size = sizeof(struct iaa_hw_comp_record);
+	}
+
+	rc = _vtophys(chan, &op->hw, &desc->completion_addr, comp_rec_size);
+	if (rc) {
+		SPDK_ERRLOG("Failed to translate completion memory\n");
+		goto error_batch;
+	}
+	pthread_mutex_unlock(&idxd->wq_array_lock);
+
+	return 0;
+
+error_batch:
+	idxd_batch_free(chan->batch);
+error_wq:
+	assert(spdk_bit_array_get(chan->idxd->wq_array, op->desc_num) == true);
+	spdk_bit_array_clear(chan->idxd->wq_array, op->desc_num);
+error_desc:
+	pthread_mutex_unlock(&idxd->wq_array_lock);
+	spdk_free(op->desc);
+error_op:
+	spdk_free(op);
+	return rc;
+}
+
 struct spdk_idxd_io_channel *
 spdk_idxd_get_channel(struct spdk_idxd_device *idxd)
 {
 	struct spdk_idxd_io_channel *chan;
-	struct idxd_hw_desc *desc;
-	struct idxd_ops *op;
-	int i, num_descriptors, rc = -1;
-	uint32_t comp_rec_size;
-	uint32_t desc_num;
+	int i, num_descriptors;
 
 	assert(idxd != NULL);
 
@@ -293,70 +368,15 @@ spdk_idxd_get_channel(struct spdk_idxd_device *idxd)
 	num_descriptors = idxd->total_wq_size / idxd->chan_per_device;
 
 	for (i = 0; i < num_descriptors; i++) {
-		op = spdk_zmalloc(sizeof(struct idxd_ops), 0x40, NULL,
-				  SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
-		if (op == NULL) {
-			SPDK_ERRLOG("Failed to allocate idxd_ops memory\n");
-			goto error;
-		}
-		desc = spdk_zmalloc(sizeof(struct idxd_hw_desc), 0x40, NULL,
-				    SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
-		if (desc == NULL) {
-			SPDK_ERRLOG("Failed to allocate DSA descriptor memory\n");
-			spdk_free(op);
-			goto error;
-		}
-		op->desc = desc;
-
-		pthread_mutex_lock(&idxd->wq_array_lock);
-		desc_num = spdk_bit_array_find_first_clear(idxd->wq_array, 0);
-		if (desc_num == UINT32_MAX) {
-			/* too many channels sharing this device */
-			pthread_mutex_unlock(&idxd->wq_array_lock);
-			SPDK_ERRLOG("Too many channels sharing this device\n");
-			spdk_free(op->desc);
-			spdk_free(op);
-			goto error;
-		}
-		rc = spdk_bit_array_set(idxd->wq_array, desc_num);
-		if (rc != 0) {
-			/* Should never happen since we found the clear_bit
-			* under the lock */
-			assert(false);
-			pthread_mutex_unlock(&idxd->wq_array_lock);
-			spdk_free(op->desc);
-			spdk_free(op);
-			goto error;
-		}
-		op->desc_num = (uint16_t)desc_num;
-		op->portal_offset = (uint16_t)((op->desc_num * PORTAL_STRIDE) &PORTAL_MASK);
-		pthread_mutex_unlock(&idxd->wq_array_lock);
-
-		STAILQ_INSERT_TAIL(&chan->ops_pool, op, link);
-
-		if (idxd->type == IDXD_DEV_TYPE_DSA) {
-			comp_rec_size = sizeof(struct dsa_hw_comp_record);
-			if (idxd_batch_alloc(chan)) {
-				goto error;
-			}
-		} else {
-			comp_rec_size = sizeof(struct iaa_hw_comp_record);
-		}
-
-		rc = _vtophys(chan, &op->hw, &desc->completion_addr, comp_rec_size);
-		if (rc) {
-			SPDK_ERRLOG("Failed to translate completion memory\n");
-			goto error;
+		if (idxd_desc_alloc(chan) != 0) {
+			idxd_batches_free(chan);
+			idxd_ops_free(chan);
+			free(chan);
+			return NULL;
 		}
 	}
 
 	return chan;
-
-error:
-	idxd_ops_free(chan);
-	idxd_batches_free(chan);
-	free(chan);
-	return NULL;
 }
 
 static int idxd_batch_cancel(struct spdk_idxd_io_channel *chan, int status);
