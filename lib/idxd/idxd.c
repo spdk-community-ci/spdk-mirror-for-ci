@@ -358,7 +358,7 @@ spdk_idxd_get_channel(struct spdk_idxd_device *idxd)
 	chan->portal = idxd->impl->portal_get_addr(idxd);
 
 	/* Allocate descriptors and completions */
-	num_descriptors = idxd->total_wq_size / idxd->chan_per_device;
+	num_descriptors = 2;
 
 	for (i = 0; i < num_descriptors; i++) {
 		if (_alloc_desc_single(chan) != 0) {
@@ -682,7 +682,13 @@ _idxd_setup_batch(struct spdk_idxd_io_channel *chan)
 	if (chan->batch == NULL) {
 		batch = idxd_batch_create(chan);
 		if (batch == NULL) {
-			return -EBUSY;
+			if (_alloc_desc_single(chan) != 0) {
+				return -EBUSY;
+			}
+			batch = idxd_batch_create(chan);
+			if (batch == NULL) {
+				return -EBUSY;
+			}
 		}
 	}
 
