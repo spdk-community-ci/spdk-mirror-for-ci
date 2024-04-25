@@ -58,7 +58,6 @@ SPDK_STATIC_ASSERT(sizeof(union nvmf_c2h_msg) == 16, "Incorrect size");
 
 struct spdk_nvmf_dif_info {
 	struct spdk_dif_ctx			dif_ctx;
-	uint32_t				elba_length;
 	uint32_t				orig_length;
 };
 

@@ -2508,7 +2508,7 @@ nvmf_tcp_req_parse_sgl(struct spdk_nvmf_tcp_req *tcp_req,
 		if (spdk_unlikely(req->dif_enabled)) {
 			req->dif.orig_length = length;
 			length = spdk_dif_get_length_with_md(length, &req->dif.dif_ctx);
-			req->dif.elba_length = length;
+			req->length = length;
 		}
 
 		if (nvmf_ctrlr_use_zcopy(req)) {
@@ -2592,8 +2592,9 @@ nvmf_tcp_req_parse_sgl(struct spdk_nvmf_tcp_req *tcp_req,
 		req->data_from_pool = false;
 
 		if (spdk_unlikely(req->dif_enabled)) {
+			req->dif.orig_length = length;
 			length = spdk_dif_get_length_with_md(length, &req->dif.dif_ctx);
-			req->dif.elba_length = length;
+			req->length = length;
 		}
 
 		req->iov[0].iov_len = length;
@@ -2953,11 +2954,6 @@ nvmf_tcp_req_process(struct spdk_nvmf_tcp_transport *ttransport,
 
 			/* Get a zcopy buffer if the request can be serviced through zcopy */
 			if (spdk_nvmf_request_using_zcopy(&tcp_req->req)) {
-				if (spdk_unlikely(tcp_req->req.dif_enabled)) {
-					assert(tcp_req->req.dif.elba_length >= tcp_req->req.length);
-					tcp_req->req.length = tcp_req->req.dif.elba_length;
-				}
-
 				STAILQ_REMOVE(&group->pending_buf_queue, &tcp_req->req, spdk_nvmf_request, buf_link);
 				nvmf_tcp_req_set_state(tcp_req, TCP_REQUEST_STATE_AWAITING_ZCOPY_START);
 				spdk_nvmf_request_zcopy_start(&tcp_req->req);
@@ -3033,11 +3029,6 @@ nvmf_tcp_req_process(struct spdk_nvmf_tcp_transport *ttransport,
 		case TCP_REQUEST_STATE_READY_TO_EXECUTE:
 			spdk_trace_record(TRACE_TCP_REQUEST_STATE_READY_TO_EXECUTE, tqpair->qpair.qid, 0,
 					  (uintptr_t)tcp_req, tqpair);
-
-			if (spdk_unlikely(tcp_req->req.dif_enabled)) {
-				assert(tcp_req->req.dif.elba_length >= tcp_req->req.length);
-				tcp_req->req.length = tcp_req->req.dif.elba_length;
-			}
 
 			if (tcp_req->cmd.fuse != SPDK_NVME_CMD_FUSE_NONE) {
 				if (tcp_req->fused_failed) {
