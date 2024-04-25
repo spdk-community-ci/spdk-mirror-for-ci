@@ -649,7 +649,7 @@ remove_spdk_ns() {
 }
 
 configure_kernel_target() {
-	local kernel_name=$1 kernel_target_ip=$2
+	local kernel_name=$1 kernel_target_ip=$2 nvmf_port=${3:-$NVMF_PORT}
 	# Keep it global in scope for easier cleanup
 	nvmet=/sys/kernel/config/nvmet
 	kernel_subsystem=$nvmet/subsystems/$kernel_name
@@ -690,14 +690,14 @@ configure_kernel_target() {
 
 	echo "$kernel_target_ip" > "$kernel_port/addr_traddr"
 	echo "$TEST_TRANSPORT" > "$kernel_port/addr_trtype"
-	echo "$NVMF_PORT" > "$kernel_port/addr_trsvcid"
+	echo "$nvmf_port" > "$kernel_port/addr_trsvcid"
 	echo ipv4 > "$kernel_port/addr_adrfam"
 
 	# Enable the listener by linking the port to previously created subsystem
 	ln -s "$kernel_subsystem" "$kernel_port/subsystems/"
 
 	# Check if target is available
-	nvme discover "${NVME_HOST[@]}" -a "$kernel_target_ip" -t "$TEST_TRANSPORT" -s "$NVMF_PORT"
+	nvme discover "${NVME_HOST[@]}" -a "$kernel_target_ip" -t "$TEST_TRANSPORT" -s "$nvmf_port"
 }
 
 clean_kernel_target() {
