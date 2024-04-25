@@ -117,7 +117,7 @@ nvmf_bdev_ctrlr_complete_admin_cmd(struct spdk_bdev_io *bdev_io, bool success,
 
 void
 nvmf_bdev_ctrlr_identify_ns(struct spdk_nvmf_ns *ns, struct spdk_nvme_ns_data *nsdata,
-			    bool dif_insert_or_strip)
+			    bool dif_insert_or_strip, bool expose_dif_to_host)
 {
 	struct spdk_bdev *bdev = ns->bdev;
 	uint64_t num_blocks;
@@ -141,10 +141,32 @@ nvmf_bdev_ctrlr_identify_ns(struct spdk_nvmf_ns *ns, struct spdk_nvme_ns_data *n
 			nsdata->mc.extended = 1;
 			nsdata->mc.pointer = 0;
 			nsdata->dps.md_start = spdk_bdev_is_dif_head_of_md(bdev);
-			/* NVMf library doesn't process PRACT and PRCHK flags, we
-			 * leave the use of extended LBA buffer to users.
-			 */
-			nsdata->dps.pit = SPDK_NVME_FMT_NVM_PROTECTION_DISABLE;
+
+			if (expose_dif_to_host) {
+				switch (spdk_bdev_get_dif_type(bdev)) {
+				case SPDK_DIF_TYPE1:
+					nsdata->dpc.pit1 = 1;
+					nsdata->dps.pit = SPDK_NVME_FMT_NVM_PROTECTION_TYPE1;
+					break;
+				case SPDK_DIF_TYPE2:
+					nsdata->dpc.pit2 = 1;
+					nsdata->dps.pit = SPDK_NVME_FMT_NVM_PROTECTION_TYPE2;
+					break;
+				case SPDK_DIF_TYPE3:
+					nsdata->dpc.pit3 = 1;
+					nsdata->dps.pit = SPDK_NVME_FMT_NVM_PROTECTION_TYPE3;
+					break;
+				default:
+					SPDK_DEBUGLOG(nvmf, "Protection Disabled\n");
+					nsdata->dps.pit = SPDK_NVME_FMT_NVM_PROTECTION_DISABLE;
+					break;
+				}
+			} else {
+				/* NVMf library doesn't process PRACT and PRCHK flags, we
+				 * leave the use of extended LBA buffers to users.
+				 */
+				nsdata->dps.pit = SPDK_NVME_FMT_NVM_PROTECTION_DISABLE;
+			}
 		}
 	} else {
 		nsdata->lbaf[0].ms = 0;
@@ -210,6 +232,7 @@ nvmf_bdev_ctrlr_get_rw_params(const struct spdk_nvme_cmd *cmd, uint64_t *start_l
 
 static void
 nvmf_bdev_ctrlr_get_rw_ext_params(const struct spdk_nvme_cmd *cmd,
+				  const struct spdk_nvmf_request *req,
 				  struct spdk_bdev_ext_io_opts *opts)
 {
 	/* Get CDW12 values */
@@ -217,6 +240,10 @@ nvmf_bdev_ctrlr_get_rw_ext_params(const struct spdk_nvme_cmd *cmd,
 
 	/* Get CDW13 values */
 	opts->nvme_cdw13.raw = from_le32(&cmd->cdw13);
+
+	if (spdk_unlikely(req->dif_action != NVMF_DIF_ACTION_NONE)) {
+		opts->dif_check_flags_exclude_mask = ~req->dif.dif_ctx.dif_flags;
+	}
 }
 
 static bool
@@ -283,7 +310,7 @@ nvmf_bdev_ctrlr_read_cmd(struct spdk_bdev *bdev, struct spdk_bdev_desc *desc,
 			 struct spdk_io_channel *ch, struct spdk_nvmf_request *req)
 {
 	struct spdk_bdev_ext_io_opts opts = {
-		.size = SPDK_SIZEOF(&opts, accel_sequence),
+		.size = SPDK_SIZEOF(&opts, dif_check_flags_exclude_mask),
 		.memory_domain = req->memory_domain,
 		.memory_domain_ctx = req->memory_domain_ctx,
 		.accel_sequence = req->accel_sequence,
@@ -297,6 +324,7 @@ nvmf_bdev_ctrlr_read_cmd(struct spdk_bdev *bdev, struct spdk_bdev_desc *desc,
 	int rc;
 
 	nvmf_bdev_ctrlr_get_rw_params(cmd, &start_lba, &num_blocks);
+	nvmf_bdev_ctrlr_get_rw_ext_params(cmd, req, &opts);
 
 	if (spdk_unlikely(!nvmf_bdev_ctrlr_lba_in_range(bdev_num_blocks, start_lba, num_blocks))) {
 		SPDK_ERRLOG("end of media\n");
@@ -349,7 +377,7 @@ nvmf_bdev_ctrlr_write_cmd(struct spdk_bdev *bdev, struct spdk_bdev_desc *desc,
 	int rc;
 
 	nvmf_bdev_ctrlr_get_rw_params(cmd, &start_lba, &num_blocks);
-	nvmf_bdev_ctrlr_get_rw_ext_params(cmd, &opts);
+	nvmf_bdev_ctrlr_get_rw_ext_params(cmd, req, &opts);
 
 	if (spdk_unlikely(!nvmf_bdev_ctrlr_lba_in_range(bdev_num_blocks, start_lba, num_blocks))) {
 		SPDK_ERRLOG("end of media\n");
@@ -873,11 +901,12 @@ spdk_nvmf_bdev_ctrlr_abort_cmd(struct spdk_bdev *bdev, struct spdk_bdev_desc *de
 
 spdk_nvmf_dif_action_t
 nvmf_bdev_ctrlr_get_dif_ctx(struct spdk_bdev *bdev, struct spdk_nvme_cmd *cmd,
-			    struct spdk_dif_ctx *dif_ctx)
+			    bool expose_dif_to_host, struct spdk_dif_ctx *dif_ctx)
 {
-	uint32_t md_size, init_ref_tag, dif_check_flags = 0;
+	uint32_t md_size, io_flags, init_ref_tag, dif_check_flags = 0;
 	int rc;
 	struct spdk_dif_ctx_init_ext_opts dif_opts;
+	enum spdk_nvmf_dif_action dif_action = NVMF_DIF_ACTION_INSERT_OR_STRIP;
 
 	md_size = spdk_bdev_get_md_size(bdev);
 	if (md_size == 0) {
@@ -895,6 +924,20 @@ nvmf_bdev_ctrlr_get_dif_ctx(struct spdk_bdev *bdev, struct spdk_nvme_cmd *cmd,
 		dif_check_flags |= SPDK_DIF_FLAGS_GUARD_CHECK;
 	}
 
+	if (expose_dif_to_host) {
+		io_flags = from_le32(&cmd->cdw12);
+
+		dif_check_flags &= io_flags;
+
+		if (io_flags & SPDK_NVME_IO_FLAGS_PRACT) {
+			if (md_size > 8) {
+				dif_action = NVMF_DIF_ACTION_GENERATE_OR_VERIFY;
+			}
+		} else {
+			dif_action = NVMF_DIF_ACTION_PASSTHROUGH;
+		}
+	}
+
 	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
 	dif_opts.dif_pi_format = SPDK_DIF_PI_FORMAT_16;
 	rc = spdk_dif_ctx_init(dif_ctx,
@@ -906,7 +949,7 @@ nvmf_bdev_ctrlr_get_dif_ctx(struct spdk_bdev *bdev, struct spdk_nvme_cmd *cmd,
 			       dif_check_flags,
 			       init_ref_tag, 0, 0, 0, 0, &dif_opts);
 
-	return (rc == 0) ? NVMF_DIF_ACTION_INSERT_OR_STRIP : NVMF_DIF_ACTION_NONE;
+	return (rc == 0) ? dif_action : NVMF_DIF_ACTION_NONE;
 }
 
 static void

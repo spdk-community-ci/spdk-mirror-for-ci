@@ -522,6 +522,7 @@ nvmf_ctrlr_create(struct spdk_nvmf_subsystem *subsystem,
 	SPDK_DEBUGLOG(nvmf, "csts 0x%x\n", ctrlr->vcprop.csts.raw);
 
 	ctrlr->dif_insert_or_strip = transport->opts.dif_insert_or_strip;
+	ctrlr->expose_dif_to_host = transport->opts.expose_dif_to_host;
 
 	if (ctrlr->subsys->subtype == SPDK_NVMF_SUBTYPE_NVME) {
 		if (spdk_nvmf_qpair_get_listen_trid(req->qpair, &listen_trid) != 0) {
@@ -2690,7 +2691,8 @@ spdk_nvmf_ctrlr_identify_ns(struct spdk_nvmf_ctrlr *ctrlr,
 		return SPDK_NVMF_REQUEST_EXEC_STATUS_COMPLETE;
 	}
 
-	nvmf_bdev_ctrlr_identify_ns(ns, nsdata, ctrlr->dif_insert_or_strip);
+	nvmf_bdev_ctrlr_identify_ns(ns, nsdata, ctrlr->dif_insert_or_strip,
+				    ctrlr->expose_dif_to_host);
 
 	assert(ctrlr->admin_qpair);
 
@@ -4675,7 +4677,7 @@ spdk_nvmf_request_get_dif_ctx(struct spdk_nvmf_request *req, struct spdk_dif_ctx
 	case SPDK_NVME_OPC_READ:
 	case SPDK_NVME_OPC_WRITE:
 	case SPDK_NVME_OPC_COMPARE:
-		return nvmf_bdev_ctrlr_get_dif_ctx(bdev, cmd, dif_ctx);
+		return nvmf_bdev_ctrlr_get_dif_ctx(bdev, cmd, ctrlr->expose_dif_to_host, dif_ctx);
 	default:
 		break;
 	}

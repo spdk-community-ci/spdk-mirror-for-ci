@@ -2219,7 +2219,7 @@ nvmf_rdma_request_process(struct spdk_nvmf_rdma_transport *rtransport,
 			spdk_trace_record(TRACE_RDMA_REQUEST_STATE_READY_TO_EXECUTE, 0, 0,
 					  (uintptr_t)rdma_req, (uintptr_t)rqpair);
 
-			if (spdk_unlikely(rdma_req->req.dif_action == NVMF_DIF_ACTION_INSERT_OR_STRIP)) {
+			if (spdk_unlikely(rdma_req->req.dif_action == NVMF_DIF_ACTION_GENERATE_OR_VERIFY)) {
 				if (rdma_req->req.xfer == SPDK_NVME_DATA_HOST_TO_CONTROLLER) {
 					/* generate DIF for write operation */
 					num_blocks = SPDK_CEIL_DIV(rdma_req->req.length, rdma_req->req.dif.dif_ctx.block_size);
@@ -2303,7 +2303,7 @@ nvmf_rdma_request_process(struct spdk_nvmf_rdma_transport *rtransport,
 				STAILQ_INSERT_TAIL(&rqpair->pending_rdma_send_queue, rdma_req, state_link);
 				rdma_req->state = RDMA_REQUEST_STATE_READY_TO_COMPLETE_PENDING;
 			}
-			if (spdk_unlikely(rdma_req->req.dif_action == NVMF_DIF_ACTION_INSERT_OR_STRIP)) {
+			if (spdk_unlikely(rdma_req->req.dif_action == NVMF_DIF_ACTION_GENERATE_OR_VERIFY)) {
 				if (rdma_req->req.xfer == SPDK_NVME_DATA_CONTROLLER_TO_HOST) {
 					struct spdk_dif_error error_blk;
 
@@ -2651,7 +2651,8 @@ nvmf_rdma_create(struct spdk_nvmf_transport_opts *opts)
 		     "  max_io_qpairs_per_ctrlr=%d, io_unit_size=%d,\n"
 		     "  in_capsule_data_size=%d, max_aq_depth=%d,\n"
 		     "  num_shared_buffers=%d, num_cqe=%d, max_srq_depth=%d, no_srq=%d,"
-		     "  acceptor_backlog=%d, no_wr_batching=%d abort_timeout_sec=%d\n",
+		     "  acceptor_backlog=%d, no_wr_batching=%d abort_timeout_sec=%d,\n"
+		     "  dif_insert_or_strip=%d, expose_dif_to_host=%d\n",
 		     opts->max_queue_depth,
 		     opts->max_io_size,
 		     opts->max_qpairs_per_ctrlr - 1,
@@ -2664,7 +2665,9 @@ nvmf_rdma_create(struct spdk_nvmf_transport_opts *opts)
 		     rtransport->rdma_opts.no_srq,
 		     rtransport->rdma_opts.acceptor_backlog,
 		     rtransport->rdma_opts.no_wr_batching,
-		     opts->abort_timeout_sec);
+		     opts->abort_timeout_sec,
+		     opts->dif_insert_or_strip,
+		     opts->expose_dif_to_host);
 
 	/* I/O unit size cannot be larger than max I/O size */
 	if (opts->io_unit_size > opts->max_io_size) {
@@ -2701,6 +2704,12 @@ nvmf_rdma_create(struct spdk_nvmf_transport_opts *opts)
 	sge_count = opts->max_io_size / opts->io_unit_size;
 	if (sge_count > NVMF_DEFAULT_TX_SGE) {
 		SPDK_ERRLOG("Unsupported IO Unit size specified, %d bytes\n", opts->io_unit_size);
+		nvmf_rdma_destroy(&rtransport->transport, NULL, NULL);
+		return NULL;
+	}
+
+	if (!opts->dif_insert_or_strip && opts->expose_dif_to_host) {
+		SPDK_ERRLOG("DIF cannot be exposed to host if DIF insert/strip is disabled.\n");
 		nvmf_rdma_destroy(&rtransport->transport, NULL, NULL);
 		return NULL;
 	}

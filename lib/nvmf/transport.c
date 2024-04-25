@@ -87,6 +87,7 @@ nvmf_transport_dump_opts(struct spdk_nvmf_transport *transport, struct spdk_json
 	spdk_json_write_named_uint32(w, "buf_cache_size", opts->buf_cache_size);
 	spdk_json_write_named_bool(w, "dif_insert_or_strip", opts->dif_insert_or_strip);
 	spdk_json_write_named_bool(w, "zcopy", opts->zcopy);
+	spdk_json_write_named_bool(w, "expose_dif_to_host", opts->expose_dif_to_host);
 
 	if (transport->ops->dump_opts) {
 		transport->ops->dump_opts(transport, w);
@@ -153,10 +154,11 @@ nvmf_transport_opts_copy(struct spdk_nvmf_transport_opts *opts,
 	SET_FIELD(zcopy);
 	SET_FIELD(ack_timeout);
 	SET_FIELD(data_wr_pool_size);
+	SET_FIELD(expose_dif_to_host);
 
 	/* Do not remove this statement, you should always update this statement when you adding a new field,
 	 * and do not forget to add the SET_FIELD statement for your added field. */
-	SPDK_STATIC_ASSERT(sizeof(struct spdk_nvmf_transport_opts) == 72, "Incorrect size");
+	SPDK_STATIC_ASSERT(sizeof(struct spdk_nvmf_transport_opts) == 73, "Incorrect size");
 
 #undef SET_FIELD
 #undef FILED_CHECK

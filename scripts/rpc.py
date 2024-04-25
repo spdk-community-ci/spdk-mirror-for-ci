@@ -2517,7 +2517,7 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('-s', '--max-srq-depth', help='Max number of outstanding I/O per SRQ. Relevant only for RDMA transport', type=int)
     p.add_argument('-r', '--no-srq', action='store_true', help='Disable per-thread shared receive queue. Relevant only for RDMA transport')
     p.add_argument('-o', '--c2h-success', action='store_false', help='Disable C2H success optimization. Relevant only for TCP transport')
-    p.add_argument('-f', '--dif-insert-or-strip', action='store_true', help='Enable DIF insert/strip. Relevant only for TCP transport')
+    p.add_argument('-f', '--dif-insert-or-strip', action='store_true', help='Enable DIF insert/strip.')
     p.add_argument('-y', '--sock-priority', help='The sock priority of the tcp connection. Relevant only for TCP transport', type=int)
     p.add_argument('-l', '--acceptor-backlog', help='Pending connections allowed at one time. Relevant only for RDMA transport', type=int)
     p.add_argument('-x', '--abort-timeout-sec', help='Abort execution timeout value, in seconds', type=int)
@@ -2533,6 +2533,7 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('--acceptor-poll-rate', help='Polling interval of the acceptor for incoming connections (usec)', type=int)
     p.add_argument('--ack-timeout', help='ACK timeout in milliseconds', type=int)
     p.add_argument('--data-wr-pool-size', help='RDMA data WR pool size. Relevant only for RDMA transport', type=int)
+    p.add_argument('--expose-dif-to-host', action='store_true', help='Expose DIF feature to host.')
     p.set_defaults(func=nvmf_create_transport)
 
     def nvmf_get_transports(args):

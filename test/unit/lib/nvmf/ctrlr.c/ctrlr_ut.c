@@ -172,7 +172,7 @@ DEFINE_STUB_V(nvmf_ns_reservation_request, (void *ctx));
 
 DEFINE_STUB(nvmf_bdev_ctrlr_get_dif_ctx, spdk_nvmf_dif_action_t,
 	    (struct spdk_bdev *bdev, struct spdk_nvme_cmd *cmd,
-	     struct spdk_dif_ctx *dif_ctx),
+	     bool expose_dif_to_host, struct spdk_dif_ctx *dif_ctx),
 	    NVMF_DIF_ACTION_INSERT_OR_STRIP);
 
 DEFINE_STUB_V(nvmf_transport_qpair_abort_request,
@@ -223,7 +223,7 @@ spdk_nvmf_qpair_disconnect(struct spdk_nvmf_qpair *qpair)
 
 void
 nvmf_bdev_ctrlr_identify_ns(struct spdk_nvmf_ns *ns, struct spdk_nvme_ns_data *nsdata,
-			    bool dif_insert_or_strip)
+			    bool dif_insert_or_strip, bool e2e_data_protection)
 {
 	uint64_t num_blocks;
 

@@ -126,6 +126,7 @@ def nvmf_create_transport(client, **params):
         acceptor_poll_rate: Acceptor poll period in microseconds (optional)
         ack_timeout: ACK timeout in milliseconds (optional)
         data_wr_pool_size: RDMA data WR pool size. RDMA specific (optional)
+        expose_dif_to_host: Expose DIF feature to NVMe-oF host (optional)
     Returns:
         True or False
     """

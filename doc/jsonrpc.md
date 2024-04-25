@@ -8099,6 +8099,7 @@ disable_shadow_doorbells    | Optional | boolean | disable shadow doorbell suppo
 zcopy                       | Optional | boolean | Use zero-copy operations if the underlying bdev supports them
 ack_timeout                 | Optional | number  | ACK timeout in milliseconds
 data_wr_pool_size           | Optional | number  | RDMA data WR pool size (RDMA only)
+expose_dif_to_host          | Optional | boolean | Expose DIF feature to NVMe-oF host
 
 #### Example
 

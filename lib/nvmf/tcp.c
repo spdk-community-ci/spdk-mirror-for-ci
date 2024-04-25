@@ -675,7 +675,7 @@ nvmf_tcp_create(struct spdk_nvmf_transport_opts *opts)
 		     "  num_shared_buffers=%d, c2h_success=%d,\n"
 		     "  dif_insert_or_strip=%d, sock_priority=%d\n"
 		     "  abort_timeout_sec=%d, control_msg_num=%hu\n"
-		     "  ack_timeout=%d\n",
+		     "  ack_timeout=%d, expose_dif_to_host=%d\n",
 		     opts->max_queue_depth,
 		     opts->max_io_size,
 		     opts->max_qpairs_per_ctrlr - 1,
@@ -688,7 +688,8 @@ nvmf_tcp_create(struct spdk_nvmf_transport_opts *opts)
 		     ttransport->tcp_opts.sock_priority,
 		     opts->abort_timeout_sec,
 		     ttransport->tcp_opts.control_msg_num,
-		     opts->ack_timeout);
+		     opts->ack_timeout,
+		     opts->expose_dif_to_host);
 
 	if (ttransport->tcp_opts.sock_priority > SPDK_NVMF_TCP_DEFAULT_MAX_SOCK_PRIORITY) {
 		SPDK_ERRLOG("Unsupported socket_priority=%d, the current range is: 0 to %d\n"
@@ -755,6 +756,12 @@ nvmf_tcp_create(struct spdk_nvmf_transport_opts *opts)
 			free(ttransport);
 			return NULL;
 		}
+	}
+
+	if (!opts->dif_insert_or_strip && opts->expose_dif_to_host) {
+		SPDK_ERRLOG("DIF cannot be exposed to host if DIF insert/strip is disabled.\n");
+		free(ttransport);
+		return NULL;
 	}
 
 	ttransport->accept_poller = SPDK_POLLER_REGISTER(nvmf_tcp_accept, &ttransport->transport,
@@ -2703,7 +2710,6 @@ _nvmf_tcp_send_c2h_data(struct spdk_nvmf_tcp_qpair *tqpair,
 	}
 
 	if (spdk_unlikely(tcp_req->req.dif_action == NVMF_DIF_ACTION_INSERT_OR_STRIP)) {
-		struct spdk_nvme_cpl *rsp = &tcp_req->req.rsp->nvme_cpl;
 		struct spdk_dif_error err_blk = {};
 		uint32_t mapped_length = 0;
 		uint32_t available_iovs = SPDK_COUNTOF(rsp_pdu->iov);
@@ -2745,8 +2751,8 @@ _nvmf_tcp_send_c2h_data(struct spdk_nvmf_tcp_qpair *tqpair,
 		if (rc != 0) {
 			SPDK_ERRLOG("DIF error detected. type=%d, offset=%" PRIu32 "\n",
 				    err_blk.err_type, err_blk.err_offset);
-			rsp->status.sct = SPDK_NVME_SCT_MEDIA_ERROR;
-			rsp->status.sc = nvmf_tcp_dif_error_to_compl_status(err_blk.err_type);
+			nvmf_tcp_req_set_cpl(tcp_req, SPDK_NVME_SCT_MEDIA_ERROR,
+					     nvmf_tcp_dif_error_to_compl_status(err_blk.err_type));
 			nvmf_tcp_send_capsule_resp_pdu(tcp_req, tqpair);
 			return;
 		}
@@ -2861,6 +2867,8 @@ nvmf_tcp_req_process(struct spdk_nvmf_tcp_transport *ttransport,
 	struct spdk_nvmf_transport		*transport = &ttransport->transport;
 	struct spdk_nvmf_transport_poll_group	*group;
 	struct spdk_nvmf_tcp_poll_group		*tgroup;
+	uint32_t				num_blocks;
+	int					rc;
 
 	tqpair = SPDK_CONTAINEROF(tcp_req->req.qpair, struct spdk_nvmf_tcp_qpair, qpair);
 	group = &tqpair->group->group;
@@ -3032,6 +3040,21 @@ nvmf_tcp_req_process(struct spdk_nvmf_tcp_transport *ttransport,
 			spdk_trace_record(TRACE_TCP_REQUEST_STATE_READY_TO_EXECUTE, tqpair->qpair.qid, 0,
 					  (uintptr_t)tcp_req, tqpair);
 
+			if (spdk_unlikely(tcp_req->req.dif_action == NVMF_DIF_ACTION_GENERATE_OR_VERIFY &&
+					  tcp_req->req.xfer == SPDK_NVME_DATA_HOST_TO_CONTROLLER)) {
+				num_blocks = SPDK_CEIL_DIV(tcp_req->req.length, tcp_req->req.dif.dif_ctx.block_size);
+				assert(num_blocks > 0);
+
+				rc = spdk_dif_generate(tcp_req->req.iov, tcp_req->req.iovcnt,
+						       num_blocks, &tcp_req->req.dif.dif_ctx);
+				if (rc != 0) {
+					SPDK_ERRLOG("DIF generation failed\n");
+					nvmf_tcp_req_set_cpl(tcp_req, SPDK_NVME_SCT_GENERIC, SPDK_NVME_SC_INVALID_FIELD);
+					nvmf_tcp_req_set_state(tcp_req, TCP_REQUEST_STATE_READY_TO_COMPLETE);
+					break;
+				}
+			}
+
 			if (tcp_req->cmd.fuse != SPDK_NVME_CMD_FUSE_NONE) {
 				if (tcp_req->fused_failed) {
 					/* This request failed FUSED semantics.  Fail it immediately, without
@@ -3107,6 +3130,20 @@ nvmf_tcp_req_process(struct spdk_nvmf_tcp_transport *ttransport,
 
 			if (spdk_unlikely(tcp_req->req.dif_action == NVMF_DIF_ACTION_INSERT_OR_STRIP)) {
 				tcp_req->req.length = tcp_req->req.dif.orig_length;
+			} else if (spdk_unlikely(tcp_req->req.dif_action == NVMF_DIF_ACTION_GENERATE_OR_VERIFY &&
+						 tcp_req->req.xfer == SPDK_NVME_DATA_CONTROLLER_TO_HOST)) {
+				struct spdk_dif_error error_blk;
+
+				num_blocks = SPDK_CEIL_DIV(tcp_req->req.length, tcp_req->req.dif.dif_ctx.block_size);
+
+				rc = spdk_dif_verify(tcp_req->req.iov, tcp_req->req.iovcnt, num_blocks,
+						     &tcp_req->req.dif.dif_ctx, &error_blk);
+				if (rc) {
+					SPDK_ERRLOG("DIF error detected. type=%d, offset=%" PRIu32 "\n",
+						    error_blk.err_type, error_blk.err_offset);
+					nvmf_tcp_req_set_cpl(tcp_req, SPDK_NVME_SCT_MEDIA_ERROR,
+							     nvmf_tcp_dif_error_to_compl_status(error_blk.err_type));
+				}
 			}
 
 			nvmf_tcp_req_set_state(tcp_req, TCP_REQUEST_STATE_READY_TO_COMPLETE);

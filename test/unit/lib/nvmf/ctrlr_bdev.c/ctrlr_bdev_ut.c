@@ -307,11 +307,12 @@ static void
 test_get_rw_ext_params(void)
 {
 	struct spdk_nvme_cmd cmd = {0};
+	struct spdk_nvmf_request req = {0};
 	struct spdk_bdev_ext_io_opts opts = {0};
 
 	to_le32(&cmd.cdw12, 0x9875 | SPDK_NVME_IO_FLAGS_DATA_PLACEMENT_DIRECTIVE);
 	to_le32(&cmd.cdw13, 0x2 << 16);
-	nvmf_bdev_ctrlr_get_rw_ext_params(&cmd, &opts);
+	nvmf_bdev_ctrlr_get_rw_ext_params(&cmd, &req, &opts);
 	CU_ASSERT(opts.nvme_cdw12.raw == 0x209875);
 	CU_ASSERT(opts.nvme_cdw13.raw == 0x20000);
 }
@@ -346,14 +347,14 @@ test_get_dif_ctx(void)
 
 	bdev.md_len = 0;
 
-	dif_action = nvmf_bdev_ctrlr_get_dif_ctx(&bdev, &cmd, &dif_ctx);
+	dif_action = nvmf_bdev_ctrlr_get_dif_ctx(&bdev, &cmd, false, &dif_ctx);
 	CU_ASSERT(dif_action == NVMF_DIF_ACTION_NONE);
 
 	to_le64(&cmd.cdw10, 0x1234567890ABCDEF);
 	bdev.blocklen = 520;
 	bdev.md_len = 8;
 
-	dif_action = nvmf_bdev_ctrlr_get_dif_ctx(&bdev, &cmd, &dif_ctx);
+	dif_action = nvmf_bdev_ctrlr_get_dif_ctx(&bdev, &cmd, false, &dif_ctx);
 	CU_ASSERT(dif_action == NVMF_DIF_ACTION_INSERT_OR_STRIP);
 	CU_ASSERT(dif_ctx.block_size = 520);
 	CU_ASSERT(dif_ctx.md_size == 8);
@@ -513,7 +514,7 @@ test_nvmf_bdev_ctrlr_identify_ns(void)
 	bdev.optimal_io_boundary = SPDK_BDEV_IO_NUM_CHILD_IOV;
 	bdev.dif_is_head_of_md = true;
 
-	nvmf_bdev_ctrlr_identify_ns(&ns, &nsdata, false);
+	nvmf_bdev_ctrlr_identify_ns(&ns, &nsdata, false, false);
 	CU_ASSERT(nsdata.nsze == 10);
 	CU_ASSERT(nsdata.ncap == 10);
 	CU_ASSERT(nsdata.nuse == 10);
@@ -542,7 +543,7 @@ test_nvmf_bdev_ctrlr_identify_ns(void)
 	CU_ASSERT(!strncmp((uint8_t *)&nsdata.eui64, eui64, 8));
 
 	memset(&nsdata, 0, sizeof(nsdata));
-	nvmf_bdev_ctrlr_identify_ns(&ns, &nsdata, true);
+	nvmf_bdev_ctrlr_identify_ns(&ns, &nsdata, true, false);
 	CU_ASSERT(nsdata.nsze == 10);
 	CU_ASSERT(nsdata.ncap == 10);
 	CU_ASSERT(nsdata.nuse == 10);
@@ -829,7 +830,9 @@ static void
 test_nvmf_bdev_ctrlr_read_write_cmd(void)
 {
 	struct spdk_bdev bdev = {};
-	struct spdk_nvmf_request req = {};
+	struct spdk_nvmf_ctrlr ctrlr = {};
+	struct spdk_nvmf_qpair qpair = { .ctrlr = &ctrlr, };
+	struct spdk_nvmf_request req = { .qpair = &qpair, };
 	union nvmf_c2h_msg rsp = {};
 	union nvmf_h2c_msg cmd = {};
 	int rc;

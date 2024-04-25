@@ -68,6 +68,8 @@ struct spdk_nvmf_stripped_data {
 
 enum spdk_nvmf_dif_action {
 	NVMF_DIF_ACTION_NONE = 0,
+	NVMF_DIF_ACTION_PASSTHROUGH,
+	NVMF_DIF_ACTION_GENERATE_OR_VERIFY,
 	NVMF_DIF_ACTION_INSERT_OR_STRIP,
 };
 
@@ -90,9 +92,9 @@ struct spdk_nvmf_request {
 		uint8_t raw;
 		struct {
 			uint8_t data_from_pool		: 1;
-			uint8_t dif_action		: 1;
+			uint8_t dif_action		: 2;
 			uint8_t first_fused		: 1;
-			uint8_t rsvd			: 5;
+			uint8_t rsvd			: 4;
 		};
 	};
 	uint8_t				zcopy_phase; /* type enum spdk_nvmf_zcopy_phase */

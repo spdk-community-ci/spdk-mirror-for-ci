@@ -243,6 +243,7 @@ struct spdk_nvmf_ctrlr {
 	struct spdk_poller		*cc_timeout_timer;
 
 	bool				dif_insert_or_strip;
+	bool				expose_dif_to_host;
 	bool				in_destruct;
 	bool				disconnect_in_progress;
 	/* valid only when disconnect_in_progress is true */
@@ -374,7 +375,7 @@ void nvmf_ctrlr_ns_changed(struct spdk_nvmf_ctrlr *ctrlr, uint32_t nsid);
 bool nvmf_ctrlr_use_zcopy(struct spdk_nvmf_request *req);
 
 void nvmf_bdev_ctrlr_identify_ns(struct spdk_nvmf_ns *ns, struct spdk_nvme_ns_data *nsdata,
-				 bool dif_insert_or_strip);
+				 bool dif_insert_or_strip, bool expose_dif_to_host);
 int nvmf_bdev_ctrlr_read_cmd(struct spdk_bdev *bdev, struct spdk_bdev_desc *desc,
 			     struct spdk_io_channel *ch, struct spdk_nvmf_request *req);
 int nvmf_bdev_ctrlr_write_cmd(struct spdk_bdev *bdev, struct spdk_bdev_desc *desc,
@@ -394,7 +395,8 @@ int nvmf_bdev_ctrlr_copy_cmd(struct spdk_bdev *bdev, struct spdk_bdev_desc *desc
 int nvmf_bdev_ctrlr_nvme_passthru_io(struct spdk_bdev *bdev, struct spdk_bdev_desc *desc,
 				     struct spdk_io_channel *ch, struct spdk_nvmf_request *req);
 spdk_nvmf_dif_action_t nvmf_bdev_ctrlr_get_dif_ctx(struct spdk_bdev *bdev,
-		struct spdk_nvme_cmd *cmd, struct spdk_dif_ctx *dif_ctx);
+		struct spdk_nvme_cmd *cmd, bool expose_dif_to_host,
+		struct spdk_dif_ctx *dif_ctx);
 bool nvmf_bdev_zcopy_enabled(struct spdk_bdev *bdev);
 
 int nvmf_subsystem_add_ctrlr(struct spdk_nvmf_subsystem *subsystem,
