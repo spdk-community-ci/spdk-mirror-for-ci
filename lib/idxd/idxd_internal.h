@@ -85,7 +85,6 @@ struct spdk_idxd_io_channel {
 	STAILQ_HEAD(op_head, idxd_ops)		ops_outstanding;
 
 	TAILQ_HEAD(, idxd_batch)		batch_pool;
-	void					*batch_base;
 };
 
 struct pci_dev_id {
