@@ -156,6 +156,17 @@ malloc_unmap_write_zeroes_generate_pi(struct spdk_bdev_io *bdev_io)
 	return rc;
 }
 
+static int
+malloc_remap_pi(struct spdk_bdev_io *bdev_io)
+{
+	uint32_t offset, remapped_offset;
+
+	offset = bdev_io->u.bdev.copy.src_offset_blocks;
+	remapped_offset = bdev_io->u.bdev.offset_blocks;
+
+	return spdk_bdev_io_remap_dif(bdev_io, offset, remapped_offset);
+}
+
 static void
 malloc_done(void *ref, int status)
 {
@@ -186,6 +197,9 @@ malloc_done(void *ref, int status)
 		case SPDK_BDEV_IO_TYPE_UNMAP:
 		case SPDK_BDEV_IO_TYPE_WRITE_ZEROES:
 			rc = malloc_unmap_write_zeroes_generate_pi(bdev_io);
+			break;
+		case SPDK_BDEV_IO_TYPE_COPY:
+			rc = malloc_remap_pi(bdev_io);
 			break;
 		default:
 			rc = 0;
