@@ -325,6 +325,22 @@ malloc_get_md_buf(struct spdk_bdev_io *bdev_io)
 	return (char *)mdisk->malloc_md_buf + malloc_get_md_offset(bdev_io);
 }
 
+static uint64_t
+malloc_get_copy_src_md_offset(struct spdk_bdev_io *bdev_io)
+{
+	return bdev_io->u.bdev.copy.src_offset_blocks * bdev_io->bdev->md_len;
+}
+
+static void *
+malloc_get_copy_src_md_buf(struct spdk_bdev_io *bdev_io)
+{
+	struct malloc_disk *mdisk = SPDK_CONTAINEROF(bdev_io->bdev, struct malloc_disk, disk);
+
+	assert(spdk_bdev_is_md_separate(bdev_io->bdev));
+
+	return (char *)mdisk->malloc_md_buf + malloc_get_copy_src_md_offset(bdev_io);
+}
+
 static void
 malloc_sequence_fail(struct malloc_task *task, int status)
 {
@@ -490,6 +506,24 @@ bdev_malloc_copy(struct malloc_disk *mdisk, struct spdk_io_channel *ch,
 	if (res != 0) {
 		malloc_done(task, res);
 	}
+
+	if (bdev_io->u.bdev.md_buf == NULL) {
+		return;
+	}
+
+	SPDK_DEBUGLOG(bdev_malloc, "Copy metadata %zu bytes from offset %#" PRIux64 " to offset"
+		      "	%#" PRIx64 "\n",
+		      malloc_get_md_len(bdev_io),
+		      malloc_get_copy_src_md_offset(bdev_io),
+		      malloc_get_offset(bdev_io));
+
+	task->num_outstanding++;
+
+	res = spdk_accel_submit_copy(ch,
+				     malloc_get_md_buf(bdev_io),
+				     malloc_get_copy_src_md_buf(bdev_io),
+				     malloc_get_md_len(bdev_io),
+				     0, malloc_done, task);
 }
 
 static int
