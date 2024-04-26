@@ -193,57 +193,6 @@ spdk_bdev_part_get_offset_blocks(struct spdk_bdev_part *part)
 	return part->internal.offset_blocks;
 }
 
-static int
-bdev_part_remap_dif(struct spdk_bdev_io *bdev_io, uint32_t offset,
-		    uint32_t remapped_offset)
-{
-	struct spdk_bdev *bdev = bdev_io->bdev;
-	struct spdk_dif_ctx dif_ctx;
-	struct spdk_dif_error err_blk = {};
-	int rc;
-	struct spdk_dif_ctx_init_ext_opts dif_opts;
-
-	if (spdk_likely(!(bdev_io->u.bdev.dif_check_flags & SPDK_DIF_FLAGS_REFTAG_CHECK))) {
-		return 0;
-	}
-
-	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
-	dif_opts.dif_pi_format = SPDK_DIF_PI_FORMAT_16;
-	rc = spdk_dif_ctx_init(&dif_ctx,
-			       bdev->blocklen,
-			       bdev->md_len,
-			       bdev->md_interleave,
-			       bdev->dif_is_head_of_md,
-			       bdev->dif_type,
-			       bdev_io->u.bdev.dif_check_flags,
-			       offset, 0, 0, 0, 0, &dif_opts);
-	if (rc != 0) {
-		SPDK_ERRLOG("Initialization of DIF context failed\n");
-		return rc;
-	}
-
-	spdk_dif_ctx_set_remapped_init_ref_tag(&dif_ctx, remapped_offset);
-
-	if (bdev->md_interleave) {
-		rc = spdk_dif_remap_ref_tag(bdev_io->u.bdev.iovs, bdev_io->u.bdev.iovcnt,
-					    bdev_io->u.bdev.num_blocks, &dif_ctx, &err_blk, true);
-	} else {
-		struct iovec md_iov = {
-			.iov_base	= bdev_io->u.bdev.md_buf,
-			.iov_len	= bdev_io->u.bdev.num_blocks * bdev->md_len,
-		};
-
-		rc = spdk_dix_remap_ref_tag(&md_iov, bdev_io->u.bdev.num_blocks, &dif_ctx, &err_blk, true);
-	}
-
-	if (rc != 0) {
-		SPDK_ERRLOG("Remapping reference tag failed. type=%d, offset=%" PRIu32 "\n",
-			    err_blk.err_type, err_blk.err_offset);
-	}
-
-	return rc;
-}
-
 static void
 bdev_part_complete_io(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
 {
@@ -258,7 +207,7 @@ bdev_part_complete_io(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
 			offset = bdev_io->u.bdev.offset_blocks;
 			remapped_offset = part_io->u.bdev.offset_blocks;
 
-			rc = bdev_part_remap_dif(bdev_io, offset, remapped_offset);
+			rc = spdk_bdev_io_remap_dif(bdev_io, offset, remapped_offset);
 			if (rc != 0) {
 				success = false;
 			}
@@ -321,7 +270,7 @@ spdk_bdev_part_submit_request_ext(struct spdk_bdev_part_channel *ch, struct spdk
 						bdev_part_complete_io, bdev_io, &io_opts);
 		break;
 	case SPDK_BDEV_IO_TYPE_WRITE:
-		rc = bdev_part_remap_dif(bdev_io, offset, remapped_offset);
+		rc = spdk_bdev_io_remap_dif(bdev_io, offset, remapped_offset);
 		if (rc != 0) {
 			return SPDK_BDEV_IO_STATUS_FAILED;
 		}

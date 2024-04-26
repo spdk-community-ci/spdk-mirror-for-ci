@@ -10221,6 +10221,58 @@ spdk_bdev_for_each_channel(struct spdk_bdev *bdev, spdk_bdev_for_each_channel_ms
 			      iter, bdev_each_channel_cpl);
 }
 
+int
+spdk_bdev_io_remap_dif(struct spdk_bdev_io *bdev_io, uint32_t prev_init_ref_tag,
+		       uint32_t next_init_ref_tag)
+{
+	struct spdk_bdev *bdev = bdev_io->bdev;
+	struct spdk_dif_ctx dif_ctx;
+	struct spdk_dif_error err_blk = {};
+	int rc;
+	struct spdk_dif_ctx_init_ext_opts dif_opts;
+
+	if (spdk_likely(!(bdev_io->u.bdev.dif_check_flags & SPDK_DIF_FLAGS_REFTAG_CHECK))) {
+		return 0;
+	}
+
+	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
+	dif_opts.dif_pi_format = SPDK_DIF_PI_FORMAT_16;
+	rc = spdk_dif_ctx_init(&dif_ctx,
+			       bdev->blocklen,
+			       bdev->md_len,
+			       bdev->md_interleave,
+			       bdev->dif_is_head_of_md,
+			       bdev->dif_type,
+			       SPDK_DIF_FLAGS_REFTAG_CHECK,
+			       prev_init_ref_tag,
+			       0, 0, 0, 0, &dif_opts);
+	if (rc != 0) {
+		SPDK_ERRLOG("Initialization of DIF context failed\n");
+		return rc;
+	}
+
+	spdk_dif_ctx_set_remapped_init_ref_tag(&dif_ctx, next_init_ref_tag);
+
+	if (bdev->md_interleave) {
+		rc = spdk_dif_remap_ref_tag(bdev_io->u.bdev.iovs, bdev_io->u.bdev.iovcnt,
+					    bdev_io->u.bdev.num_blocks, &dif_ctx, &err_blk, true);
+	} else {
+		struct iovec md_iov = {
+			.iov_base = bdev_io->u.bdev.md_buf,
+			.iov_len = bdev_io->u.bdev.num_blocks * bdev->md_len,
+		};
+
+		rc = spdk_dix_remap_ref_tag(&md_iov, bdev_io->u.bdev.num_blocks, &dif_ctx, &err_blk, true);
+	}
+
+	if (rc != 0) {
+		SPDK_ERRLOG("Remapping reference tag failed. type=%d, offset=%" PRIu32 "\n",
+			    err_blk.err_type, err_blk.err_offset);
+	}
+
+	return rc;
+}
+
 static void
 bdev_copy_do_write_done(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
 {

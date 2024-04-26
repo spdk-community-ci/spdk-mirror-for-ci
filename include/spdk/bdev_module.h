@@ -1329,6 +1329,22 @@ struct spdk_io_channel *spdk_bdev_io_get_io_channel(struct spdk_bdev_io *bdev_io
 uint64_t spdk_bdev_io_get_submit_tsc(struct spdk_bdev_io *bdev_io);
 
 /**
+ * Remap reference tag of the I/O data to transfer to or from the underlying block device.
+ *
+ * Reference tag should contain a value corresponding to the block address the data
+ * is being written to. However, due to partitioning or stackable devices such as RAID,
+ * the block address can be very different from what the upper layer requests.
+ *
+ * \param bdev_io The bdev I/O to remap reference tag.
+ * \param prev_init_ref_tag Initial reference tag before remapping.
+ * \param next_init_ref_tag Initial reference tag after remapping.
+ *
+ * \return 0 on success, negated errno on failure.
+ */
+int spdk_bdev_io_remap_dif(struct spdk_bdev_io *bdev_io, uint32_t prev_init_ref_tag,
+			   uint32_t next_init_ref_tag);
+
+/**
  * Resize for a bdev.
  *
  * Change number of blocks for provided block device.
