@@ -69,7 +69,6 @@ struct spdk_idxd_io_channel {
 	struct spdk_idxd_device			*idxd;
 	/* The portal is the address that we write descriptors to for submission. */
 	void					*portal;
-	uint16_t				channel_num;
 
 	bool					pasid_enabled;
 
@@ -112,6 +111,7 @@ struct idxd_ops {
 	struct idxd_ops			*parent;
 	uint32_t			count;
 	uint16_t			portal_offset;
+	uint16_t			channel_num;
 	STAILQ_ENTRY(idxd_ops)		link;
 };
 SPDK_STATIC_ASSERT(sizeof(struct idxd_ops) == 128, "size mismatch");
