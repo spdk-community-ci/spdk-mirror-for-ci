@@ -236,19 +236,29 @@ error_batch:
 }
 
 static void
+idxd_op_free(struct spdk_idxd_io_channel *chan, struct idxd_ops *op)
+{
+	pthread_mutex_lock(&chan->idxd->wq_array_lock);
+	assert(spdk_bit_array_get(chan->idxd->wq_array, op->desc_num) == true);
+	spdk_bit_array_clear(chan->idxd->wq_array, op->desc_num);
+	pthread_mutex_unlock(&chan->idxd->wq_array_lock);
+
+	spdk_free(op->desc);
+	spdk_free(op);
+}
+
+static void
 idxd_ops_free(struct spdk_idxd_io_channel *chan)
 {
 	struct idxd_ops *op, *tmp;
 
 	STAILQ_FOREACH_SAFE(op, &chan->ops_outstanding, link, tmp) {
 		STAILQ_REMOVE(&chan->ops_outstanding, op, idxd_ops, link);
-		spdk_free(op->desc);
-		spdk_free(op);
+		idxd_op_free(chan, op);
 	}
 	STAILQ_FOREACH_SAFE(op, &chan->ops_pool, link, tmp) {
 		STAILQ_REMOVE(&chan->ops_pool, op, idxd_ops, link);
-		spdk_free(op->desc);
-		spdk_free(op);
+		idxd_op_free(chan, op);
 	}
 }
 
@@ -260,7 +270,7 @@ spdk_idxd_get_channel(struct spdk_idxd_device *idxd)
 	struct idxd_ops *op;
 	int i, num_descriptors, rc = -1;
 	uint32_t comp_rec_size;
-	uint32_t channel_num;
+	uint32_t desc_num;
 
 	assert(idxd != NULL);
 
@@ -278,27 +288,6 @@ spdk_idxd_get_channel(struct spdk_idxd_device *idxd)
 
 	/* Have each channel start at a different offset. */
 	chan->portal = idxd->impl->portal_get_addr(idxd);
-
-	/* Assign WQ, portal */
-	pthread_mutex_lock(&idxd->wq_array_lock);
-	channel_num = spdk_bit_array_find_first_clear(idxd->wq_array, 0);
-	if (channel_num == UINT32_MAX) {
-		/* too many channels sharing this device */
-		pthread_mutex_unlock(&idxd->wq_array_lock);
-		SPDK_ERRLOG("Too many channels sharing this device\n");
-		goto error;
-	}
-	rc = spdk_bit_array_set(idxd->wq_array, channel_num);
-	if (rc != 0) {
-		/* Should never happen since we found the channel_num
-		* under the lock */
-		assert(false);
-		pthread_mutex_unlock(&idxd->wq_array_lock);
-		goto error;
-	}
-	chan->channel_num = (uint16_t)channel_num;
-
-	pthread_mutex_unlock(&idxd->wq_array_lock);
 
 	/* Allocate descriptors and completions */
 	num_descriptors = idxd->total_wq_size / idxd->chan_per_device;
@@ -319,9 +308,31 @@ spdk_idxd_get_channel(struct spdk_idxd_device *idxd)
 		}
 		op->desc = desc;
 
+		pthread_mutex_lock(&idxd->wq_array_lock);
+		desc_num = spdk_bit_array_find_first_clear(idxd->wq_array, 0);
+		if (desc_num == UINT32_MAX) {
+			/* too many channels sharing this device */
+			pthread_mutex_unlock(&idxd->wq_array_lock);
+			SPDK_ERRLOG("Too many channels sharing this device\n");
+			spdk_free(op->desc);
+			spdk_free(op);
+			goto error;
+		}
+		rc = spdk_bit_array_set(idxd->wq_array, desc_num);
+		if (rc != 0) {
+			/* Should never happen since we found the clear_bit
+			* under the lock */
+			assert(false);
+			pthread_mutex_unlock(&idxd->wq_array_lock);
+			spdk_free(op->desc);
+			spdk_free(op);
+			goto error;
+		}
+		op->desc_num = (uint16_t)desc_num;
+		op->portal_offset = (uint16_t)((op->desc_num * PORTAL_STRIDE) &PORTAL_MASK);
+		pthread_mutex_unlock(&idxd->wq_array_lock);
+
 		STAILQ_INSERT_TAIL(&chan->ops_pool, op, link);
-		op->portal_offset = (uint16_t)(((chan->channel_num * chan->idxd->chan_per_device + i) *
-						PORTAL_STRIDE) & PORTAL_MASK);
 
 		if (idxd->type == IDXD_DEV_TYPE_DSA) {
 			comp_rec_size = sizeof(struct dsa_hw_comp_record);
@@ -359,13 +370,6 @@ spdk_idxd_put_channel(struct spdk_idxd_io_channel *chan)
 	if (chan->batch) {
 		idxd_batch_cancel(chan, -ECANCELED);
 	}
-
-	pthread_mutex_lock(&chan->idxd->wq_array_lock);
-	/* portal_offset is moved forward on each submission by chan_per_device,
-	 * so that all channels can submit on different WQ addresses */
-	assert(spdk_bit_array_get(chan->idxd->wq_array, chan->channel_num) == true);
-	spdk_bit_array_clear(chan->idxd->wq_array, chan->channel_num);
-	pthread_mutex_unlock(&chan->idxd->wq_array_lock);
 
 	idxd_ops_free(chan);
 	idxd_batches_free(chan);
@@ -431,7 +435,7 @@ idxd_wq_setup(struct spdk_idxd_device *idxd)
 	 */
 
 	idxd->chan_per_device = (idxd->total_wq_size >= 128) ? 8 : 4;
-	idxd->wq_array = spdk_bit_array_create(idxd->chan_per_device);
+	idxd->wq_array = spdk_bit_array_create(idxd->total_wq_size);
 	if (idxd->wq_array == NULL) {
 		SPDK_ERRLOG("Failed to bit create array for the IDXD WQ\n");
 		return -ENOMEM;
