@@ -270,6 +270,40 @@ bdev_malloc_check_iov_len(struct iovec *iovs, int iovcnt, size_t nbytes)
 }
 
 static size_t
+malloc_get_len(struct spdk_bdev_io *bdev_io)
+{
+	return bdev_io->u.bdev.num_blocks * bdev_io->bdev->blocklen;
+}
+
+static uint64_t
+malloc_get_offset(struct spdk_bdev_io *bdev_io)
+{
+	return bdev_io->u.bdev.offset_blocks * bdev_io->bdev->blocklen;
+}
+
+static void *
+malloc_get_buf(struct spdk_bdev_io *bdev_io)
+{
+	struct malloc_disk *mdisk = SPDK_CONTAINEROF(bdev_io->bdev, struct malloc_disk, disk);
+
+	return (char *)mdisk->malloc_buf + malloc_get_offset(bdev_io);
+}
+
+static uint64_t
+malloc_get_copy_src_offset(struct spdk_bdev_io *bdev_io)
+{
+	return bdev_io->u.bdev.copy.src_offset_blocks * bdev_io->bdev->blocklen;
+}
+
+static void *
+malloc_get_copy_src_buf(struct spdk_bdev_io *bdev_io)
+{
+	struct malloc_disk *mdisk = SPDK_CONTAINEROF(bdev_io->bdev, struct malloc_disk, disk);
+
+	return (char *)mdisk->malloc_buf + malloc_get_copy_src_offset(bdev_io);
+}
+
+static size_t
 malloc_get_md_len(struct spdk_bdev_io *bdev_io)
 {
 	return bdev_io->u.bdev.num_blocks * bdev_io->bdev->md_len;
@@ -436,20 +470,23 @@ bdev_malloc_unmap(struct malloc_disk *mdisk,
 
 static void
 bdev_malloc_copy(struct malloc_disk *mdisk, struct spdk_io_channel *ch,
-		 struct malloc_task *task,
-		 uint64_t dst_offset, uint64_t src_offset, size_t len)
+		 struct malloc_task *task, struct spdk_bdev_io *bdev_io)
 {
 	int64_t res = 0;
-	void *dst = mdisk->malloc_buf + dst_offset;
-	void *src = mdisk->malloc_buf + src_offset;
 
 	SPDK_DEBUGLOG(bdev_malloc, "Copy %zu bytes from offset %#" PRIx64 " to offset %#" PRIx64 "\n",
-		      len, src_offset, dst_offset);
+		      malloc_get_len(bdev_io),
+		      malloc_get_copy_src_offset(bdev_io),
+		      malloc_get_offset(bdev_io));
 
 	task->status = SPDK_BDEV_IO_STATUS_SUCCESS;
 	task->num_outstanding = 1;
 
-	res = spdk_accel_submit_copy(ch, dst, src, len, 0, malloc_done, task);
+	res = spdk_accel_submit_copy(ch,
+				     malloc_get_buf(bdev_io),
+				     malloc_get_copy_src_buf(bdev_io),
+				     malloc_get_len(bdev_io),
+				     0, malloc_done, task);
 	if (res != 0) {
 		malloc_done(task, res);
 	}
@@ -532,10 +569,7 @@ _bdev_malloc_submit_request(struct malloc_channel *mch, struct spdk_bdev_io *bde
 		malloc_complete_task(task, mch, SPDK_BDEV_IO_STATUS_FAILED);
 		return 0;
 	case SPDK_BDEV_IO_TYPE_COPY:
-		bdev_malloc_copy(disk, mch->accel_channel, task,
-				 bdev_io->u.bdev.offset_blocks * block_size,
-				 bdev_io->u.bdev.copy.src_offset_blocks * block_size,
-				 bdev_io->u.bdev.num_blocks * block_size);
+		bdev_malloc_copy(disk, mch->accel_channel, task, bdev_io);
 		return 0;
 
 	default:
