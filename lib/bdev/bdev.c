@@ -10310,8 +10310,20 @@ static void
 bdev_copy_do_read_done(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
 {
 	struct spdk_bdev_io *parent_io = cb_arg;
+	uint32_t offset, remapped_offset;
+	int rc;
 
 	spdk_bdev_free_io(bdev_io);
+
+	if (parent_io->bdev->dif_type != SPDK_DIF_DISABLE) {
+		offset = parent_io->u.bdev.copy.src_offset_blocks;
+		remapped_offset = parent_io->u.bdev.offset_blocks;
+
+		rc = spdk_bdev_io_remap_dif(parent_io, offset, remapped_offset);
+		if (rc != 0) {
+			success = false;
+		}
+	}
 
 	/* Check return status of read */
 	if (!success) {
@@ -10396,6 +10408,7 @@ spdk_bdev_copy_blocks(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
 	bdev_io->u.bdev.iovcnt = 0;
 	bdev_io->u.bdev.md_buf = NULL;
 	bdev_io->u.bdev.accel_sequence = NULL;
+	bdev_io->u.bdev.dif_check_flags = bdev->dif_check_flags;
 	bdev_io_init(bdev_io, bdev, cb_arg, cb);
 
 	if (dst_offset_blocks == src_offset_blocks || num_blocks == 0) {
