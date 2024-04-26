@@ -396,6 +396,8 @@ if $PERFTOP; then
 	kill $perf_pid
 	wait $perf_pid || true
 	perf report -i "$testdir/perf.data" > $result_dir/perftop_${BLK_SIZE}BS_${IODEPTH}QD_${RW}_${MIX}MIX_${PLUGIN}_${DATE}.txt
+	perf archive "$testdir/perf.data"
+	mv "$testdir/perf.data.tar.bz2" $result_dir/perftop_data_${BLK_SIZE}BS_${IODEPTH}QD_${RW}_${MIX}MIX_${PLUGIN}_${DATE}.tar.bz2
 	rm -f "$testdir/perf.data"
 fi
 
