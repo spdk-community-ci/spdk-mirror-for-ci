@@ -4652,14 +4652,15 @@ spdk_nvmf_request_exec(struct spdk_nvmf_request *req)
 	}
 }
 
-static bool
-nvmf_ctrlr_get_dif_ctx(struct spdk_nvmf_ctrlr *ctrlr, struct spdk_nvme_cmd *cmd,
-		       struct spdk_dif_ctx *dif_ctx)
+bool
+spdk_nvmf_request_get_dif_ctx(struct spdk_nvmf_request *req, struct spdk_dif_ctx *dif_ctx)
 {
+	struct spdk_nvmf_ctrlr *ctrlr = req->qpair->ctrlr;
+	struct spdk_nvme_cmd *cmd = &req->cmd->nvme_cmd;
 	struct spdk_nvmf_ns *ns;
 	struct spdk_bdev *bdev;
 
-	if (ctrlr == NULL || cmd == NULL) {
+	if (spdk_likely(ctrlr == NULL || !ctrlr->dif_insert_or_strip)) {
 		return false;
 	}
 
@@ -4680,31 +4681,6 @@ nvmf_ctrlr_get_dif_ctx(struct spdk_nvmf_ctrlr *ctrlr, struct spdk_nvme_cmd *cmd,
 	}
 
 	return false;
-}
-
-bool
-spdk_nvmf_request_get_dif_ctx(struct spdk_nvmf_request *req, struct spdk_dif_ctx *dif_ctx)
-{
-	struct spdk_nvmf_qpair *qpair = req->qpair;
-	struct spdk_nvmf_ctrlr *ctrlr = qpair->ctrlr;
-
-	if (spdk_likely(ctrlr == NULL || !ctrlr->dif_insert_or_strip)) {
-		return false;
-	}
-
-	if (spdk_unlikely(qpair->state != SPDK_NVMF_QPAIR_ACTIVE)) {
-		return false;
-	}
-
-	if (spdk_unlikely(req->cmd->nvmf_cmd.opcode == SPDK_NVME_OPC_FABRIC)) {
-		return false;
-	}
-
-	if (spdk_unlikely(nvmf_qpair_is_admin_queue(qpair))) {
-		return false;
-	}
-
-	return nvmf_ctrlr_get_dif_ctx(ctrlr, &req->cmd->nvme_cmd, dif_ctx);
 }
 
 void

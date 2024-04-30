@@ -1695,23 +1695,13 @@ test_get_dif_ctx(void)
 	CU_ASSERT(ret == false);
 
 	ctrlr.dif_insert_or_strip = true;
-	qpair.state = SPDK_NVMF_QPAIR_UNINITIALIZED;
 
-	ret = spdk_nvmf_request_get_dif_ctx(&req, &dif_ctx);
-	CU_ASSERT(ret == false);
-
-	qpair.state = SPDK_NVMF_QPAIR_ACTIVE;
 	cmd.nvmf_cmd.opcode = SPDK_NVME_OPC_FABRIC;
 
 	ret = spdk_nvmf_request_get_dif_ctx(&req, &dif_ctx);
 	CU_ASSERT(ret == false);
 
 	cmd.nvmf_cmd.opcode = SPDK_NVME_OPC_FLUSH;
-
-	ret = spdk_nvmf_request_get_dif_ctx(&req, &dif_ctx);
-	CU_ASSERT(ret == false);
-
-	qpair.qid = 1;
 
 	ret = spdk_nvmf_request_get_dif_ctx(&req, &dif_ctx);
 	CU_ASSERT(ret == false);
