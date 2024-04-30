@@ -1910,6 +1910,35 @@ int spdk_bdev_copy_blocks(struct spdk_bdev_desc *desc, struct spdk_io_channel *c
 			  uint64_t num_blocks, spdk_bdev_io_completion_cb cb, void *cb_arg);
 
 /**
+ * Submit a copy request to the block device.
+ *
+ * \ingroup bdev_io_submit_functions
+ *
+ * \param desc Block device descriptor.
+ * \param ch I/O channel. Obtained by calling spdk_bdev_get_io_channel().
+ * \param dst_offset_blocks The destination offset, in blocks, from the start of the block device.
+ * \param src_offset_blocks The source offset, in blocks, from the start of the block device.
+ * \param num_blocks The number of blocks to copy.
+ * \param cb Called when the request is complete.
+ * \param cb_arg Argument passed to cb.
+ * \param opts Optional structure with extended IO request options. `size` member of this structure
+ *             is used for ABI compatibility and must be set to sizeof(struct spdk_bdev_ext_io_opts).
+ *
+ * \return 0 on success. On success, the callback will always
+ * be called (even if the request ultimately failed). Return
+ * negated errno on failure, in which case the callback will not be called.
+ *   * -EINVAL - dst_offset_blocks, src_offset_blocks and/or num_blocks are out of range, or
+ *               opts_size is incorrect.
+ *   * -ENOMEM - spdk_bdev_io buffer cannot be allocated
+ *   * -EBADF - desc not open for writing
+ *   * -ENOTSUP - copy operation is not supported
+ */
+int spdk_bdev_copy_blocks_ext(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
+			      uint64_t dst_offset_blocks, uint64_t src_offset_blocks,
+			      uint64_t num_blocks, spdk_bdev_io_completion_cb cb, void *cb_arg,
+			      struct spdk_bdev_ext_io_opts *opts);
+
+/**
  * Free an I/O request. This should only be called after the completion callback
  * for the I/O has been called and notifies the bdev layer that memory may now
  * be released.

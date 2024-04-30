@@ -10450,6 +10450,28 @@ spdk_bdev_copy_blocks(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
 				bdev->dif_check_flags, cb, cb_arg);
 }
 
+int
+spdk_bdev_copy_blocks_ext(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
+			  uint64_t dst_offset_blocks, uint64_t src_offset_blocks, uint64_t num_blocks,
+			  spdk_bdev_io_completion_cb cb, void *cb_arg,
+			  struct spdk_bdev_ext_io_opts *opts)
+{
+	uint32_t dif_check_flags = 0;
+	struct spdk_bdev *bdev = spdk_bdev_desc_get_bdev(desc);
+
+	if (opts) {
+		if (spdk_unlikely(!_bdev_io_check_opts(opts, NULL))) {
+			return -EINVAL;
+		}
+	}
+
+	dif_check_flags = bdev->dif_check_flags &
+			  ~(bdev_get_ext_io_opt(opts, dif_check_flags_exclude_mask, 0));
+
+	return bdev_copy_blocks(desc, ch, dst_offset_blocks, src_offset_blocks, num_blocks,
+				dif_check_flags, cb, cb_arg);
+}
+
 SPDK_LOG_REGISTER_COMPONENT(bdev)
 
 SPDK_TRACE_REGISTER_FN(bdev_trace, "bdev", TRACE_GROUP_BDEV)
