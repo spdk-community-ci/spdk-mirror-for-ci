@@ -342,19 +342,19 @@ test_get_dif_ctx(void)
 	struct spdk_bdev bdev = {};
 	struct spdk_nvme_cmd cmd = {};
 	struct spdk_dif_ctx dif_ctx = {};
-	bool ret;
+	spdk_nvmf_dif_action_t dif_action;
 
 	bdev.md_len = 0;
 
-	ret = nvmf_bdev_ctrlr_get_dif_ctx(&bdev, &cmd, &dif_ctx);
-	CU_ASSERT(ret == false);
+	dif_action = nvmf_bdev_ctrlr_get_dif_ctx(&bdev, &cmd, &dif_ctx);
+	CU_ASSERT(dif_action == NVMF_DIF_ACTION_NONE);
 
 	to_le64(&cmd.cdw10, 0x1234567890ABCDEF);
 	bdev.blocklen = 520;
 	bdev.md_len = 8;
 
-	ret = nvmf_bdev_ctrlr_get_dif_ctx(&bdev, &cmd, &dif_ctx);
-	CU_ASSERT(ret == true);
+	dif_action = nvmf_bdev_ctrlr_get_dif_ctx(&bdev, &cmd, &dif_ctx);
+	CU_ASSERT(dif_action == NVMF_DIF_ACTION_INSERT_OR_STRIP);
 	CU_ASSERT(dif_ctx.block_size = 520);
 	CU_ASSERT(dif_ctx.md_size == 8);
 	CU_ASSERT(dif_ctx.init_ref_tag == 0x90ABCDEF);

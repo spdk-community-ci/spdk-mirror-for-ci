@@ -170,10 +170,10 @@ DEFINE_STUB(nvmf_transport_req_complete,
 
 DEFINE_STUB_V(nvmf_ns_reservation_request, (void *ctx));
 
-DEFINE_STUB(nvmf_bdev_ctrlr_get_dif_ctx, bool,
+DEFINE_STUB(nvmf_bdev_ctrlr_get_dif_ctx, spdk_nvmf_dif_action_t,
 	    (struct spdk_bdev *bdev, struct spdk_nvme_cmd *cmd,
 	     struct spdk_dif_ctx *dif_ctx),
-	    true);
+	    NVMF_DIF_ACTION_INSERT_OR_STRIP);
 
 DEFINE_STUB_V(nvmf_transport_qpair_abort_request,
 	      (struct spdk_nvmf_qpair *qpair, struct spdk_nvmf_request *req));
@@ -1676,7 +1676,7 @@ test_get_dif_ctx(void)
 	struct spdk_bdev bdev = {};
 	union nvmf_h2c_msg cmd = {};
 	struct spdk_dif_ctx dif_ctx = {};
-	bool ret;
+	spdk_nvmf_dif_action_t dif_action;
 
 	ctrlr.subsys = &subsystem;
 	ctrlr.visible_ns = spdk_bit_array_create(1);
@@ -1691,37 +1691,37 @@ test_get_dif_ctx(void)
 
 	ctrlr.dif_insert_or_strip = false;
 
-	ret = spdk_nvmf_request_get_dif_ctx(&req, &dif_ctx);
-	CU_ASSERT(ret == false);
+	dif_action = spdk_nvmf_request_get_dif_ctx(&req, &dif_ctx);
+	CU_ASSERT(dif_action == NVMF_DIF_ACTION_NONE);
 
 	ctrlr.dif_insert_or_strip = true;
 
 	cmd.nvmf_cmd.opcode = SPDK_NVME_OPC_FABRIC;
 
-	ret = spdk_nvmf_request_get_dif_ctx(&req, &dif_ctx);
-	CU_ASSERT(ret == false);
+	dif_action = spdk_nvmf_request_get_dif_ctx(&req, &dif_ctx);
+	CU_ASSERT(dif_action == NVMF_DIF_ACTION_NONE);
 
 	cmd.nvmf_cmd.opcode = SPDK_NVME_OPC_FLUSH;
 
-	ret = spdk_nvmf_request_get_dif_ctx(&req, &dif_ctx);
-	CU_ASSERT(ret == false);
+	dif_action = spdk_nvmf_request_get_dif_ctx(&req, &dif_ctx);
+	CU_ASSERT(dif_action == NVMF_DIF_ACTION_NONE);
 
 	cmd.nvme_cmd.nsid = 1;
 
-	ret = spdk_nvmf_request_get_dif_ctx(&req, &dif_ctx);
-	CU_ASSERT(ret == false);
+	dif_action = spdk_nvmf_request_get_dif_ctx(&req, &dif_ctx);
+	CU_ASSERT(dif_action == NVMF_DIF_ACTION_NONE);
 
 	subsystem.max_nsid = 1;
 	subsystem.ns = &_ns;
 	subsystem.ns[0] = &ns;
 
-	ret = spdk_nvmf_request_get_dif_ctx(&req, &dif_ctx);
-	CU_ASSERT(ret == false);
+	dif_action = spdk_nvmf_request_get_dif_ctx(&req, &dif_ctx);
+	CU_ASSERT(dif_action == NVMF_DIF_ACTION_NONE);
 
 	cmd.nvmf_cmd.opcode = SPDK_NVME_OPC_WRITE;
 
-	ret = spdk_nvmf_request_get_dif_ctx(&req, &dif_ctx);
-	CU_ASSERT(ret == true);
+	dif_action = spdk_nvmf_request_get_dif_ctx(&req, &dif_ctx);
+	CU_ASSERT(dif_action == NVMF_DIF_ACTION_INSERT_OR_STRIP);
 
 	spdk_bit_array_free(&ctrlr.visible_ns);
 }

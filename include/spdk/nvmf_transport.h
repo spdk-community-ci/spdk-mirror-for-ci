@@ -66,6 +66,13 @@ struct spdk_nvmf_stripped_data {
 	struct iovec			iov[NVMF_REQ_MAX_BUFFERS];
 };
 
+enum spdk_nvmf_dif_action {
+	NVMF_DIF_ACTION_NONE = 0,
+	NVMF_DIF_ACTION_INSERT_OR_STRIP,
+};
+
+typedef enum spdk_nvmf_dif_action spdk_nvmf_dif_action_t;
+
 enum spdk_nvmf_zcopy_phase {
 	NVMF_ZCOPY_PHASE_NONE,        /* Request is not using ZCOPY */
 	NVMF_ZCOPY_PHASE_INIT,        /* Requesting Buffers */
@@ -83,7 +90,7 @@ struct spdk_nvmf_request {
 		uint8_t raw;
 		struct {
 			uint8_t data_from_pool		: 1;
-			uint8_t dif_enabled		: 1;
+			uint8_t dif_action		: 1;
 			uint8_t first_fused		: 1;
 			uint8_t rsvd			: 5;
 		};
@@ -491,7 +498,8 @@ int spdk_nvmf_request_get_buffers(struct spdk_nvmf_request *req,
 				  struct spdk_nvmf_transport *transport,
 				  uint32_t length);
 
-bool spdk_nvmf_request_get_dif_ctx(struct spdk_nvmf_request *req, struct spdk_dif_ctx *dif_ctx);
+spdk_nvmf_dif_action_t spdk_nvmf_request_get_dif_ctx(struct spdk_nvmf_request *req,
+		struct spdk_dif_ctx *dif_ctx);
 
 void spdk_nvmf_request_exec(struct spdk_nvmf_request *req);
 void spdk_nvmf_request_exec_fabrics(struct spdk_nvmf_request *req);

@@ -4652,7 +4652,7 @@ spdk_nvmf_request_exec(struct spdk_nvmf_request *req)
 	}
 }
 
-bool
+spdk_nvmf_dif_action_t
 spdk_nvmf_request_get_dif_ctx(struct spdk_nvmf_request *req, struct spdk_dif_ctx *dif_ctx)
 {
 	struct spdk_nvmf_ctrlr *ctrlr = req->qpair->ctrlr;
@@ -4661,12 +4661,12 @@ spdk_nvmf_request_get_dif_ctx(struct spdk_nvmf_request *req, struct spdk_dif_ctx
 	struct spdk_bdev *bdev;
 
 	if (spdk_likely(ctrlr == NULL || !ctrlr->dif_insert_or_strip)) {
-		return false;
+		return NVMF_DIF_ACTION_NONE;
 	}
 
 	ns = nvmf_ctrlr_get_ns(ctrlr, cmd->nsid);
 	if (ns == NULL || ns->bdev == NULL) {
-		return false;
+		return NVMF_DIF_ACTION_NONE;
 	}
 
 	bdev = ns->bdev;
@@ -4680,7 +4680,7 @@ spdk_nvmf_request_get_dif_ctx(struct spdk_nvmf_request *req, struct spdk_dif_ctx
 		break;
 	}
 
-	return false;
+	return NVMF_DIF_ACTION_NONE;
 }
 
 void

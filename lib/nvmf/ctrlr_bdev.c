@@ -871,7 +871,7 @@ spdk_nvmf_bdev_ctrlr_abort_cmd(struct spdk_bdev *bdev, struct spdk_bdev_desc *de
 	}
 }
 
-bool
+spdk_nvmf_dif_action_t
 nvmf_bdev_ctrlr_get_dif_ctx(struct spdk_bdev *bdev, struct spdk_nvme_cmd *cmd,
 			    struct spdk_dif_ctx *dif_ctx)
 {
@@ -881,7 +881,7 @@ nvmf_bdev_ctrlr_get_dif_ctx(struct spdk_bdev *bdev, struct spdk_nvme_cmd *cmd,
 
 	md_size = spdk_bdev_get_md_size(bdev);
 	if (md_size == 0) {
-		return false;
+		return NVMF_DIF_ACTION_NONE;
 	}
 
 	/* Initial Reference Tag is the lower 32 bits of the start LBA. */
@@ -906,7 +906,7 @@ nvmf_bdev_ctrlr_get_dif_ctx(struct spdk_bdev *bdev, struct spdk_nvme_cmd *cmd,
 			       dif_check_flags,
 			       init_ref_tag, 0, 0, 0, 0, &dif_opts);
 
-	return (rc == 0) ? true : false;
+	return (rc == 0) ? NVMF_DIF_ACTION_INSERT_OR_STRIP : NVMF_DIF_ACTION_NONE;
 }
 
 static void

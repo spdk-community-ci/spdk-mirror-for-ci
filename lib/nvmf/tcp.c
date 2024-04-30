@@ -436,7 +436,7 @@ nvmf_tcp_req_get(struct spdk_nvmf_tcp_qpair *tqpair)
 	memset(&tcp_req->rsp, 0, sizeof(tcp_req->rsp));
 	tcp_req->h2c_offset = 0;
 	tcp_req->has_in_capsule_data = false;
-	tcp_req->req.dif_enabled = false;
+	tcp_req->req.dif_action = NVMF_DIF_ACTION_NONE;
 	tcp_req->req.zcopy_phase = NVMF_ZCOPY_PHASE_NONE;
 
 	TAILQ_REMOVE(&tqpair->tcp_req_free_queue, tcp_req, state_link);
@@ -1809,7 +1809,7 @@ nvmf_tcp_h2c_data_hdr_handle(struct spdk_nvmf_tcp_transport *ttransport,
 
 	pdu->req = tcp_req;
 
-	if (spdk_unlikely(tcp_req->req.dif_enabled)) {
+	if (spdk_unlikely(tcp_req->req.dif_action == NVMF_DIF_ACTION_INSERT_OR_STRIP)) {
 		pdu->dif_ctx = &tcp_req->req.dif.dif_ctx;
 	}
 
@@ -2505,7 +2505,7 @@ nvmf_tcp_req_parse_sgl(struct spdk_nvmf_tcp_req *tcp_req,
 
 		SPDK_DEBUGLOG(nvmf_tcp, "Data requested length= 0x%x\n", length);
 
-		if (spdk_unlikely(req->dif_enabled)) {
+		if (spdk_unlikely(req->dif_action == NVMF_DIF_ACTION_INSERT_OR_STRIP)) {
 			req->dif.orig_length = length;
 			length = spdk_dif_get_length_with_md(length, &req->dif.dif_ctx);
 			req->length = length;
@@ -2591,7 +2591,7 @@ nvmf_tcp_req_parse_sgl(struct spdk_nvmf_tcp_req *tcp_req,
 		req->length = length;
 		req->data_from_pool = false;
 
-		if (spdk_unlikely(req->dif_enabled)) {
+		if (spdk_unlikely(req->dif_action == NVMF_DIF_ACTION_INSERT_OR_STRIP)) {
 			req->dif.orig_length = length;
 			length = spdk_dif_get_length_with_md(length, &req->dif.dif_ctx);
 			req->length = length;
@@ -2687,7 +2687,7 @@ _nvmf_tcp_send_c2h_data(struct spdk_nvmf_tcp_qpair *tqpair,
 
 	c2h_data->common.plen = plen;
 
-	if (spdk_unlikely(tcp_req->req.dif_enabled)) {
+	if (spdk_unlikely(tcp_req->req.dif_action == NVMF_DIF_ACTION_INSERT_OR_STRIP)) {
 		rsp_pdu->dif_ctx = &tcp_req->req.dif.dif_ctx;
 	}
 
@@ -2702,7 +2702,7 @@ _nvmf_tcp_send_c2h_data(struct spdk_nvmf_tcp_qpair *tqpair,
 		c2h_data->common.flags |= SPDK_NVME_TCP_C2H_DATA_FLAGS_SUCCESS;
 	}
 
-	if (spdk_unlikely(tcp_req->req.dif_enabled)) {
+	if (spdk_unlikely(tcp_req->req.dif_action == NVMF_DIF_ACTION_INSERT_OR_STRIP)) {
 		struct spdk_nvme_cpl *rsp = &tcp_req->req.rsp->nvme_cpl;
 		struct spdk_dif_error err_blk = {};
 		uint32_t mapped_length = 0;
@@ -2892,8 +2892,10 @@ nvmf_tcp_req_process(struct spdk_nvmf_tcp_transport *ttransport,
 			/* copy the cmd from the receive pdu */
 			tcp_req->cmd = tqpair->pdu_in_progress->hdr.capsule_cmd.ccsqe;
 
-			if (spdk_unlikely(spdk_nvmf_request_get_dif_ctx(&tcp_req->req, &tcp_req->req.dif.dif_ctx))) {
-				tcp_req->req.dif_enabled = true;
+			tcp_req->req.dif_action = spdk_nvmf_request_get_dif_ctx(&tcp_req->req,
+						  &tcp_req->req.dif.dif_ctx);
+
+			if (spdk_unlikely(tcp_req->req.dif_action == NVMF_DIF_ACTION_INSERT_OR_STRIP)) {
 				tqpair->pdu_in_progress->dif_ctx = &tcp_req->req.dif.dif_ctx;
 			}
 
@@ -3103,7 +3105,7 @@ nvmf_tcp_req_process(struct spdk_nvmf_tcp_transport *ttransport,
 			spdk_trace_record(TRACE_TCP_REQUEST_STATE_EXECUTED, tqpair->qpair.qid, 0, (uintptr_t)tcp_req,
 					  tqpair);
 
-			if (spdk_unlikely(tcp_req->req.dif_enabled)) {
+			if (spdk_unlikely(tcp_req->req.dif_action == NVMF_DIF_ACTION_INSERT_OR_STRIP)) {
 				tcp_req->req.length = tcp_req->req.dif.orig_length;
 			}
 

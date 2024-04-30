@@ -168,9 +168,9 @@ DEFINE_STUB(spdk_nvmf_bdev_ctrlr_abort_cmd,
 	    0);
 
 DEFINE_STUB(nvmf_bdev_ctrlr_get_dif_ctx,
-	    bool,
+	    spdk_nvmf_dif_action_t,
 	    (struct spdk_bdev *bdev, struct spdk_nvme_cmd *cmd, struct spdk_dif_ctx *dif_ctx),
-	    false);
+	    NVMF_DIF_ACTION_NONE);
 
 DEFINE_STUB(nvmf_transport_req_complete,
 	    int,
