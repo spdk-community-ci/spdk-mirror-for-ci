@@ -415,6 +415,9 @@ static int bdev_writev_blocks_with_md(struct spdk_bdev_desc *desc, struct spdk_i
 				      struct spdk_accel_sequence *seq, uint32_t dif_check_flags,
 				      uint32_t nvme_cdw12_raw, uint32_t nvme_cdw13_raw,
 				      spdk_bdev_io_completion_cb cb, void *cb_arg);
+static int bdev_copy_blocks(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
+			    uint64_t dst_offset_blocks, uint64_t src_offset_blocks, uint64_t num_blocks,
+			    uint32_t dif_check_flags, spdk_bdev_io_completion_cb cb, void *cb_arg);
 
 static int bdev_lock_lba_range(struct spdk_bdev_desc *desc, struct spdk_io_channel *_ch,
 			       uint64_t offset, uint64_t length,
@@ -3033,10 +3036,11 @@ bdev_io_split_submit(struct spdk_bdev_io *bdev_io, struct iovec *iov, int iovcnt
 		io_wait_fn = _bdev_copy_split;
 		current_src_offset = bdev_io->u.bdev.copy.src_offset_blocks +
 				     (current_offset - bdev_io->u.bdev.offset_blocks);
-		rc = spdk_bdev_copy_blocks(bdev_io->internal.desc,
-					   spdk_io_channel_from_ctx(bdev_io->internal.ch),
-					   current_offset, current_src_offset, num_blocks,
-					   bdev_io_split_done, bdev_io);
+		rc = bdev_copy_blocks(bdev_io->internal.desc,
+				      spdk_io_channel_from_ctx(bdev_io->internal.ch),
+				      current_offset, current_src_offset, num_blocks,
+				      bdev_io->u.bdev.dif_check_flags,
+				      bdev_io_split_done, bdev_io);
 		break;
 	default:
 		assert(false);
@@ -10369,10 +10373,11 @@ bdev_copy_get_buf_cb(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_io, b
 	bdev_copy_do_read(bdev_io);
 }
 
-int
-spdk_bdev_copy_blocks(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
-		      uint64_t dst_offset_blocks, uint64_t src_offset_blocks, uint64_t num_blocks,
-		      spdk_bdev_io_completion_cb cb, void *cb_arg)
+
+static int
+bdev_copy_blocks(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
+		 uint64_t dst_offset_blocks, uint64_t src_offset_blocks, uint64_t num_blocks,
+		 uint32_t dif_check_flags, spdk_bdev_io_completion_cb cb, void *cb_arg)
 {
 	struct spdk_bdev *bdev = spdk_bdev_desc_get_bdev(desc);
 	struct spdk_bdev_io *bdev_io;
@@ -10408,7 +10413,7 @@ spdk_bdev_copy_blocks(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
 	bdev_io->u.bdev.iovcnt = 0;
 	bdev_io->u.bdev.md_buf = NULL;
 	bdev_io->u.bdev.accel_sequence = NULL;
-	bdev_io->u.bdev.dif_check_flags = bdev->dif_check_flags;
+	bdev_io->u.bdev.dif_check_flags = dif_check_flags;
 	bdev_io_init(bdev_io, bdev, cb_arg, cb);
 
 	if (dst_offset_blocks == src_offset_blocks || num_blocks == 0) {
@@ -10432,6 +10437,17 @@ spdk_bdev_copy_blocks(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
 	spdk_bdev_io_get_buf(bdev_io, bdev_copy_get_buf_cb, num_blocks * spdk_bdev_get_block_size(bdev));
 
 	return 0;
+}
+
+int
+spdk_bdev_copy_blocks(struct spdk_bdev_desc *desc, struct spdk_io_channel *ch,
+		      uint64_t dst_offset_blocks, uint64_t src_offset_blocks, uint64_t num_blocks,
+		      spdk_bdev_io_completion_cb cb, void *cb_arg)
+{
+	struct spdk_bdev *bdev = spdk_bdev_desc_get_bdev(desc);
+
+	return bdev_copy_blocks(desc, ch, dst_offset_blocks, src_offset_blocks, num_blocks,
+				bdev->dif_check_flags, cb, cb_arg);
 }
 
 SPDK_LOG_REGISTER_COMPONENT(bdev)
