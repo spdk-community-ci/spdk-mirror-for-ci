@@ -435,6 +435,18 @@ static void claim_reset(struct spdk_bdev *bdev);
 
 static void bdev_ch_retry_io(struct spdk_bdev_channel *bdev_ch);
 
+static inline bool
+bdev_io_support_dif(struct spdk_bdev_io *bdev_io)
+{
+	switch (bdev_io->type) {
+	case SPDK_BDEV_IO_TYPE_WRITE:
+	case SPDK_BDEV_IO_TYPE_READ:
+		return true;
+	default:
+		return false;
+	}
+}
+
 #define bdev_get_ext_io_opt(opts, field, defval) \
 	(((opts) != NULL && offsetof(struct spdk_bdev_ext_io_opts, field) + \
 	 sizeof((opts)->field) <= (opts)->size) ? (opts)->field : (defval))
@@ -1429,6 +1441,13 @@ bdev_submit_request(struct spdk_bdev *bdev, struct spdk_io_channel *ioch,
 		assert(!bdev_io_needs_sequence_exec(bdev_io->internal.desc, bdev_io));
 		bdev_io->internal.accel_sequence = NULL;
 	}
+
+	/* The generic bdev layer should not pass an I/O with a dif_check_flags set that
+	 * the underlying bdev does not support. Add an assert to check this.
+	 */
+	assert(!bdev_io_support_dif(bdev_io) ||
+	       ((bdev_io->u.bdev.dif_check_flags & bdev->dif_check_flags) ==
+		bdev_io->u.bdev.dif_check_flags));
 
 	bdev->fn_table->submit_request(ioch, bdev_io);
 }
