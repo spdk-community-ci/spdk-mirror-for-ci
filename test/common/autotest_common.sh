@@ -1200,7 +1200,7 @@ function waitforserial() {
 	# Wait initially for min 2s to make sure all devices are ready for use.
 	sleep 2
 	while ((i++ <= 15)); do
-		nvme_devices=$(lsblk -l -o NAME,SERIAL | grep -c "$1")
+		nvme_devices=$(lsblk -l -o NAME,SERIAL | grep -c "$1") || nvme_devices=0
 		((nvme_devices == nvme_device_counter)) && return 0
 		if ((nvme_devices > nvme_device_counter)); then
 			echo "$nvme_device_counter device(s) expected, found $nvme_devices" >&2
