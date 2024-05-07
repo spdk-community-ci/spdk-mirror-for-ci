@@ -73,6 +73,7 @@ static const char *g_bdevperf_conf_file = NULL;
 static double g_zipf_theta;
 static bool g_random_map = false;
 static bool g_unique_writes = false;
+static uint32_t g_dif_check_flags_exclude_mask = 0;
 
 static struct spdk_cpuset g_all_cpuset;
 static struct spdk_poller *g_perf_timer = NULL;
@@ -1792,10 +1793,10 @@ bdevperf_construct_job(struct spdk_bdev *bdev, struct job_config *config,
 	}
 
 	if (spdk_bdev_is_dif_check_enabled(bdev, SPDK_DIF_CHECK_TYPE_REFTAG)) {
-		job->dif_check_flags |= SPDK_DIF_FLAGS_REFTAG_CHECK;
+		job->dif_check_flags |= SPDK_DIF_FLAGS_REFTAG_CHECK & ~g_dif_check_flags_exclude_mask;
 	}
 	if (spdk_bdev_is_dif_check_enabled(bdev, SPDK_DIF_CHECK_TYPE_GUARD)) {
-		job->dif_check_flags |= SPDK_DIF_FLAGS_GUARD_CHECK;
+		job->dif_check_flags |= SPDK_DIF_FLAGS_GUARD_CHECK & ~g_dif_check_flags_exclude_mask;
 	}
 
 	job->offset_in_ios = 0;
@@ -1964,6 +1965,104 @@ parse_rw(const char *str, enum job_config_rw ret)
 	}
 
 	return ret;
+}
+
+static size_t
+parse_next_key(const char **str, char *key, char *val, size_t key_buf_size,
+	       size_t val_buf_size)
+{
+	const char *sep;
+	const char *separator = ", \t\n";
+	size_t key_len, val_len;
+
+	*str += strspn(*str, separator);
+
+	sep = strchr(*str, '=');
+	if (!sep) {
+		fprintf(stderr, "Key without '=' separator\n");
+		return 0;
+	}
+
+	key_len = sep - *str;
+	if (key_len >= key_buf_size) {
+		fprintf(stderr, "Key length %zu is greater than maximum allowed %zu\n",
+			key_len, key_buf_size - 1);
+		return 0;
+	}
+
+	memcpy(key, *str, key_len);
+	key[key_len] = '\0';
+
+	*str += key_len + 1;    /* Skip key */
+	val_len = strcspn(*str, separator);
+	if (val_len == 0) {
+		fprintf(stderr, "Key without value\n");
+		return 0;
+	}
+
+	if (val_len >= val_buf_size) {
+		fprintf(stderr, "Value length %zu is greater than maximum allowed %zu\n",
+			val_len, val_buf_size - 1);
+		return 0;
+	}
+
+	memcpy(val, *str, val_len);
+	val[val_len] = '\0';
+
+	*str += val_len;
+
+	return val_len;
+}
+
+static uint32_t
+parse_difchk_exclude(const char *val)
+{
+	uint32_t dif_check_flags_exclude_mask = 0;
+
+	if (strcasestr(val, "guard") != NULL) {
+		dif_check_flags_exclude_mask |= SPDK_NVME_IO_FLAGS_PRCHK_GUARD;
+	}
+	if (strcasestr(val, "reftag") != NULL) {
+		dif_check_flags_exclude_mask |= SPDK_NVME_IO_FLAGS_PRCHK_REFTAG;
+	}
+	if (strcasestr(val, "apptag") != NULL) {
+		dif_check_flags_exclude_mask |= SPDK_NVME_IO_FLAGS_PRCHK_APPTAG;
+	}
+
+	return dif_check_flags_exclude_mask;
+}
+
+static int
+parse_metadata(const char *metacfg_str, uint32_t *_dif_check_flags_exclude_mask)
+{
+	const char *str;
+	size_t val_len;
+	char key[32];
+	char val[1024];
+	uint32_t dif_check_flags_exclude_mask = 0;
+
+	if (metacfg_str == NULL) {
+		return -EINVAL;
+	}
+
+	str = metacfg_str;
+
+	while (*str != '\0') {
+		val_len = parse_next_key(&str, key, val, sizeof(key), sizeof(val));
+		if (val_len == 0) {
+			fprintf(stderr, "Failed to parse next key\n");
+			return -EINVAL;
+		}
+
+		if (strcasecmp(key, "difchk_exclude") == 0) {
+			dif_check_flags_exclude_mask = parse_difchk_exclude(val);
+		} else {
+			fprintf(stderr, "Unknown key '%s'\n", key);
+		}
+	}
+
+	*_dif_check_flags_exclude_mask = dif_check_flags_exclude_mask;
+	return 0;
 }
 
 static const char *
@@ -2679,6 +2778,11 @@ bdevperf_parse_arg(int ch, char *arg)
 		g_io_size = (int)size;
 	} else if (ch == 'U') {
 		g_unique_writes = true;
+	} else if (ch == 'I') {
+		if (parse_metadata(arg, &g_dif_check_flags_exclude_mask) != 0) {
+			fprintf(stderr, "Invalid metadata setting: %s\n", arg);
+			return -EINVAL;
+		}
 	} else {
 		tmp = spdk_strtoll(arg, 10);
 		if (tmp < 0) {
@@ -2745,6 +2849,10 @@ bdevperf_usage(void)
 	printf(" -E                        share per lcore thread among jobs. Available only if -j is not used.\n");
 	printf(" -J                        File name to open with append mode and log JSON RPC calls.\n");
 	printf(" -U                        generate unique data for each write I/O, has no effect on non-write I/O\n");
+	printf(" -I <fmt>                  metadata configuration\n");
+	printf("\t\t Keys:\n");
+	printf("\t\t  difchk_exclude     Specify which DIF check to exclude per I/O (difchk_exclude=guard|reftag|apptag)\n");
+	printf("\t\t Example: -I 'difchk_exclude=guard|reftag|apptag'\n");
 }
 
 static void
@@ -2869,7 +2977,7 @@ main(int argc, char **argv)
 	opts.rpc_addr = NULL;
 	opts.shutdown_cb = spdk_bdevperf_shutdown_cb;
 
-	if ((rc = spdk_app_parse_args(argc, argv, &opts, "Zzfq:o:t:w:k:CEF:J:M:P:S:T:Xlj:DU", NULL,
+	if ((rc = spdk_app_parse_args(argc, argv, &opts, "Zzfq:o:t:w:k:CEF:J:M:P:S:T:Xlj:DUI:", NULL,
 				      bdevperf_parse_arg, bdevperf_usage)) !=
 	    SPDK_APP_PARSE_ARGS_SUCCESS) {
 		return rc;
