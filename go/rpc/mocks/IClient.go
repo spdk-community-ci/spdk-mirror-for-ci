@@ -78,6 +78,47 @@ func (_c *IClient_Call_Call) RunAndReturn(run func(string, interface{}) (*client
 	return _c
 }
 
+// Close provides a mock function with given fields:
+func (_m *IClient) Close() error {
+	ret := _m.Called()
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func() error); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// IClient_Close_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Close'
+type IClient_Close_Call struct {
+	*mock.Call
+}
+
+// Close is a helper method to define mock.On call
+func (_e *IClient_Expecter) Close() *IClient_Close_Call {
+	return &IClient_Close_Call{Call: _e.mock.On("Close")}
+}
+
+func (_c *IClient_Close_Call) Run(run func()) *IClient_Close_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *IClient_Close_Call) Return(_a0 error) *IClient_Close_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *IClient_Close_Call) RunAndReturn(run func() error) *IClient_Close_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // NewIClient creates a new instance of IClient. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewIClient(t interface {

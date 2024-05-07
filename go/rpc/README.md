@@ -142,3 +142,28 @@ type BdevLvolResize struct {
 	Size int64 `json:"size,omitempty"`
 }
 ```
+
+## SPDK Client
+
+Apart from Go client, that is generic, there is also a client wrapper, that is specific for SPDK.
+
+```go
+spdkClient, err := client.CreateSPDKClient()
+if err != nil {
+    // Error logic here.
+}
+defer spdkClient.Close()
+```
+
+The SPDK client can be used to send a JSON-RPC 2.0 request using go-generated rpc struct.
+
+### Example
+
+```go
+bdevGetBdevStruct := &utils.BdevGetBdevs{}
+
+resp, err := spdkClient.Call(bdevGetBdevStruct)
+if err != nil {
+	// Error logic here.
+}
+```

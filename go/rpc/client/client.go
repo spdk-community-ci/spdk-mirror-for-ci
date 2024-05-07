@@ -26,6 +26,7 @@ const (
 // Client interface mostly for mockery auto-generation
 type IClient interface {
 	Call(method string, params any) (*Response, error)
+	Close() error
 }
 
 // Client represents JSON-RPC 2.0 client.
