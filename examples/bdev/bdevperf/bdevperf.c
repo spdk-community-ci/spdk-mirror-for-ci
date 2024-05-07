@@ -2608,7 +2608,27 @@ struct rpc_bdevperf_params {
 	int	queue_depth;
 	char	*io_size;
 	int	rw_percentage;
+	uint32_t difchk_exclude;
 };
+
+static int
+rpc_decode_difchk_exclude(const struct spdk_json_val *val, void *out)
+{
+	uint32_t *difchk_exclude = out;
+	char *str = NULL;
+	int rc;
+
+	rc = spdk_json_decode_string(val, &str);
+	if (rc != 0) {
+		return rc;
+	}
+
+	*difchk_exclude = parse_difchk_exclude(str);
+
+	free(str);
+
+	return 0;
+}
 
 static const struct spdk_json_object_decoder rpc_bdevperf_params_decoders[] = {
 	{"time_in_sec", offsetof(struct rpc_bdevperf_params, time_in_sec), spdk_json_decode_int32, true},
@@ -2616,6 +2636,7 @@ static const struct spdk_json_object_decoder rpc_bdevperf_params_decoders[] = {
 	{"queue_depth", offsetof(struct rpc_bdevperf_params, queue_depth), spdk_json_decode_int32, true},
 	{"io_size", offsetof(struct rpc_bdevperf_params, io_size), spdk_json_decode_string, true},
 	{"rw_percentage", offsetof(struct rpc_bdevperf_params, rw_percentage), spdk_json_decode_int32, true},
+	{"difchk_exclude", offsetof(struct rpc_bdevperf_params, difchk_exclude), rpc_decode_difchk_exclude, true},
 };
 
 static void
@@ -2641,12 +2662,15 @@ rpc_apply_bdevperf_params(struct rpc_bdevperf_params *params)
 	} else {
 		g_mix_specified = false;
 	}
+	if (params->difchk_exclude != UINT32_MAX) {
+		g_dif_check_flags_exclude_mask = params->difchk_exclude;
+	}
 }
 
 static void
 rpc_perform_tests(struct spdk_jsonrpc_request *request, const struct spdk_json_val *params)
 {
-	struct rpc_bdevperf_params req = {}, backup = {};
+	struct rpc_bdevperf_params req = { .difchk_exclude = UINT32_MAX, }, backup = {};
 	int rc;
 
 	if (g_request != NULL) {
@@ -2675,6 +2699,7 @@ rpc_perform_tests(struct spdk_jsonrpc_request *request, const struct spdk_json_v
 		}
 		backup.time_in_sec = g_time_in_sec;
 		backup.rw_percentage = g_rw_percentage;
+		backup.difchk_exclude = g_dif_check_flags_exclude_mask;
 
 		rpc_apply_bdevperf_params(&req);
 

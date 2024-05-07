@@ -40,7 +40,7 @@ def perform_tests_func(args):
         On success, 0 is returned. On error, -1 is returned.
     """
     client = args.client
-    param_names = ['queue_depth', 'time_in_sec', 'workload_type', 'io_size', 'rw_percentage']
+    param_names = ['queue_depth', 'time_in_sec', 'workload_type', 'io_size', 'rw_percentage', 'difchk_exclude']
     params = {name: getattr(args, name) for name in param_names if getattr(args, name, None)}
     return client.call('perform_tests', params)
 
@@ -79,6 +79,7 @@ if __name__ == "__main__":
                    type=int, choices=range(0, 101), metavar="[0-100]")
     p.add_argument('-w', dest="workload_type", choices=PATTERN_TYPES_STR, type=str.lower,
                    help=f'io pattern type, must be one of {PATTERN_TYPES_STR}',)
+    p.add_argument('-I', dest="difchk_exclude", help='Specify which DIF check to exclude per I/O', type=str)
     p.set_defaults(func=perform_tests)
 
     def call_rpc_func(args):
