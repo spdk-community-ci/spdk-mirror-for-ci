@@ -1312,6 +1312,7 @@ if [[ "${CONFIG[ISAL]}" = "y" ]]; then
 		ISAL_CRYPTO_OPTS+=("--enable-shared=no")
 	fi
 	ISAL_CRYPTO_OPTS+=("--prefix=${CONFIG[PREFIX]}")
+	ISAL_CRYPTO_OPTS+=("--enable-fips-mode")
 	echo -n "Configuring ISA-L-crypto (logfile: $ISAL_CRYPTO_LOG)..."
 	./autogen.sh &> $ISAL_CRYPTO_LOG
 	./configure CFLAGS="-fPIC -g -O2 -fuse-ld=$LD_TYPE -Wno-unused-command-line-argument" "${ISAL_CRYPTO_OPTS[@]}" >> $ISAL_CRYPTO_LOG 2>&1

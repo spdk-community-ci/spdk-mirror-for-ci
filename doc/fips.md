@@ -29,9 +29,9 @@ configuration flag. Please also make sure, that FIPS-certified hardware and firm
 
 ## isa-l-crypto
 
-The isa-l-crypto library has not yet acquired the FIPS certification. In order for SPDK to be
-included in a FIPS certified system, please do not use the software Acceleration Framework module
-for encryption/decryption.
+The isa-l-crypto library is FIPS certifiable since 2.25, once it is configured with --enable-fips-mode.
+This is the default when compiling isa-l-crypto in SPDK submodule. The SPDK software Acceleration Framework module
+used for encryption/decryption, could be included in FIPS certified system.
 
 ## OpenSSL
 
