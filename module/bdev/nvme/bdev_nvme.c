@@ -109,6 +109,7 @@ struct nvme_probe_skip_entry {
 /* All the controllers deleted by users via RPC are skipped by hotplug monitor */
 static TAILQ_HEAD(, nvme_probe_skip_entry) g_skipped_nvme_ctrlrs = TAILQ_HEAD_INITIALIZER(
 			g_skipped_nvme_ctrlrs);
+static pthread_mutex_t g_skipped_nvme_ctrlrs_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 #define BDEV_NVME_DEFAULT_DIGESTS (SPDK_BIT(SPDK_NVMF_DHCHAP_HASH_SHA256) | \
 				   SPDK_BIT(SPDK_NVMF_DHCHAP_HASH_SHA384) | \
@@ -157,9 +158,8 @@ static int g_hot_insert_nvme_controller_index = 0;
 static uint64_t g_nvme_hotplug_poll_period_us = NVME_HOTPLUG_POLL_PERIOD_DEFAULT;
 static bool g_nvme_hotplug_enabled = false;
 struct spdk_thread *g_bdev_nvme_init_thread;
-static struct spdk_poller *g_hotplug_poller;
-static struct spdk_poller *g_hotplug_probe_poller;
-static struct spdk_nvme_probe_ctx *g_hotplug_probe_ctx;
+static pthread_t g_hotplug_poller_thread_id;
+static pthread_mutex_t g_hotplug_poller_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static void nvme_ctrlr_populate_namespaces(struct nvme_ctrlr *nvme_ctrlr,
 		struct nvme_async_probe_ctx *ctx);
@@ -499,11 +499,13 @@ nvme_detach_poller(void *arg)
 	struct nvme_ctrlr *nvme_ctrlr = arg;
 	int rc;
 
+	pthread_mutex_lock(&g_hotplug_poller_mutex);
 	rc = spdk_nvme_detach_poll_async(nvme_ctrlr->detach_ctx);
 	if (rc != -EAGAIN) {
 		spdk_poller_unregister(&nvme_ctrlr->reset_detach_poller);
 		_nvme_ctrlr_delete(nvme_ctrlr);
 	}
+	pthread_mutex_unlock(&g_hotplug_poller_mutex);
 
 	return SPDK_POLLER_BUSY;
 }
@@ -4329,11 +4331,14 @@ hotplug_probe_cb(void *cb_ctx, const struct spdk_nvme_transport_id *trid,
 {
 	struct nvme_probe_skip_entry *entry;
 
+	pthread_mutex_lock(&g_skipped_nvme_ctrlrs_mutex);
 	TAILQ_FOREACH(entry, &g_skipped_nvme_ctrlrs, tailq) {
 		if (spdk_nvme_transport_id_compare(trid, &entry->trid) == 0) {
+			pthread_mutex_unlock(&g_skipped_nvme_ctrlrs_mutex);
 			return false;
 		}
 	}
+	pthread_mutex_unlock(&g_skipped_nvme_ctrlrs_mutex);
 
 	opts->arbitration_burst = (uint8_t)g_opts.arbitration_burst;
 	opts->low_priority_weight = (uint8_t)g_opts.low_priority_weight;
@@ -5552,11 +5557,20 @@ bdev_nvme_get_default_ctrlr_opts(struct nvme_ctrlr_opts *opts)
 	opts->fast_io_fail_timeout_sec = g_opts.fast_io_fail_timeout_sec;
 }
 
+struct attach_ctx {
+	void *cb_ctx;
+	const struct spdk_nvme_transport_id *trid;
+	struct spdk_nvme_ctrlr *ctrlr;
+	const struct spdk_nvme_ctrlr_opts *drv_opts;
+};
+
 static void
-attach_cb(void *cb_ctx, const struct spdk_nvme_transport_id *trid,
-	  struct spdk_nvme_ctrlr *ctrlr, const struct spdk_nvme_ctrlr_opts *drv_opts)
+_attach_cb(void *arg)
 {
+	struct attach_ctx *ctx = arg;
 	char *name;
+
+	assert(spdk_get_thread() == g_bdev_nvme_init_thread);
 
 	name = spdk_sprintf_alloc("HotInNvme%d", g_hot_insert_nvme_controller_index++);
 	if (!name) {
@@ -5564,13 +5578,34 @@ attach_cb(void *cb_ctx, const struct spdk_nvme_transport_id *trid,
 		return;
 	}
 
-	if (nvme_ctrlr_create(ctrlr, name, trid, NULL) == 0) {
-		SPDK_DEBUGLOG(bdev_nvme, "Attached to %s (%s)\n", trid->traddr, name);
+	if (nvme_ctrlr_create(ctx->ctrlr, name, ctx->trid, NULL) == 0) {
+		SPDK_DEBUGLOG(bdev_nvme, "Attached to %s (%s)\n", ctx->trid->traddr, name);
 	} else {
-		SPDK_ERRLOG("Failed to attach to %s (%s)\n", trid->traddr, name);
+		SPDK_ERRLOG("Failed to attach to %s (%s)\n", ctx->trid->traddr, name);
 	}
 
 	free(name);
+	free(ctx);
+}
+
+static void
+attach_cb_th(void *cb_ctx, const struct spdk_nvme_transport_id *trid,
+	     struct spdk_nvme_ctrlr *ctrlr, const struct spdk_nvme_ctrlr_opts *drv_opts)
+{
+
+	struct attach_ctx *ctx;
+
+	ctx = calloc(1, sizeof(*ctx));
+	if (! ctx) {
+		SPDK_ERRLOG("Failed to allocate attach context\n");
+		return;
+	}
+	ctx->cb_ctx = cb_ctx;
+	ctx->trid = trid;
+	ctx->ctrlr = ctrlr;
+	ctx->drv_opts = drv_opts;
+
+	spdk_thread_send_msg(g_bdev_nvme_init_thread, _attach_cb, ctx);
 }
 
 static void
@@ -5599,7 +5634,9 @@ bdev_nvme_delete_ctrlr_unsafe(struct nvme_ctrlr *nvme_ctrlr, bool hotplug)
 			return -ENOMEM;
 		}
 		entry->trid = nvme_ctrlr->active_path_id->trid;
+		pthread_mutex_lock(&g_skipped_nvme_ctrlrs_mutex);
 		TAILQ_INSERT_TAIL(&g_skipped_nvme_ctrlrs, entry, tailq);
+		pthread_mutex_unlock(&g_skipped_nvme_ctrlrs_mutex);
 	}
 
 	nvme_ctrlr->destruct = true;
@@ -5632,43 +5669,53 @@ remove_cb(void *cb_ctx, struct spdk_nvme_ctrlr *ctrlr)
 	bdev_nvme_delete_ctrlr(nvme_ctrlr, true);
 }
 
-static int
-bdev_nvme_hotplug_probe(void *arg)
+static void
+bdev_nvme_hotplug_th_cleanup(void *arg)
 {
-	if (g_hotplug_probe_ctx == NULL) {
-		spdk_poller_unregister(&g_hotplug_probe_poller);
-		return SPDK_POLLER_IDLE;
-	}
-
-	if (spdk_nvme_probe_poll_async(g_hotplug_probe_ctx) != -EAGAIN) {
-		g_hotplug_probe_ctx = NULL;
-		spdk_poller_unregister(&g_hotplug_probe_poller);
-	}
-
-	return SPDK_POLLER_BUSY;
+	struct spdk_thread *thread = arg;
+	spdk_thread_exit(thread);
 }
 
-static int
-bdev_nvme_hotplug(void *arg)
+static void *
+bdev_nvme_hotplug_th(void *arg)
 {
+	int oldstate;
+	int rc;
 	struct spdk_nvme_transport_id trid_pcie;
 
-	if (g_hotplug_probe_ctx) {
-		return SPDK_POLLER_BUSY;
-	}
+	spdk_unaffinitize_thread();
+	struct spdk_thread *thread = spdk_thread_create("hotplug", NULL);
+	pthread_cleanup_push(bdev_nvme_hotplug_th_cleanup, thread);
+	spdk_set_thread(thread);
 
 	memset(&trid_pcie, 0, sizeof(trid_pcie));
 	spdk_nvme_trid_populate_transport(&trid_pcie, SPDK_NVME_TRANSPORT_PCIE);
 
-	g_hotplug_probe_ctx = spdk_nvme_probe_async(&trid_pcie, NULL,
-			      hotplug_probe_cb, attach_cb, NULL);
+	while (true) {
+		rc = pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldstate);
+		if (rc != 0) {
+			SPDK_ERRLOG("Unable to set cancel state disabled on hotplug thread (%d): %s\n",
+				    rc, spdk_strerror(rc));
+		}
 
-	if (g_hotplug_probe_ctx) {
-		assert(g_hotplug_probe_poller == NULL);
-		g_hotplug_probe_poller = SPDK_POLLER_REGISTER(bdev_nvme_hotplug_probe, NULL, 1000);
+		/* Mutex is needed because the spdk_pcie_dev can be accessed during spdk_nvme_detach_poll_async via nvme_detach_poller */
+		pthread_mutex_lock(&g_hotplug_poller_mutex);
+		spdk_nvme_probe(&trid_pcie, NULL, hotplug_probe_cb, attach_cb_th, NULL);
+		pthread_mutex_unlock(&g_hotplug_poller_mutex);
+
+		rc = pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, &oldstate);
+		if (rc != 0) {
+			SPDK_ERRLOG("Unable to set cancel state enabled on hotplug thread (%d): %s\n",
+				    rc, spdk_strerror(rc));
+		}
+
+		/* This is a pthread cancellation point and cannot be removed. */
+		usleep(g_nvme_hotplug_poll_period_us);
 	}
 
-	return SPDK_POLLER_BUSY;
+	pthread_cleanup_pop(1);
+
+	return NULL;
 }
 
 void
@@ -5761,9 +5808,19 @@ set_nvme_hotplug_period_cb(void *_ctx)
 {
 	struct set_nvme_hotplug_ctx *ctx = _ctx;
 
-	spdk_poller_unregister(&g_hotplug_poller);
-	if (ctx->enabled) {
-		g_hotplug_poller = SPDK_POLLER_REGISTER(bdev_nvme_hotplug, NULL, ctx->period_us);
+	int rc;
+
+	if (g_nvme_hotplug_enabled && !ctx->enabled) {
+		if (pthread_cancel(g_hotplug_poller_thread_id) == 0) {
+			pthread_join(g_hotplug_poller_thread_id, NULL);
+		} else {
+			SPDK_ERRLOG("Failed to cancel the hotplug thread\n");
+		}
+	} else if (! g_nvme_hotplug_enabled && ctx->enabled) {
+		rc = pthread_create(&g_hotplug_poller_thread_id, NULL, &bdev_nvme_hotplug_th, NULL);
+		if (rc != 0) {
+			SPDK_ERRLOG("Failed to create the hotplug thread\n");
+		}
 	}
 
 	g_nvme_hotplug_poll_period_us = ctx->period_us;
@@ -6183,6 +6240,7 @@ bdev_nvme_create(struct spdk_nvme_transport_id *trid,
 	}
 
 	if (trid->trtype == SPDK_NVME_TRANSPORT_PCIE) {
+		pthread_mutex_lock(&g_skipped_nvme_ctrlrs_mutex);
 		TAILQ_FOREACH_SAFE(entry, &g_skipped_nvme_ctrlrs, tailq, tmp) {
 			if (spdk_nvme_transport_id_compare(trid, &entry->trid) == 0) {
 				TAILQ_REMOVE(&g_skipped_nvme_ctrlrs, entry, tailq);
@@ -6190,6 +6248,7 @@ bdev_nvme_create(struct spdk_nvme_transport_id *trid,
 				break;
 			}
 		}
+		pthread_mutex_unlock(&g_skipped_nvme_ctrlrs_mutex);
 	}
 
 	if (drv_opts) {
@@ -7256,14 +7315,21 @@ bdev_nvme_library_fini(void)
 	struct nvme_probe_skip_entry *entry, *entry_tmp;
 	struct discovery_ctx *ctx;
 
-	spdk_poller_unregister(&g_hotplug_poller);
-	free(g_hotplug_probe_ctx);
-	g_hotplug_probe_ctx = NULL;
+	if (g_nvme_hotplug_enabled) {
+		if (pthread_cancel(g_hotplug_poller_thread_id) == 0) {
+			pthread_join(g_hotplug_poller_thread_id, NULL);
+			g_nvme_hotplug_enabled = false;
+		} else {
+			SPDK_ERRLOG("Failed to cancel hotplug thread\n");
+		}
+	}
 
+	pthread_mutex_lock(&g_skipped_nvme_ctrlrs_mutex);
 	TAILQ_FOREACH_SAFE(entry, &g_skipped_nvme_ctrlrs, tailq, entry_tmp) {
 		TAILQ_REMOVE(&g_skipped_nvme_ctrlrs, entry, tailq);
 		free(entry);
 	}
+	pthread_mutex_unlock(&g_skipped_nvme_ctrlrs_mutex);
 
 	assert(spdk_get_thread() == g_bdev_nvme_init_thread);
 	if (TAILQ_EMPTY(&g_discovery_ctxs)) {
