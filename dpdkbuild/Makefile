@@ -104,7 +104,12 @@ DPDK_DRIVERS += compress/mlx5
 endif
 DPDK_CFLAGS += -I$(ISAL_DIR) -I$(ISAL_BUILD_DIR)
 DPDK_LDFLAGS += -L$(ISAL_DIR)/.libs -lisal
+ifeq ($(CONFIG_SHARED),y)
+# To make sure meson's sanitycheck works
+export LD_LIBRARY_PATH=$(ISAL_DIR)/.libs
 endif
+endif
+
 
 DPDK_ENABLED_DRIVERS = $(shell echo $(DPDK_DRIVERS) | sed -E "s/ +/,/g")
 
