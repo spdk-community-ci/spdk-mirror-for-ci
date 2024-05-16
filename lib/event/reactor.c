@@ -422,8 +422,8 @@ spdk_reactor_set_interrupt_mode(uint32_t lcore, bool new_in_interrupt,
 		return -ENOTSUP;
 	}
 
-	if (!spdk_thread_is_app_thread(NULL)) {
-		SPDK_ERRLOG("It is only permitted within spdk application thread.\n");
+	if (spdk_env_get_current_core() != g_scheduling_reactor->lcore) {
+		SPDK_ERRLOG("It is only permitted within scheduling reactor.\n");
 		return -EPERM;
 	}
 
