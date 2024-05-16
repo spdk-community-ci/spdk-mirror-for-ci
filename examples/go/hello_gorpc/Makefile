@@ -5,13 +5,17 @@
 
 SPDK_ROOT_DIR := $(abspath $(CURDIR)/../../..)
 include $(SPDK_ROOT_DIR)/mk/spdk.common.mk
+CLIENT_BUILD_DIR = $(SPDK_ROOT_DIR)/go/rpc
 
-.PHONY: all clean
+.PHONY: all clean structs
 
 BUILDFLAGS=-trimpath -mod=readonly -gcflags="all=-spectre=all -N -l" -asmflags="all=-spectre=all" -ldflags="all=-s -w"
 
-all:
+all: structs
 	$(Q)go build $(BUILDFLAGS) -o $(SPDK_ROOT_DIR)/build/examples/hello_gorpc
 
 clean:
 	$(Q)rm -rf $(SPDK_ROOT_DIR)/build/examples/hello_gorpc
+
+structs:
+	$(MAKE) -C $(CLIENT_BUILD_DIR) structs

@@ -9,14 +9,14 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/spdk/spdk/go/rpc/client"
 	"log"
 	"os"
+
+	"github.com/spdk/spdk/go/rpc/client"
+	"github.com/spdk/spdk/go/rpc/generators/utils"
 )
 
 const (
-	socketAddress   = "/var/tmp/spdk.sock"
-	bDevGetBDevs    = "bdev_get_bdevs"
 	defaultBdevName = ""
 	defaultTimeout  = 0
 )
@@ -24,16 +24,19 @@ const (
 func main() {
 
 	//create client
-	rpcClient, err := client.CreateClientWithJsonCodec(client.Unix, socketAddress)
+	spdkClient, err := client.CreateSPDKClient()
 	if err != nil {
 		log.Fatalf("error on client creation, err: %s", err.Error())
 	}
-	defer rpcClient.Close()
+	defer spdkClient.Close()
+
+	bdevGetBdevStruct := &utils.BdevGetBdevs{}
+	fillBdevGetBdevStructWithParams(bdevGetBdevStruct)
 
 	//sends a JSON-RPC 2.0 request with "bdev_get_bdevs" method and provided params
-	resp, err := rpcClient.Call(bDevGetBDevs, getBDevParams())
+	resp, err := spdkClient.Call(bdevGetBdevStruct)
 	if err != nil {
-		log.Fatalf("error on JSON-RPC call, method: %s err: %s", bDevGetBDevs, err.Error())
+		log.Fatalf("error on JSON-RPC call, err: %s", err.Error())
 	}
 
 	result, err := json.Marshal(resp.Result)
@@ -44,20 +47,17 @@ func main() {
 	fmt.Printf("%s\n", string(result))
 }
 
-func getBDevParams() map[string]any {
+// convert command line arg to bdevGetBdevs struct params
+func fillBdevGetBdevStructWithParams(bdevStruct *utils.BdevGetBdevs) {
 	fs := flag.NewFlagSet("set", flag.ContinueOnError)
-	fs.String("name", defaultBdevName, "Name of the Blockdev")
-	fs.Int("timeout", defaultTimeout, "Time in ms to wait for the bdev to appear")
+	name := fs.String("Name", defaultBdevName, "Name of the Blockdev")
+	timeout := fs.Int64("Timeout", defaultTimeout, "Time in ms to wait for the bdev to appear")
 
 	err := fs.Parse(os.Args[1:])
 	if err != nil {
 		log.Fatalf("%s\n", err.Error())
 	}
 
-	paramsMap := make(map[string]any)
-	fs.Visit(func(f *flag.Flag) {
-		paramsMap[f.Name] = f.Value
-	})
-
-	return paramsMap
+	bdevStruct.Name = *name
+	bdevStruct.Timeout = *timeout
 }
