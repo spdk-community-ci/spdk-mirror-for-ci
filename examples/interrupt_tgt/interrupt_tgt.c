@@ -17,6 +17,9 @@
 struct rpc_reactor_set_interrupt_mode {
 	int32_t lcore;
 	bool disable_interrupt;
+	int rc;
+	struct spdk_thread *rpc_thread;
+	struct spdk_jsonrpc_request *request;
 };
 
 static const struct spdk_json_object_decoder rpc_reactor_set_interrupt_mode_decoders[] = {
@@ -27,23 +30,55 @@ static const struct spdk_json_object_decoder rpc_reactor_set_interrupt_mode_deco
 static void
 rpc_reactor_set_interrupt_mode_cb(void *cb_arg)
 {
-	struct spdk_jsonrpc_request *request = cb_arg;
+	struct rpc_reactor_set_interrupt_mode *req = cb_arg;
 
 	SPDK_NOTICELOG("complete reactor switch\n");
 
-	spdk_jsonrpc_send_bool_response(request, true);
+	spdk_jsonrpc_send_bool_response(req->request, true);
+	free(req);
+}
+
+static void
+set_interrupt_mode_cb(void *arg)
+{
+	struct rpc_reactor_set_interrupt_mode *req = arg;
+
+	spdk_thread_send_msg(req->rpc_thread, rpc_reactor_set_interrupt_mode_cb, req);
+}
+
+static void
+set_interrupt_mode(void *arg1, void *arg2)
+{
+	struct rpc_reactor_set_interrupt_mode *req = arg1;
+	int rc;
+
+	rc = spdk_reactor_set_interrupt_mode(req->lcore, !req->disable_interrupt,
+					     set_interrupt_mode_cb, req);
+	if (rc)	{
+		req->rc = rc;
+		set_interrupt_mode_cb(req);
+	}
 }
 
 static void
 rpc_reactor_set_interrupt_mode(struct spdk_jsonrpc_request *request,
 			       const struct spdk_json_val *params)
 {
-	struct rpc_reactor_set_interrupt_mode req = {};
-	int rc;
+	struct rpc_reactor_set_interrupt_mode *req;
+
+	req = calloc(1, sizeof(*req));
+	if (req == NULL) {
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INTERNAL_ERROR,
+						 "Out of memory");
+		return;
+	}
+
+	req->request = request;
+	req->rpc_thread = spdk_get_thread();
 
 	if (spdk_json_decode_object(params, rpc_reactor_set_interrupt_mode_decoders,
 				    SPDK_COUNTOF(rpc_reactor_set_interrupt_mode_decoders),
-				    &req)) {
+				    req)) {
 		SPDK_ERRLOG("spdk_json_decode_object failed\n");
 		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
 						 "spdk_json_decode_object failed");
@@ -59,23 +94,18 @@ rpc_reactor_set_interrupt_mode(struct spdk_jsonrpc_request *request,
 
 
 	SPDK_NOTICELOG("RPC Start to %s interrupt mode on reactor %d.\n",
-		       req.disable_interrupt ? "disable" : "enable", req.lcore);
-	if (req.lcore >= (int64_t)spdk_env_get_first_core() &&
-	    req.lcore <= (int64_t)spdk_env_get_last_core()) {
-		rc = spdk_reactor_set_interrupt_mode(req.lcore, !req.disable_interrupt,
-						     rpc_reactor_set_interrupt_mode_cb, request);
-		if (rc)	{
-			goto err;
-		}
+		       req->disable_interrupt ? "disable" : "enable", req->lcore);
+	if (req->lcore >= (int64_t)spdk_env_get_first_core() &&
+	    req->lcore <= (int64_t)spdk_env_get_last_core()) {
+		struct spdk_event *e;
+
+		e = spdk_event_allocate(spdk_env_get_main_core(), set_interrupt_mode, req, NULL);
+		spdk_event_call(e);
 	} else {
-		goto err;
+		free(req);
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
+						 "Invalid parameters");
 	}
-
-	return;
-
-err:
-	spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_INVALID_PARAMS,
-					 "Invalid parameters");
 }
 /* private */ SPDK_RPC_REGISTER("reactor_set_interrupt_mode", rpc_reactor_set_interrupt_mode,
 				SPDK_RPC_RUNTIME)
