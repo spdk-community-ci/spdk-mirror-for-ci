@@ -12,8 +12,10 @@
 #include "spdk/rpc.h"
 
 #define RPC_SELECT_INTERVAL	4000 /* 4ms */
+#define RPC_BUSY_POLL_PERIOD	200 /* 200us */
 
 static struct spdk_poller *g_rpc_poller = NULL;
+static uint64_t g_busy_period_end = 0;
 
 struct init_rpc_server {
 	struct spdk_rpc_server *server;
@@ -28,12 +30,28 @@ static STAILQ_HEAD(, init_rpc_server) g_init_rpc_servers = STAILQ_HEAD_INITIALIZ
 static int
 rpc_subsystem_poll_servers(void *arg)
 {
+	int rc;
+	uint64_t now = spdk_get_ticks();
 	struct init_rpc_server *init_server;
 
 	STAILQ_FOREACH(init_server, &g_init_rpc_servers, link) {
 		if (init_server->active) {
-			spdk_rpc_server_accept(init_server->server);
+			rc = spdk_rpc_server_accept(init_server->server);
+			if (rc > 0) {
+				if (g_busy_period_end == 0) {
+					spdk_poller_unregister(&g_rpc_poller);
+					g_rpc_poller = SPDK_POLLER_REGISTER(rpc_subsystem_poll_servers, NULL, 0);
+				}
+
+				g_busy_period_end = now + RPC_BUSY_POLL_PERIOD * (spdk_get_ticks_hz() / SPDK_SEC_TO_USEC);
+			}
 		}
+	}
+
+	if (g_busy_period_end != 0 && now >= g_busy_period_end) {
+		spdk_poller_unregister(&g_rpc_poller);
+		g_rpc_poller = SPDK_POLLER_REGISTER(rpc_subsystem_poll_servers, NULL, RPC_SELECT_INTERVAL);
+		g_busy_period_end = 0;
 	}
 
 	return SPDK_POLLER_BUSY;
