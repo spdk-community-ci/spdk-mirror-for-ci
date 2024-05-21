@@ -16,7 +16,7 @@ DEFINE_STUB(spdk_rpc_server_listen, struct spdk_rpc_server *, (const char *liste
 DEFINE_STUB(spdk_rpc_verify_methods, bool, (void), true);
 DEFINE_STUB_V(spdk_rpc_accept, (void));
 DEFINE_STUB_V(spdk_rpc_close, (void));
-DEFINE_STUB_V(spdk_rpc_server_accept, (struct spdk_rpc_server *server));
+DEFINE_STUB(spdk_rpc_server_accept, int, (struct spdk_rpc_server *server), 0);
 DEFINE_STUB_V(spdk_rpc_server_close, (struct spdk_rpc_server *server));
 DEFINE_STUB_V(spdk_rpc_set_state, (uint32_t state));
 

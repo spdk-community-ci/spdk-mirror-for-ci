@@ -68,7 +68,7 @@ struct spdk_rpc_server *spdk_rpc_server_listen(const char *listen_addr);
  *
  * \param server RPC server, which will be polled for connections.
  */
-void spdk_rpc_server_accept(struct spdk_rpc_server *server);
+int spdk_rpc_server_accept(struct spdk_rpc_server *server);
 
 /**
  * Stop a server from listening and free it.

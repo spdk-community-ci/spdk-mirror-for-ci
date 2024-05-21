@@ -251,11 +251,11 @@ spdk_rpc_accept(void)
 	spdk_jsonrpc_server_poll(g_rpc_server.jsonrpc_server);
 }
 
-void
+int
 spdk_rpc_server_accept(struct spdk_rpc_server *server)
 {
 	assert(server != NULL);
-	spdk_jsonrpc_server_poll(server->jsonrpc_server);
+	return spdk_jsonrpc_server_poll(server->jsonrpc_server);
 }
 
 void
