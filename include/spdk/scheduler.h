@@ -257,6 +257,13 @@ uint64_t spdk_scheduler_get_period(void);
  */
 void spdk_scheduler_register(struct spdk_scheduler *scheduler);
 
+/**
+ * Get scheduling reactor.
+ *
+ * Idle threads of dynamic scheduler will move to scheduling core.
+ */
+struct spdk_reactor *spdk_scheduler_get_scheduling_reactor(void);
+
 /*
  * Macro used to register new scheduler.
  */

@@ -140,6 +140,12 @@ spdk_scheduler_register(struct spdk_scheduler *scheduler)
 	TAILQ_INSERT_TAIL(&g_scheduler_list, scheduler, link);
 }
 
+struct spdk_reactor *
+spdk_scheduler_get_scheduling_reactor(void)
+{
+	return g_scheduling_reactor;
+}
+
 static void
 reactor_construct(struct spdk_reactor *reactor, uint32_t lcore)
 {
