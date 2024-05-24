@@ -7,7 +7,13 @@
 SPDK_ROOT_DIR := $(abspath $(CURDIR)/..)
 include $(SPDK_ROOT_DIR)/mk/spdk.common.mk
 
-setup_cmd = pip install --prefix=$(CONFIG_PREFIX)
+FILE := /usr/bin/pip
+ifeq ($(wildcard $(FILE)),)
+       setup_cmd = pip3 install --prefix=$(CONFIG_PREFIX)
+else
+       setup_cmd = pip install --prefix=$(CONFIG_PREFIX)
+endif
+
 ifneq ($(DESTDIR),)
 setup_cmd += --root $(DESTDIR)
 endif
