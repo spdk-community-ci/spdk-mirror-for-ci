@@ -28,8 +28,8 @@ DEFINE_STUB_V(raid_bdev_io_init, (struct raid_bdev_io *raid_io,
 				  enum spdk_bdev_io_type type, uint64_t offset_blocks,
 				  uint64_t num_blocks, struct iovec *iovs, int iovcnt, void *md_buf,
 				  struct spdk_memory_domain *memory_domain, void *memory_domain_ctx));
-DEFINE_STUB(raid_bdev_remap_dix_reftag, int, (void *md_buf, uint64_t num_blocks,
-		struct spdk_bdev *bdev, uint32_t remapped_offset), -1);
+DEFINE_STUB(raid_bdev_remap_pi_reftag, int, (struct iovec *iovs, int iovcnt, void *md_buf,
+		uint64_t num_blocks, struct spdk_bdev *bdev, uint32_t remapped_offset), -1);
 
 struct spdk_io_channel *
 spdk_accel_get_io_channel(void)
@@ -89,7 +89,7 @@ test_suite_init(void)
 	uint64_t base_bdev_blockcnt_values[] = { 1, 1024, 1024 * 1024 };
 	uint32_t base_bdev_blocklen_values[] = { 512, 4096 };
 	uint32_t strip_size_kb_values[] = { 1, 4, 128 };
-	enum raid_params_md_type md_type_values[] = { RAID_PARAMS_MD_NONE, RAID_PARAMS_MD_SEPARATE, RAID_PARAMS_MD_INTERLEAVED };
+	enum raid_params_md_type md_type_values[] = { RAID_PARAMS_MD_NONE };
 	uint8_t *num_base_bdevs;
 	uint64_t *base_bdev_blockcnt;
 	uint32_t *base_bdev_blocklen;

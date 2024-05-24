@@ -267,8 +267,8 @@ raid_test_bdev_io_complete(struct raid_bdev_io *raid_io, enum spdk_bdev_io_statu
 }
 
 int
-raid_bdev_remap_dix_reftag(void *md_buf, uint64_t num_blocks,
-			   struct spdk_bdev *bdev, uint32_t remapped_offset)
+raid_bdev_remap_pi_reftag(struct iovec *iovs, int iovcnt, void *md_buf, uint64_t num_blocks,
+			  struct spdk_bdev *bdev, uint32_t remapped_offset)
 {
 	remap_dif(md_buf, num_blocks, bdev, remapped_offset);
 
@@ -276,8 +276,8 @@ raid_bdev_remap_dix_reftag(void *md_buf, uint64_t num_blocks,
 }
 
 int
-raid_bdev_verify_dix_reftag(struct iovec *iovs, int iovcnt, void *md_buf,
-			    uint64_t num_blocks, struct spdk_bdev *bdev, uint32_t offset_blocks)
+raid_bdev_verify_pi_reftag(struct iovec *iovs, int iovcnt, void *md_buf,
+			   uint64_t num_blocks, struct spdk_bdev *bdev, uint32_t offset_blocks)
 {
 	verify_dif(iovs, iovcnt, md_buf, offset_blocks, num_blocks, bdev);
 

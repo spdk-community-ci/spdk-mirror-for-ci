@@ -655,6 +655,7 @@ _bdev_io_initialize(struct spdk_bdev_io *bdev_io, struct spdk_io_channel *ch,
 
 	if (iovcnt == 0) {
 		bdev_io->u.bdev.iovs = NULL;
+		bdev_io->u.bdev.md_buf = NULL;
 		return;
 	}
 
@@ -670,8 +671,9 @@ _bdev_io_initialize(struct spdk_bdev_io *bdev_io, struct spdk_io_channel *ch,
 		SPDK_CU_ASSERT_FATAL(iov->iov_base != NULL);
 		iov->iov_len = iov_len;
 	}
-
-	bdev_io->u.bdev.md_buf = (void *)0x10000000;
+	if (spdk_bdev_get_dif_type(bdev) != SPDK_DIF_DISABLE && !spdk_bdev_is_md_interleaved(bdev)) {
+		bdev_io->u.bdev.md_buf = calloc(1, blocks * spdk_bdev_get_md_size(bdev));
+	}
 }
 
 static void

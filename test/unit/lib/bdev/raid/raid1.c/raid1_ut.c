@@ -28,9 +28,34 @@ DEFINE_STUB_V(raid_bdev_io_init, (struct raid_bdev_io *raid_io,
 				  enum spdk_bdev_io_type type, uint64_t offset_blocks,
 				  uint64_t num_blocks, struct iovec *iovs, int iovcnt, void *md_buf,
 				  struct spdk_memory_domain *memory_domain, void *memory_domain_ctx));
-DEFINE_STUB(raid_bdev_remap_dix_reftag, int, (void *md_buf, uint64_t num_blocks,
-		struct spdk_bdev *bdev, uint32_t remapped_offset), -1);
 DEFINE_STUB(spdk_bdev_notify_blockcnt_change, int, (struct spdk_bdev *bdev, uint64_t size), 0);
+DEFINE_STUB(spdk_bdev_is_dif_head_of_md, bool, (const struct spdk_bdev *bdev), false);
+DEFINE_STUB(raid_bdev_remap_pi_reftag, int, (struct iovec *iovs, int iovcnt, void *md_buf,
+		uint64_t num_blocks, struct spdk_bdev *bdev, uint32_t remapped_offset), -1);
+
+bool
+spdk_bdev_is_md_interleaved(const struct spdk_bdev *bdev)
+{
+	return (bdev->md_len != 0) && bdev->md_interleave;
+}
+
+bool
+spdk_bdev_is_md_separate(const struct spdk_bdev *bdev)
+{
+	return (bdev->md_len != 0) && !bdev->md_interleave;
+}
+
+uint32_t
+spdk_bdev_get_md_size(const struct spdk_bdev *bdev)
+{
+	return bdev->md_len;
+}
+
+uint32_t
+spdk_bdev_get_block_size(const struct spdk_bdev *bdev)
+{
+	return bdev->blocklen;
+}
 
 int
 spdk_bdev_readv_blocks_ext(struct spdk_bdev_desc *desc,
@@ -163,6 +188,57 @@ static void
 put_raid_io(struct raid_bdev_io *raid_io)
 {
 	free(raid_io);
+}
+
+static void
+verify_dif(struct iovec *iovs, int iovcnt, void *md_buf,
+	   uint64_t offset_blocks, uint32_t num_blocks, struct spdk_bdev *bdev)
+{
+	struct spdk_dif_ctx dif_ctx;
+	int rc;
+	struct spdk_dif_ctx_init_ext_opts dif_opts;
+	struct spdk_dif_error errblk;
+	spdk_dif_type_t dif_type;
+	bool md_interleaved;
+	struct iovec md_iov;
+
+	dif_type = spdk_bdev_get_dif_type(bdev);
+	md_interleaved = spdk_bdev_is_md_interleaved(bdev);
+
+	if (dif_type == SPDK_DIF_DISABLE) {
+		return;
+	}
+
+	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
+	dif_opts.dif_pi_format = SPDK_DIF_PI_FORMAT_16;
+	rc = spdk_dif_ctx_init(&dif_ctx,
+			       spdk_bdev_get_block_size(bdev),
+			       spdk_bdev_get_md_size(bdev),
+			       md_interleaved,
+			       spdk_bdev_is_dif_head_of_md(bdev),
+			       dif_type,
+			       bdev->dif_check_flags,
+			       offset_blocks,
+			       0xFFFF, 0x123, 0, 0, &dif_opts);
+	SPDK_CU_ASSERT_FATAL(rc == 0);
+
+	if (!md_interleaved) {
+		md_iov.iov_base = md_buf;
+		md_iov.iov_len	= spdk_bdev_get_md_size(bdev) * num_blocks;
+
+		rc = spdk_dix_verify(iovs, iovcnt,
+				     &md_iov, num_blocks, &dif_ctx, &errblk);
+		SPDK_CU_ASSERT_FATAL(rc == 0);
+	}
+}
+
+int
+raid_bdev_verify_pi_reftag(struct iovec *iovs, int iovcnt, void *md_buf,
+			   uint64_t num_blocks, struct spdk_bdev *bdev, uint32_t offset_blocks)
+{
+	verify_dif(iovs, iovcnt, md_buf, offset_blocks, num_blocks, bdev);
+
+	return 0;
 }
 
 void

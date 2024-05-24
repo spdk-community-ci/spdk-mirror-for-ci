@@ -308,6 +308,9 @@ SPDK_STATIC_ASSERT(sizeof(struct spdk_bdev_ext_io_opts) == 52, "Incorrect size")
  */
 void spdk_bdev_get_opts(struct spdk_bdev_opts *opts, size_t opts_size);
 
+#define bdev_get_ext_io_opt(opts, field, defval) \
+	((opts) != NULL ? SPDK_GET_FIELD(opts, field, defval) : (defval))
+
 int spdk_bdev_set_opts(struct spdk_bdev_opts *opts);
 
 typedef void (*spdk_bdev_wait_for_examine_cb)(void *arg);

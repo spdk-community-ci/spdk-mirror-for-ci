@@ -35,9 +35,9 @@ raid0_bdev_io_completion(struct spdk_bdev_io *bdev_io, bool success, void *cb_ar
 				  spdk_bdev_get_dif_type(bdev_io->bdev) != SPDK_DIF_DISABLE &&
 				  bdev_io->bdev->dif_check_flags & SPDK_DIF_FLAGS_REFTAG_CHECK)) {
 
-			rc = raid_bdev_verify_dix_reftag(bdev_io->u.bdev.iovs, bdev_io->u.bdev.iovcnt,
-							 bdev_io->u.bdev.md_buf, bdev_io->u.bdev.num_blocks, bdev_io->bdev,
-							 bdev_io->u.bdev.offset_blocks);
+			rc = raid_bdev_verify_pi_reftag(bdev_io->u.bdev.iovs, bdev_io->u.bdev.iovcnt,
+							bdev_io->u.bdev.md_buf, bdev_io->u.bdev.num_blocks, bdev_io->bdev,
+							bdev_io->u.bdev.offset_blocks);
 			if (rc != 0) {
 				SPDK_ERRLOG("Reftag verify failed.\n");
 				raid_bdev_io_complete(raid_io, SPDK_BDEV_IO_STATUS_FAILED);
@@ -133,8 +133,8 @@ raid0_submit_rw_request(struct raid_bdev_io *raid_io)
 
 		if (spdk_unlikely(spdk_bdev_get_dif_type(bdev) != SPDK_DIF_DISABLE &&
 				  bdev->dif_check_flags & SPDK_DIF_FLAGS_REFTAG_CHECK)) {
-			ret = raid_bdev_verify_dix_reftag(raid_io->iovs, raid_io->iovcnt, io_opts.metadata,
-							  pd_blocks, bdev, raid_io->offset_blocks);
+			ret = raid_bdev_verify_pi_reftag(raid_io->iovs, raid_io->iovcnt, io_opts.metadata,
+							 pd_blocks, bdev, raid_io->offset_blocks);
 			if (ret != 0) {
 				SPDK_ERRLOG("bdev io submit error due to DIX verify failure\n");
 				raid_bdev_io_complete(raid_io, SPDK_BDEV_IO_STATUS_FAILED);

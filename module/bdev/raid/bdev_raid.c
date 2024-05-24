@@ -523,21 +523,13 @@ raid_bdev_destruct(void *ctx)
 }
 
 int
-raid_bdev_remap_dix_reftag(void *md_buf, uint64_t num_blocks,
-			   struct spdk_bdev *bdev, uint32_t remapped_offset)
+raid_bdev_remap_pi_reftag(struct iovec *iovs, int iovcnt, void *md_buf, uint64_t num_blocks,
+			  struct spdk_bdev *bdev, uint32_t remapped_offset)
 {
 	struct spdk_dif_ctx dif_ctx;
 	struct spdk_dif_error err_blk = {};
-	int rc;
 	struct spdk_dif_ctx_init_ext_opts dif_opts;
-	struct iovec md_iov = {
-		.iov_base	= md_buf,
-		.iov_len	= num_blocks * bdev->md_len,
-	};
-
-	if (md_buf == NULL) {
-		return 0;
-	}
+	int rc;
 
 	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
 	dif_opts.dif_pi_format = bdev->dif_pi_format;
@@ -553,7 +545,20 @@ raid_bdev_remap_dix_reftag(void *md_buf, uint64_t num_blocks,
 
 	spdk_dif_ctx_set_remapped_init_ref_tag(&dif_ctx, remapped_offset);
 
-	rc = spdk_dix_remap_ref_tag(&md_iov, num_blocks, &dif_ctx, &err_blk, false);
+	if (bdev->md_interleave) {
+		rc = spdk_dif_remap_ref_tag(iovs, iovcnt, num_blocks, &dif_ctx, &err_blk, false);
+	} else {
+		struct iovec md_iov = {
+			.iov_base	= md_buf,
+			.iov_len	= num_blocks * bdev->md_len
+		};
+
+		if (md_buf == NULL) {
+			return 0;
+		}
+		rc = spdk_dix_remap_ref_tag(&md_iov, num_blocks, &dif_ctx, &err_blk, false);
+	};
+
 	if (rc != 0) {
 		SPDK_ERRLOG("Remapping reference tag failed. type=%d, offset=%d"
 			    PRIu32 "\n", err_blk.err_type, err_blk.err_offset);
@@ -563,21 +568,13 @@ raid_bdev_remap_dix_reftag(void *md_buf, uint64_t num_blocks,
 }
 
 int
-raid_bdev_verify_dix_reftag(struct iovec *iovs, int iovcnt, void *md_buf,
-			    uint64_t num_blocks, struct spdk_bdev *bdev, uint32_t offset_blocks)
+raid_bdev_verify_pi_reftag(struct iovec *iovs, int iovcnt, void *md_buf, uint64_t num_blocks,
+			   struct spdk_bdev *bdev, uint32_t offset_blocks)
 {
 	struct spdk_dif_ctx dif_ctx;
 	struct spdk_dif_error err_blk = {};
-	int rc;
 	struct spdk_dif_ctx_init_ext_opts dif_opts;
-	struct iovec md_iov = {
-		.iov_base	= md_buf,
-		.iov_len	= num_blocks * bdev->md_len,
-	};
-
-	if (md_buf == NULL) {
-		return 0;
-	}
+	int rc;
 
 	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
 	dif_opts.dif_pi_format = bdev->dif_pi_format;
@@ -591,7 +588,20 @@ raid_bdev_verify_dix_reftag(struct iovec *iovs, int iovcnt, void *md_buf,
 		return rc;
 	}
 
-	rc = spdk_dix_verify(iovs, iovcnt, &md_iov, num_blocks, &dif_ctx, &err_blk);
+	if (bdev->md_interleave) {
+		rc = spdk_dif_verify(iovs, iovcnt, num_blocks, &dif_ctx, &err_blk);
+	} else {
+		struct iovec md_iov = {
+			.iov_base	= md_buf,
+			.iov_len	= num_blocks * bdev->md_len
+		};
+
+		if (md_buf == NULL) {
+			return 0;
+		}
+		rc = spdk_dix_verify(iovs, iovcnt, &md_iov, num_blocks, &dif_ctx, &err_blk);
+	};
+
 	if (rc != 0) {
 		SPDK_ERRLOG("Reference tag check failed. type=%d, offset=%d"
 			    PRIu32 "\n", err_blk.err_type, err_blk.err_offset);
@@ -653,9 +663,9 @@ raid_bdev_io_complete(struct raid_bdev_io *raid_io, enum spdk_bdev_io_status sta
 				  bdev_io->bdev->dif_check_flags & SPDK_DIF_FLAGS_REFTAG_CHECK &&
 				  status == SPDK_BDEV_IO_STATUS_SUCCESS)) {
 
-			rc = raid_bdev_remap_dix_reftag(bdev_io->u.bdev.md_buf,
-							bdev_io->u.bdev.num_blocks, bdev_io->bdev,
-							bdev_io->u.bdev.offset_blocks);
+			rc = raid_bdev_remap_pi_reftag(bdev_io->u.bdev.iovs, bdev_io->u.bdev.iovcnt,
+						       bdev_io->u.bdev.md_buf, bdev_io->u.bdev.num_blocks,
+						       bdev_io->bdev, bdev_io->u.bdev.offset_blocks);
 			if (rc != 0) {
 				status = SPDK_BDEV_IO_STATUS_FAILED;
 			}

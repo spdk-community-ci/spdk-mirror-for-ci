@@ -8,6 +8,7 @@
 
 #include "spdk/bdev_module.h"
 #include "spdk/uuid.h"
+#include "spdk/bdev.h"
 
 #define RAID_BDEV_MIN_DATA_OFFSET_SIZE	(1024*1024) /* 1 MiB */
 
@@ -396,10 +397,11 @@ raid_bdev_io_set_default_status(struct raid_bdev_io *raid_io, enum spdk_bdev_io_
 	raid_io->base_bdev_io_status_default = status;
 }
 
-int raid_bdev_remap_dix_reftag(void *md_buf, uint64_t num_blocks,
-			       struct spdk_bdev *bdev, uint32_t remapped_offset);
-int raid_bdev_verify_dix_reftag(struct iovec *iovs, int iovcnt, void *md_buf,
-				uint64_t num_blocks, struct spdk_bdev *bdev, uint32_t offset_blocks);
+int raid_bdev_remap_pi_reftag(struct iovec *iovs, int iovcnt, void *md_buf, uint64_t num_blocks,
+			      struct spdk_bdev *bdev, uint32_t remapped_offset);
+
+int raid_bdev_verify_pi_reftag(struct iovec *iovs, int iovcnt, void *md_buf, uint64_t num_blocks,
+			       struct spdk_bdev *bdev, uint32_t offset_blocks);
 
 /**
  * Raid bdev I/O read/write wrapper for spdk_bdev_readv_blocks_ext function.
@@ -425,11 +427,15 @@ raid_bdev_writev_blocks_ext(struct raid_base_bdev_info *base_info, struct spdk_i
 {
 	int rc;
 	uint64_t remapped_offset_blocks = base_info->data_offset + offset_blocks;
+	uint32_t dif_check_flags;
+
+	dif_check_flags = base_info->raid_bdev->bdev.dif_check_flags &
+			  ~(bdev_get_ext_io_opt(opts, dif_check_flags_exclude_mask, 0));
 
 	if (spdk_unlikely(spdk_bdev_get_dif_type(&base_info->raid_bdev->bdev) != SPDK_DIF_DISABLE &&
-			  (base_info->raid_bdev->bdev.dif_check_flags & SPDK_DIF_FLAGS_REFTAG_CHECK))) {
-		rc = raid_bdev_remap_dix_reftag(opts->metadata, num_blocks, &base_info->raid_bdev->bdev,
-						remapped_offset_blocks);
+			  (dif_check_flags & SPDK_DIF_FLAGS_REFTAG_CHECK))) {
+		rc = raid_bdev_remap_pi_reftag(iov, iovcnt, opts->metadata, num_blocks,
+					       spdk_bdev_desc_get_bdev(base_info->desc), remapped_offset_blocks);
 		if (rc != 0) {
 			return rc;
 		}

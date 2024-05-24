@@ -440,9 +440,6 @@ static void bdev_ch_retry_io(struct spdk_bdev_channel *bdev_ch);
 
 static bool bdev_io_should_split(struct spdk_bdev_io *bdev_io);
 
-#define bdev_get_ext_io_opt(opts, field, defval) \
-	((opts) != NULL ? SPDK_GET_FIELD(opts, field, defval) : (defval))
-
 static inline void
 bdev_ch_add_to_io_submitted(struct spdk_bdev_io *bdev_io)
 {
