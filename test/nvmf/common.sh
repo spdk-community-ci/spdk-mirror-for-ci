@@ -680,7 +680,7 @@ configure_kernel_target() {
 	# It allows only %llx value and for some reason kernel swaps the byte order
 	# so setting the serial is not very useful here
 	# "$kernel_subsystem/attr_serial"
-	echo "SPDK-$kernel_name" > "$kernel_subsystem/attr_model"
+	echo "SPDK-test" > "$kernel_subsystem/attr_model"
 
 	echo 1 > "$kernel_subsystem/attr_allow_any_host"
 
