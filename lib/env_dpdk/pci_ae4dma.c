@@ -1,5 +1,5 @@
 /*   SPDX-License-Identifier: BSD-3-Clause
- *   Copyright (C) 2020 Intel Corporation.
+ *   Copyright (C) 2024 Advanced Micro Devices, Inc.
  *   All rights reserved.
  */
 
