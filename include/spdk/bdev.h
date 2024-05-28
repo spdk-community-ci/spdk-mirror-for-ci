@@ -465,8 +465,15 @@ struct spdk_bdev_open_async_opts {
 	 * Default value is zero and is used when options are omitted.
 	 */
 	uint64_t timeout_ms;
+	/*
+	 * If true, bdev will be opened with a block size equal to the data size
+	 * (no metadata). If the underlying bdev has been formated with the metadata
+	 * (with or without the Protection Information), it will be added/removed
+	 * by the bdev layer for each IO.
+	 */
+	bool no_metadata;
 };
-SPDK_STATIC_ASSERT(sizeof(struct spdk_bdev_open_async_opts) == 16, "Incorrect size");
+SPDK_STATIC_ASSERT(sizeof(struct spdk_bdev_open_async_opts) == 24, "Incorrect size");
 
 /**
  * Open a block device for I/O operations asynchronously with options.

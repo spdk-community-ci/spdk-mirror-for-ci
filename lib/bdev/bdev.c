@@ -343,6 +343,7 @@ struct spdk_bdev_desc {
 	bool				closed;
 	bool				write;
 	bool				memory_domains_supported;
+	bool				no_metadata;
 	bool				accel_sequence_supported[SPDK_BDEV_NUM_IO_TYPES];
 	struct spdk_spinlock		spinlock;
 	uint32_t			refs;
@@ -8102,7 +8103,7 @@ bdev_desc_alloc(struct spdk_bdev *bdev, spdk_bdev_event_cb_t event_cb, void *eve
 
 static int
 bdev_open_ext(const char *bdev_name, bool write, spdk_bdev_event_cb_t event_cb,
-	      void *event_ctx, struct spdk_bdev_desc **_desc)
+	      void *event_ctx, bool no_metadata, struct spdk_bdev_desc **_desc)
 {
 	struct spdk_bdev_desc *desc;
 	struct spdk_bdev *bdev;
@@ -8119,6 +8120,8 @@ bdev_open_ext(const char *bdev_name, bool write, spdk_bdev_event_cb_t event_cb,
 	if (rc != 0) {
 		return rc;
 	}
+
+	desc->no_metadata = no_metadata;
 
 	rc = bdev_open(bdev, write, desc);
 	if (rc != 0) {
@@ -8143,7 +8146,7 @@ spdk_bdev_open_ext(const char *bdev_name, bool write, spdk_bdev_event_cb_t event
 	}
 
 	spdk_spin_lock(&g_bdev_mgr.spinlock);
-	rc = bdev_open_ext(bdev_name, write, event_cb, event_ctx, _desc);
+	rc = bdev_open_ext(bdev_name, write, event_cb, event_ctx, false, _desc);
 	spdk_spin_unlock(&g_bdev_mgr.spinlock);
 
 	return rc;
@@ -8223,7 +8226,7 @@ _bdev_open_async(struct spdk_bdev_open_async_ctx *ctx)
 	}
 
 	ctx->rc = bdev_open_ext(ctx->bdev_name, ctx->write, ctx->event_cb, ctx->event_ctx,
-				&ctx->desc);
+				ctx->opts.no_metadata, &ctx->desc);
 	if (ctx->rc == 0 || ctx->opts.timeout_ms == 0) {
 		goto exit;
 	}
@@ -8275,10 +8278,11 @@ bdev_open_async_opts_copy(struct spdk_bdev_open_async_opts *opts,
 	} \
 
 	SET_FIELD(timeout_ms);
+	SET_FIELD(no_metadata);
 
 	/* Do not remove this statement, you should always update this statement when you adding a new field,
 	 * and do not forget to add the SET_FIELD statement for your added field. */
-	SPDK_STATIC_ASSERT(sizeof(struct spdk_bdev_open_async_opts) == 16, "Incorrect size");
+	SPDK_STATIC_ASSERT(sizeof(struct spdk_bdev_open_async_opts) == 24, "Incorrect size");
 
 #undef SET_FIELD
 }
@@ -8296,6 +8300,7 @@ bdev_open_async_opts_get_default(struct spdk_bdev_open_async_opts *opts, size_t 
 	} \
 
 	SET_FIELD(timeout_ms, 0);
+	SET_FIELD(no_metadata, false);
 
 #undef SET_FIELD
 }
@@ -8319,6 +8324,11 @@ spdk_bdev_open_async(const char *bdev_name, bool write, spdk_bdev_event_cb_t eve
 
 	if (opts != NULL && opts->size == 0) {
 		SPDK_ERRLOG("size in the options structure should not be zero\n");
+		return -EINVAL;
+	}
+
+	if (opts->no_metadata == true) {
+		SPDK_ERRLOG("No metadata option not supported\n");
 		return -EINVAL;
 	}
 
