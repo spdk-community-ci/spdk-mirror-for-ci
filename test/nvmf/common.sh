@@ -673,8 +673,6 @@ configure_kernel_target() {
 		block_in_use "${block##*/}" || nvme="/dev/${block##*/}"
 	done
 
-	[[ -b $nvme ]]
-
 	mkdir "$kernel_subsystem"
 	mkdir "$kernel_namespace"
 	mkdir "$kernel_port"
@@ -685,6 +683,13 @@ configure_kernel_target() {
 	echo "SPDK-$kernel_name" > "$kernel_subsystem/attr_model"
 
 	echo 1 > "$kernel_subsystem/attr_allow_any_host"
+
+	if ! [[ -b $nvme ]]; then
+		modprobe null_blk nr_devices=1
+		waitforserial nullb
+		nvme="$(ls /dev/nullb*)"
+	fi
+
 	echo "$nvme" > "$kernel_namespace/device_path"
 	echo 1 > "$kernel_namespace/enable"
 
@@ -713,6 +718,7 @@ clean_kernel_target() {
 	modules=(/sys/module/nvmet/holders/*)
 
 	modprobe -r "${modules[@]##*/}" nvmet
+	modprobe -r null_blk || :
 
 	# Get back all nvmes to userspace
 	"$rootdir/scripts/setup.sh"
