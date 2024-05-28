@@ -1538,7 +1538,7 @@ iscsi_conn_schedule(struct spdk_iscsi_conn *conn)
 	target = conn->sess->target;
 	pthread_mutex_lock(&target->mutex);
 	target->num_active_conns++;
-	if (target->num_active_conns == 1) {
+	if (!target->pg) {
 		/**
 		 * This is the only active connection for this target node.
 		 *  Pick a poll group using round-robin.
