@@ -12,6 +12,35 @@
 #include "bdev/raid/raid1.c"
 #include "../common.c"
 
+
+#define MAX_BASE_DRIVES 32
+
+uint8_t g_max_base_drives = MAX_BASE_DRIVES;
+uint32_t g_block_len = 4096;
+uint32_t g_strip_size = 64;
+uint32_t g_max_io_size = 1024;
+bool g_enable_dif = false;
+bool g_interleaved_dif = false;
+
+struct io_output *g_io_output = NULL;
+uint32_t g_io_output_index;
+bool g_child_io_status_flag;
+uint32_t g_io_comp_status;
+
+/* Data structure to capture the output of IO for verification */
+struct io_output {
+	struct spdk_bdev_desc       *desc;
+	struct spdk_io_channel      *ch;
+	uint64_t                    offset_blocks;
+	uint64_t                    num_blocks;
+	spdk_bdev_io_completion_cb  cb;
+	void                        *cb_arg;
+	enum spdk_bdev_io_type      iotype;
+	struct iovec                *iovs;
+	int                         iovcnt;
+	void                        *md_buf;
+};
+
 static enum spdk_bdev_io_status g_io_status;
 static struct spdk_bdev_desc *g_last_io_desc;
 static spdk_bdev_io_completion_cb g_last_io_cb;
@@ -30,8 +59,6 @@ DEFINE_STUB_V(raid_bdev_io_init, (struct raid_bdev_io *raid_io,
 				  struct spdk_memory_domain *memory_domain, void *memory_domain_ctx));
 DEFINE_STUB(spdk_bdev_notify_blockcnt_change, int, (struct spdk_bdev *bdev, uint64_t size), 0);
 DEFINE_STUB(spdk_bdev_is_dif_head_of_md, bool, (const struct spdk_bdev *bdev), false);
-DEFINE_STUB(raid_bdev_remap_pi_reftag, int, (struct iovec *iovs, int iovcnt, void *md_buf,
-		uint64_t num_blocks, struct spdk_bdev *bdev, uint32_t remapped_offset), -1);
 
 bool
 spdk_bdev_is_md_interleaved(const struct spdk_bdev *bdev)
@@ -57,6 +84,141 @@ spdk_bdev_get_block_size(const struct spdk_bdev *bdev)
 	return bdev->blocklen;
 }
 
+static void
+generate_pi(struct iovec *iovs, int iovcnt, void *md_buf,
+	    uint64_t offset_blocks, uint32_t num_blocks, struct spdk_bdev *bdev)
+{
+	struct spdk_dif_ctx dif_ctx;
+	int rc;
+	struct spdk_dif_ctx_init_ext_opts dif_opts;
+	spdk_dif_type_t dif_type;
+	bool md_interleaved;
+	struct iovec md_iov;
+
+	dif_type = spdk_bdev_get_dif_type(bdev);
+	md_interleaved = spdk_bdev_is_md_interleaved(bdev);
+
+	if (dif_type == SPDK_DIF_DISABLE) {
+		return;
+	}
+
+	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
+	dif_opts.dif_pi_format = SPDK_DIF_PI_FORMAT_16;
+	rc = spdk_dif_ctx_init(&dif_ctx,
+			       spdk_bdev_get_block_size(bdev),
+			       spdk_bdev_get_md_size(bdev),
+			       md_interleaved,
+			       spdk_bdev_is_dif_head_of_md(bdev),
+			       dif_type,
+			       bdev->dif_check_flags,
+			       offset_blocks,
+			       0xFFFF, 0x123, 0, 0, &dif_opts);
+	SPDK_CU_ASSERT_FATAL(rc == 0);
+
+	if (!md_interleaved) {
+		md_iov.iov_base = md_buf;
+		md_iov.iov_len	= spdk_bdev_get_md_size(bdev) * num_blocks;
+
+		rc = spdk_dix_generate(iovs, iovcnt, &md_iov, num_blocks, &dif_ctx);
+		SPDK_CU_ASSERT_FATAL(rc == 0);
+	} else {
+		rc = spdk_dif_generate(iovs, iovcnt, num_blocks, &dif_ctx);
+		SPDK_CU_ASSERT_FATAL(rc == 0);
+	}
+}
+
+
+
+static void
+verify_pi(struct iovec *iovs, int iovcnt, void *md_buf,
+	  uint64_t offset_blocks, uint32_t num_blocks, struct spdk_bdev *bdev)
+{
+	struct spdk_dif_ctx dif_ctx;
+	struct spdk_dif_error errblk;
+	struct spdk_dif_ctx_init_ext_opts dif_opts;
+	spdk_dif_type_t dif_type;
+	bool md_interleaved;
+	int rc;
+
+	dif_type = spdk_bdev_get_dif_type(bdev);
+	md_interleaved = spdk_bdev_is_md_interleaved(bdev);
+
+	if (dif_type == SPDK_DIF_DISABLE) {
+		return;
+	}
+
+	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
+	dif_opts.dif_pi_format = SPDK_DIF_PI_FORMAT_16;
+	rc = spdk_dif_ctx_init(&dif_ctx,
+			       spdk_bdev_get_block_size(bdev),
+			       spdk_bdev_get_md_size(bdev),
+			       md_interleaved,
+			       spdk_bdev_is_dif_head_of_md(bdev),
+			       dif_type,
+			       bdev->dif_check_flags,
+			       offset_blocks,
+			       0xFFFF, 0x123, 0, 0, &dif_opts);
+	SPDK_CU_ASSERT_FATAL(rc == 0);
+
+	if (md_interleaved) {
+		rc = spdk_dif_verify(iovs, iovcnt, num_blocks, &dif_ctx, &errblk);
+	} else {
+		struct iovec md_iov = {
+			.iov_base	= md_buf,
+			.iov_len	= spdk_bdev_get_md_size(bdev) * num_blocks
+		};
+		rc = spdk_dix_verify(iovs, iovcnt, &md_iov, num_blocks, &dif_ctx, &errblk);
+	}
+	SPDK_CU_ASSERT_FATAL(rc == 0);
+}
+
+static void
+remap_pi(struct iovec *iovs, int iovcnt, void *md_buf, uint64_t num_blocks,
+	 struct spdk_bdev *bdev, uint32_t remapped_offset)
+{
+	struct spdk_dif_ctx dif_ctx;
+	struct spdk_dif_error errblk;
+	struct spdk_dif_ctx_init_ext_opts dif_opts;
+	spdk_dif_type_t dif_type;
+	bool md_interleaved;
+	int rc;
+
+	dif_type = spdk_bdev_get_dif_type(bdev);
+	md_interleaved = spdk_bdev_is_md_interleaved(bdev);
+
+	if (dif_type == SPDK_DIF_DISABLE) {
+		return;
+	}
+
+	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
+	dif_opts.dif_pi_format = SPDK_DIF_PI_FORMAT_16;
+	rc = spdk_dif_ctx_init(&dif_ctx,
+			       spdk_bdev_get_block_size(bdev),
+			       spdk_bdev_get_md_size(bdev),
+			       md_interleaved,
+			       spdk_bdev_is_dif_head_of_md(bdev),
+			       dif_type,
+			       bdev->dif_check_flags,
+			       0,
+			       0xFFFF, 0x123, 0, 0, &dif_opts);
+	SPDK_CU_ASSERT_FATAL(rc == 0);
+
+	spdk_dif_ctx_set_remapped_init_ref_tag(&dif_ctx, remapped_offset);
+
+	if (md_interleaved) {
+		rc = spdk_dif_remap_ref_tag(iovs, iovcnt, num_blocks, &dif_ctx, &errblk, false);
+
+	} else {
+		struct iovec md_iov = {
+			.iov_base	= md_buf,
+			.iov_len	= spdk_bdev_get_md_size(bdev) * num_blocks
+		};
+		rc = spdk_dix_remap_ref_tag(&md_iov, num_blocks, &dif_ctx, &errblk, false);
+	}
+	SPDK_CU_ASSERT_FATAL(rc == 0);
+}
+
+
 int
 spdk_bdev_readv_blocks_ext(struct spdk_bdev_desc *desc,
 			   struct spdk_io_channel *ch,
@@ -65,6 +227,8 @@ spdk_bdev_readv_blocks_ext(struct spdk_bdev_desc *desc,
 {
 	g_last_io_desc = desc;
 	g_last_io_cb = cb;
+
+	generate_pi(iov, iovcnt, opts->metadata, offset_blocks, num_blocks, desc->bdev);
 
 	return 0;
 }
@@ -77,6 +241,8 @@ spdk_bdev_writev_blocks_ext(struct spdk_bdev_desc *desc,
 {
 	g_last_io_desc = desc;
 	g_last_io_cb = cb;
+
+	verify_pi(iov, iovcnt, opts->metadata, offset_blocks, num_blocks, desc->bdev);
 
 	return 0;
 }
@@ -93,15 +259,21 @@ test_setup(void)
 	uint8_t num_base_bdevs_values[] = { 2, 3 };
 	uint64_t base_bdev_blockcnt_values[] = { 1, 1024, 1024 * 1024 };
 	uint32_t base_bdev_blocklen_values[] = { 512, 4096 };
+	enum raid_params_md_type md_type_values[] = { RAID_PARAMS_MD_NONE, RAID_PARAMS_MD_INTERLEAVED, RAID_PARAMS_MD_SEPARATE };
+	enum spdk_dif_type dif_type_values[] = { SPDK_DIF_DISABLE, SPDK_DIF_TYPE1 };
 	uint8_t *num_base_bdevs;
 	uint64_t *base_bdev_blockcnt;
 	uint32_t *base_bdev_blocklen;
+	enum raid_params_md_type *md_type;
+	enum spdk_dif_type *dif_type;
 	uint64_t params_count;
 	int rc;
 
 	params_count = SPDK_COUNTOF(num_base_bdevs_values) *
 		       SPDK_COUNTOF(base_bdev_blockcnt_values) *
-		       SPDK_COUNTOF(base_bdev_blocklen_values);
+		       SPDK_COUNTOF(base_bdev_blocklen_values) *
+		       SPDK_COUNTOF(md_type_values) *
+		       SPDK_COUNTOF(dif_type_values);
 	rc = raid_test_params_alloc(params_count);
 	if (rc) {
 		return rc;
@@ -110,12 +282,28 @@ test_setup(void)
 	ARRAY_FOR_EACH(num_base_bdevs_values, num_base_bdevs) {
 		ARRAY_FOR_EACH(base_bdev_blockcnt_values, base_bdev_blockcnt) {
 			ARRAY_FOR_EACH(base_bdev_blocklen_values, base_bdev_blocklen) {
-				struct raid_params params = {
-					.num_base_bdevs = *num_base_bdevs,
-					.base_bdev_blockcnt = *base_bdev_blockcnt,
-					.base_bdev_blocklen = *base_bdev_blocklen,
-				};
-				raid_test_params_add(&params);
+				ARRAY_FOR_EACH(md_type_values, md_type) {
+					ARRAY_FOR_EACH(dif_type_values, dif_type) {
+						struct raid_params params = {
+							.num_base_bdevs = *num_base_bdevs,
+							.base_bdev_blockcnt = *base_bdev_blockcnt,
+							.base_bdev_blocklen = *base_bdev_blocklen,
+							.md_type = *md_type,
+							.dif_type = *dif_type,
+						};
+						if (params.dif_type != SPDK_DIF_DISABLE) {
+							if (params.md_type != RAID_PARAMS_MD_NONE) {
+								params.dif_check_flags =
+									SPDK_DIF_FLAGS_GUARD_CHECK |
+									SPDK_DIF_FLAGS_REFTAG_CHECK |
+									SPDK_DIF_FLAGS_APPTAG_CHECK;
+							} else {
+								continue;
+							}
+						}
+						raid_test_params_add(&params);
+					}
+				}
 			}
 		}
 	}
@@ -174,12 +362,41 @@ static struct raid_bdev_io *
 get_raid_io(struct raid1_info *r1_info, struct raid_bdev_io_channel *raid_ch,
 	    enum spdk_bdev_io_type io_type, uint64_t num_blocks)
 {
+	uint64_t offset_blocks = 0x800;
 	struct raid_bdev_io *raid_io;
 
 	raid_io = calloc(1, sizeof(*raid_io));
 	SPDK_CU_ASSERT_FATAL(raid_io != NULL);
 
-	raid_test_bdev_io_init(raid_io, r1_info->raid_bdev, raid_ch, io_type, 0, num_blocks, NULL, 0, NULL);
+	struct iovec *iovs = NULL;
+	int iovcnt = 0;
+	void *md_buf = NULL;
+	uint32_t md_size = spdk_bdev_get_md_size(&r1_info->raid_bdev->bdev);
+
+	iovcnt = 1;
+	iovs = calloc(iovcnt, sizeof(struct iovec));
+	SPDK_CU_ASSERT_FATAL(iovs != NULL);
+
+	iovs->iov_len = num_blocks * g_block_len;
+
+	if (spdk_bdev_is_md_separate(&r1_info->raid_bdev->bdev)) {
+		md_buf = calloc(1, num_blocks * md_size);
+		SPDK_CU_ASSERT_FATAL(md_buf != NULL);
+
+	} else if (spdk_bdev_is_md_interleaved(&r1_info->raid_bdev->bdev)) {
+		iovs->iov_len += num_blocks * md_size;
+	}
+
+	iovs->iov_base = calloc(1, iovs->iov_len);
+	SPDK_CU_ASSERT_FATAL(iovs->iov_base != NULL);
+
+	if (io_type == SPDK_BDEV_IO_TYPE_WRITE) {
+		generate_pi(iovs, iovcnt, md_buf, offset_blocks, num_blocks,
+			    &r1_info->raid_bdev->bdev);
+	}
+
+	raid_test_bdev_io_init(raid_io, r1_info->raid_bdev, raid_ch, io_type, offset_blocks, num_blocks,
+			       iovs, iovcnt, md_buf);
 
 	return raid_io;
 }
@@ -187,56 +404,35 @@ get_raid_io(struct raid1_info *r1_info, struct raid_bdev_io_channel *raid_ch,
 static void
 put_raid_io(struct raid_bdev_io *raid_io)
 {
+	if (raid_io->iovs != NULL) {
+		if (raid_io->iovs->iov_base != NULL) {
+			free(raid_io->iovs->iov_base);
+		}
+		free(raid_io->iovs);
+	}
+
+	if (raid_io->md_buf != NULL) {
+		free(raid_io->md_buf);
+	}
+
 	free(raid_io);
 }
 
-static void
-verify_dif(struct iovec *iovs, int iovcnt, void *md_buf,
-	   uint64_t offset_blocks, uint32_t num_blocks, struct spdk_bdev *bdev)
+
+int
+raid_bdev_verify_pi_reftag(struct iovec *iovs, int iovcnt, void *md_buf, uint64_t num_blocks,
+			   struct spdk_bdev *bdev, uint32_t offset_blocks)
 {
-	struct spdk_dif_ctx dif_ctx;
-	int rc;
-	struct spdk_dif_ctx_init_ext_opts dif_opts;
-	struct spdk_dif_error errblk;
-	spdk_dif_type_t dif_type;
-	bool md_interleaved;
-	struct iovec md_iov;
+	verify_pi(iovs, iovcnt, md_buf, offset_blocks, num_blocks, bdev);
 
-	dif_type = spdk_bdev_get_dif_type(bdev);
-	md_interleaved = spdk_bdev_is_md_interleaved(bdev);
-
-	if (dif_type == SPDK_DIF_DISABLE) {
-		return;
-	}
-
-	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
-	dif_opts.dif_pi_format = SPDK_DIF_PI_FORMAT_16;
-	rc = spdk_dif_ctx_init(&dif_ctx,
-			       spdk_bdev_get_block_size(bdev),
-			       spdk_bdev_get_md_size(bdev),
-			       md_interleaved,
-			       spdk_bdev_is_dif_head_of_md(bdev),
-			       dif_type,
-			       bdev->dif_check_flags,
-			       offset_blocks,
-			       0xFFFF, 0x123, 0, 0, &dif_opts);
-	SPDK_CU_ASSERT_FATAL(rc == 0);
-
-	if (!md_interleaved) {
-		md_iov.iov_base = md_buf;
-		md_iov.iov_len	= spdk_bdev_get_md_size(bdev) * num_blocks;
-
-		rc = spdk_dix_verify(iovs, iovcnt,
-				     &md_iov, num_blocks, &dif_ctx, &errblk);
-		SPDK_CU_ASSERT_FATAL(rc == 0);
-	}
+	return 0;
 }
 
 int
-raid_bdev_verify_pi_reftag(struct iovec *iovs, int iovcnt, void *md_buf,
-			   uint64_t num_blocks, struct spdk_bdev *bdev, uint32_t offset_blocks)
+raid_bdev_remap_pi_reftag(struct iovec *iovs, int iovcnt, void *md_buf, uint64_t num_blocks,
+			  struct spdk_bdev *bdev, uint32_t remapped_offset)
 {
-	verify_dif(iovs, iovcnt, md_buf, offset_blocks, num_blocks, bdev);
+	remap_pi(iovs, iovcnt, md_buf, num_blocks, bdev, remapped_offset);
 
 	return 0;
 }

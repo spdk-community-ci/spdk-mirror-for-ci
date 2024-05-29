@@ -35,6 +35,8 @@ struct raid_params {
 	uint32_t base_bdev_blocklen;
 	uint32_t strip_size;
 	enum raid_params_md_type md_type;
+	enum spdk_dif_type dif_type;
+	uint32_t dif_check_flags;
 };
 
 int raid_test_params_alloc(size_t count);
@@ -134,6 +136,8 @@ raid_test_create_raid_bdev(struct raid_params *params, struct raid_bdev_module *
 	if (raid_bdev->bdev.md_interleave) {
 		raid_bdev->bdev.blocklen += raid_bdev->bdev.md_len;
 	}
+	raid_bdev->bdev.dif_type = params->dif_type;
+	raid_bdev->bdev.dif_check_flags = params->dif_check_flags;
 
 	raid_bdev->strip_size = params->strip_size;
 	raid_bdev->strip_size_kb = params->strip_size * params->base_bdev_blocklen / 1024;
@@ -154,6 +158,8 @@ raid_test_create_raid_bdev(struct raid_params *params, struct raid_bdev_module *
 		bdev->blocklen = raid_bdev->bdev.blocklen;
 		bdev->md_len = raid_bdev->bdev.md_len;
 		bdev->md_interleave = raid_bdev->bdev.md_interleave;
+		bdev->dif_type = raid_bdev->bdev.dif_type;
+		bdev->dif_check_flags = raid_bdev->bdev.dif_check_flags;
 
 		desc = calloc(1, sizeof(*desc));
 		SPDK_CU_ASSERT_FATAL(desc != NULL);

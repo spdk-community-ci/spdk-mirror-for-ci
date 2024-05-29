@@ -191,9 +191,23 @@ static void
 raid1_read_bdev_io_completion(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
 {
 	struct raid_bdev_io *raid_io = cb_arg;
+	enum spdk_bdev_io_status status = SPDK_BDEV_IO_STATUS_SUCCESS;
+	int rc;
+
+	if (spdk_unlikely(success && bdev_io->bdev != NULL &&
+			  spdk_bdev_get_dif_type(bdev_io->bdev) != SPDK_DIF_DISABLE &&
+			  bdev_io->u.bdev.dif_check_flags & SPDK_DIF_FLAGS_REFTAG_CHECK)) {
+
+		rc = raid_bdev_verify_pi_reftag(bdev_io->u.bdev.iovs, bdev_io->u.bdev.iovcnt,
+						bdev_io->u.bdev.md_buf, bdev_io->u.bdev.num_blocks,
+						bdev_io->bdev, bdev_io->u.bdev.offset_blocks);
+		if (rc != 0) {
+			SPDK_ERRLOG("Reftag verify failed.\n");
+			status = SPDK_BDEV_IO_STATUS_FAILED;
+		}
+	}
 
 	spdk_bdev_free_io(bdev_io);
-
 	raid1_channel_dec_read_counters(raid_io->raid_ch, raid_io->base_bdev_io_submitted,
 					raid_io->num_blocks);
 
@@ -203,7 +217,7 @@ raid1_read_bdev_io_completion(struct spdk_bdev_io *bdev_io, bool success, void *
 		return;
 	}
 
-	raid_bdev_io_complete(raid_io, SPDK_BDEV_IO_STATUS_SUCCESS);
+	raid_bdev_io_complete(raid_io, status);
 }
 
 static void raid1_submit_rw_request(struct raid_bdev_io *raid_io);
@@ -289,6 +303,20 @@ raid1_submit_write_request(struct raid_bdev_io *raid_io)
 	}
 
 	raid1_init_ext_io_opts(&io_opts, raid_io);
+
+	struct spdk_bdev *bdev = &raid_io->raid_bdev->bdev;
+	if (spdk_unlikely(spdk_bdev_get_dif_type(&raid_io->raid_bdev->bdev) != SPDK_DIF_DISABLE &&
+			  bdev->dif_check_flags & SPDK_DIF_FLAGS_REFTAG_CHECK)) {
+
+		ret = raid_bdev_verify_pi_reftag(raid_io->iovs, raid_io->iovcnt, io_opts.metadata,
+						 raid_io->num_blocks, bdev, raid_io->offset_blocks);
+		if (ret != 0) {
+			SPDK_ERRLOG("bdev io submit error due to DIF/DIX verify failure\n");
+			raid_bdev_io_complete(raid_io, SPDK_BDEV_IO_STATUS_FAILED);
+			return ret;
+		}
+	}
+
 	for (idx = raid_io->base_bdev_io_submitted; idx < raid_bdev->num_base_bdevs; idx++) {
 		base_info = &raid_bdev->base_bdev_info[idx];
 		base_ch = raid_bdev_channel_get_base_channel(raid_io->raid_ch, idx);
@@ -538,6 +566,7 @@ static struct raid_bdev_module g_raid1_module = {
 	.base_bdevs_min = 2,
 	.base_bdevs_constraint = {CONSTRAINT_MIN_BASE_BDEVS_OPERATIONAL, 1},
 	.memory_domains_supported = true,
+	.dif_supported = true,
 	.start = raid1_start,
 	.stop = raid1_stop,
 	.submit_rw_request = raid1_submit_rw_request,
