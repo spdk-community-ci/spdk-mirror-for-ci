@@ -40,6 +40,7 @@ struct io_output *g_io_output = NULL;
 uint32_t g_io_output_index;
 uint32_t g_io_comp_status;
 bool g_child_io_status_flag;
+bool g_child_enable_dif;
 TAILQ_HEAD(bdev, spdk_bdev);
 uint32_t g_block_len;
 uint32_t g_strip_size;
@@ -48,6 +49,7 @@ uint8_t g_max_base_drives;
 struct raid_io_ranges g_io_ranges[MAX_TEST_IO_RANGE];
 uint32_t g_io_range_idx;
 bool g_enable_dif;
+bool g_interleaved_dif;
 
 DEFINE_STUB_V(raid_bdev_module_list_add, (struct raid_bdev_module *raid_module));
 DEFINE_STUB_V(raid_bdev_queue_io_wait, (struct raid_bdev_io *raid_io, struct spdk_bdev *bdev,
@@ -90,6 +92,7 @@ set_test_opts(void)
 	g_strip_size = 64;
 	g_max_io_size = 1024;
 	g_enable_dif = false;
+	g_interleaved_dif = false;
 
 	return 0;
 }
@@ -99,6 +102,19 @@ set_test_opts_dif(void)
 {
 	set_test_opts();
 	g_enable_dif = true;
+	g_child_enable_dif = true;
+	g_interleaved_dif = false;
+
+	return 0;
+}
+
+static int
+set_test_opts_interleaved_dif(void)
+{
+	set_test_opts();
+	g_enable_dif = true;
+	g_child_enable_dif = true;
+	g_interleaved_dif = true;
 
 	return 0;
 }
@@ -136,8 +152,8 @@ reset_globals(void)
 }
 
 static void
-generate_dif(struct iovec *iovs, int iovcnt, void *md_buf,
-	     uint64_t offset_blocks, uint32_t num_blocks, struct spdk_bdev *bdev)
+generate_pi(struct iovec *iovs, int iovcnt, void *md_buf,
+	    uint64_t offset_blocks, uint32_t num_blocks, struct spdk_bdev *bdev)
 {
 	struct spdk_dif_ctx dif_ctx;
 	int rc;
@@ -172,26 +188,29 @@ generate_dif(struct iovec *iovs, int iovcnt, void *md_buf,
 
 		rc = spdk_dix_generate(iovs, iovcnt, &md_iov, num_blocks, &dif_ctx);
 		SPDK_CU_ASSERT_FATAL(rc == 0);
+	} else {
+		rc = spdk_dif_generate(iovs, iovcnt, num_blocks, &dif_ctx);
+		SPDK_CU_ASSERT_FATAL(rc == 0);
 	}
 }
 
-static void
-verify_dif(struct iovec *iovs, int iovcnt, void *md_buf,
-	   uint64_t offset_blocks, uint32_t num_blocks, struct spdk_bdev *bdev)
+static int
+verify_pi(struct iovec *iovs, int iovcnt, void *md_buf,
+	  uint64_t offset_blocks, uint32_t num_blocks, struct spdk_bdev *bdev,
+	  uint32_t dif_check_flags)
 {
 	struct spdk_dif_ctx dif_ctx;
-	int rc;
-	struct spdk_dif_ctx_init_ext_opts dif_opts;
 	struct spdk_dif_error errblk;
+	struct spdk_dif_ctx_init_ext_opts dif_opts;
 	spdk_dif_type_t dif_type;
 	bool md_interleaved;
-	struct iovec md_iov;
+	int rc;
 
 	dif_type = spdk_bdev_get_dif_type(bdev);
 	md_interleaved = spdk_bdev_is_md_interleaved(bdev);
 
 	if (dif_type == SPDK_DIF_DISABLE) {
-		return;
+		return 0;
 	}
 
 	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
@@ -202,31 +221,34 @@ verify_dif(struct iovec *iovs, int iovcnt, void *md_buf,
 			       md_interleaved,
 			       spdk_bdev_is_dif_head_of_md(bdev),
 			       dif_type,
-			       bdev->dif_check_flags,
+			       dif_check_flags,
 			       offset_blocks,
 			       0xFFFF, 0x123, 0, 0, &dif_opts);
 	SPDK_CU_ASSERT_FATAL(rc == 0);
 
-	if (!md_interleaved) {
-		md_iov.iov_base = md_buf;
-		md_iov.iov_len	= spdk_bdev_get_md_size(bdev) * num_blocks;
-
-		rc = spdk_dix_verify(iovs, iovcnt,
-				     &md_iov, num_blocks, &dif_ctx, &errblk);
-		SPDK_CU_ASSERT_FATAL(rc == 0);
+	if (md_interleaved) {
+		rc = spdk_dif_verify(iovs, iovcnt, num_blocks, &dif_ctx, &errblk);
+	} else {
+		struct iovec md_iov = {
+			.iov_base	= md_buf,
+			.iov_len	= spdk_bdev_get_md_size(bdev) * num_blocks
+		};
+		rc = spdk_dix_verify(iovs, iovcnt, &md_iov, num_blocks, &dif_ctx, &errblk);
 	}
+
+	return rc;
 }
 
 static void
-remap_dif(void *md_buf, uint64_t num_blocks, struct spdk_bdev *bdev, uint32_t remapped_offset)
+remap_pi(struct iovec *iovs, int iovcnt, void *md_buf, uint64_t num_blocks,
+	 struct spdk_bdev *bdev, uint32_t remapped_offset)
 {
 	struct spdk_dif_ctx dif_ctx;
-	int rc;
-	struct spdk_dif_ctx_init_ext_opts dif_opts;
 	struct spdk_dif_error errblk;
+	struct spdk_dif_ctx_init_ext_opts dif_opts;
 	spdk_dif_type_t dif_type;
 	bool md_interleaved;
-	struct iovec md_iov;
+	int rc;
 
 	dif_type = spdk_bdev_get_dif_type(bdev);
 	md_interleaved = spdk_bdev_is_md_interleaved(bdev);
@@ -243,20 +265,41 @@ remap_dif(void *md_buf, uint64_t num_blocks, struct spdk_bdev *bdev, uint32_t re
 			       md_interleaved,
 			       spdk_bdev_is_dif_head_of_md(bdev),
 			       dif_type,
-			       bdev->dif_check_flags,
+			       SPDK_DIF_FLAGS_REFTAG_CHECK,
 			       0,
 			       0xFFFF, 0x123, 0, 0, &dif_opts);
 	SPDK_CU_ASSERT_FATAL(rc == 0);
 
-	if (!md_interleaved) {
-		md_iov.iov_base = md_buf;
-		md_iov.iov_len	= spdk_bdev_get_md_size(bdev) * num_blocks;
+	spdk_dif_ctx_set_remapped_init_ref_tag(&dif_ctx, remapped_offset);
 
-		spdk_dif_ctx_set_remapped_init_ref_tag(&dif_ctx, remapped_offset);
+	if (md_interleaved) {
+		rc = spdk_dif_remap_ref_tag(iovs, iovcnt, num_blocks, &dif_ctx, &errblk, false);
 
+	} else {
+		struct iovec md_iov = {
+			.iov_base	= md_buf,
+			.iov_len	= spdk_bdev_get_md_size(bdev) * num_blocks
+		};
 		rc = spdk_dix_remap_ref_tag(&md_iov, num_blocks, &dif_ctx, &errblk, false);
-		SPDK_CU_ASSERT_FATAL(rc == 0);
 	}
+	SPDK_CU_ASSERT_FATAL(rc == 0);
+}
+
+int
+raid_bdev_verify_pi_reftag(struct iovec *iovs, int iovcnt, void *md_buf, uint64_t num_blocks,
+			   struct spdk_bdev *bdev, uint32_t offset_blocks)
+{
+	return verify_pi(iovs, iovcnt, md_buf, offset_blocks, num_blocks, bdev,
+			 SPDK_DIF_FLAGS_REFTAG_CHECK);
+}
+
+int
+raid_bdev_remap_pi_reftag(struct iovec *iovs, int iovcnt, void *md_buf, uint64_t num_blocks,
+			  struct spdk_bdev *bdev, uint32_t remapped_offset)
+{
+	remap_pi(iovs, iovcnt, md_buf, num_blocks, bdev, remapped_offset);
+
+	return 0;
 }
 
 /* Store the IO completion status in global variable to verify by various tests */
@@ -264,24 +307,11 @@ void
 raid_test_bdev_io_complete(struct raid_bdev_io *raid_io, enum spdk_bdev_io_status status)
 {
 	g_io_comp_status = ((status == SPDK_BDEV_IO_STATUS_SUCCESS) ? true : false);
-}
 
-int
-raid_bdev_remap_pi_reftag(struct iovec *iovs, int iovcnt, void *md_buf, uint64_t num_blocks,
-			  struct spdk_bdev *bdev, uint32_t remapped_offset)
-{
-	remap_dif(md_buf, num_blocks, bdev, remapped_offset);
-
-	return 0;
-}
-
-int
-raid_bdev_verify_pi_reftag(struct iovec *iovs, int iovcnt, void *md_buf,
-			   uint64_t num_blocks, struct spdk_bdev *bdev, uint32_t offset_blocks)
-{
-	verify_dif(iovs, iovcnt, md_buf, offset_blocks, num_blocks, bdev);
-
-	return 0;
+	if (g_io_comp_status && raid_io->type == SPDK_BDEV_IO_TYPE_READ) {
+		raid_bdev_remap_pi_reftag(raid_io->iovs, raid_io->iovcnt, raid_io->md_buf,
+					  raid_io->num_blocks, &raid_io->raid_bdev->bdev, raid_io->offset_blocks);
+	}
 }
 
 static void
@@ -326,11 +356,6 @@ get_child_io(struct io_output *output)
 static void
 child_io_complete(struct spdk_bdev_io *bdev_io, spdk_bdev_io_completion_cb cb, void *cb_arg)
 {
-	if (g_child_io_status_flag && bdev_io->type == SPDK_BDEV_IO_TYPE_READ) {
-		verify_dif(bdev_io->u.bdev.iovs, bdev_io->u.bdev.iovcnt, bdev_io->u.bdev.md_buf,
-			   bdev_io->u.bdev.offset_blocks, bdev_io->u.bdev.num_blocks, bdev_io->bdev);
-	}
-
 	cb(bdev_io, g_child_io_status_flag, cb_arg);
 }
 
@@ -343,6 +368,7 @@ spdk_bdev_writev_blocks_ext(struct spdk_bdev_desc *desc, struct spdk_io_channel 
 {
 	struct io_output *output = &g_io_output[g_io_output_index];
 	struct spdk_bdev_io *child_io;
+	int rc;
 
 	if (g_max_io_size < g_strip_size) {
 		SPDK_CU_ASSERT_FATAL(g_io_output_index < 2);
@@ -354,6 +380,14 @@ spdk_bdev_writev_blocks_ext(struct spdk_bdev_desc *desc, struct spdk_io_channel 
 	g_io_output_index++;
 
 	child_io = get_child_io(output);
+
+	if (g_child_io_status_flag && g_child_enable_dif) {
+		rc = verify_pi(child_io->u.bdev.iovs, child_io->u.bdev.iovcnt, child_io->u.bdev.md_buf,
+			       child_io->u.bdev.offset_blocks, child_io->u.bdev.num_blocks, child_io->bdev,
+			       child_io->bdev->dif_check_flags);
+		SPDK_CU_ASSERT_FATAL(rc == 0);
+	}
+
 	child_io_complete(child_io, cb, cb_arg);
 
 	return 0;
@@ -398,8 +432,12 @@ spdk_bdev_readv_blocks_ext(struct spdk_bdev_desc *desc, struct spdk_io_channel *
 	SPDK_CU_ASSERT_FATAL(g_io_output_index <= (g_max_io_size / g_strip_size) + 1);
 	set_io_output(output, desc, ch, offset_blocks, num_blocks, cb, cb_arg,
 		      SPDK_BDEV_IO_TYPE_READ, iov, iovcnt, opts->metadata);
-	generate_dif(iov, iovcnt, opts->metadata, offset_blocks, num_blocks,
-		     spdk_bdev_desc_get_bdev(desc));
+
+	if (g_child_enable_dif) {
+		generate_pi(iov, iovcnt, opts->metadata, offset_blocks, num_blocks,
+			    spdk_bdev_desc_get_bdev(desc));
+	}
+
 	g_io_output_index++;
 
 	child_io = get_child_io(output);
@@ -431,19 +469,25 @@ raid_io_initialize(struct raid_bdev_io *raid_io, struct raid_bdev_io_channel *ra
 	struct iovec *iovs = NULL;
 	int iovcnt = 0;
 	void *md_buf = NULL;
+	uint32_t md_size = spdk_bdev_get_md_size(&raid_bdev->bdev);
 
 	if (iotype != SPDK_BDEV_IO_TYPE_UNMAP && iotype != SPDK_BDEV_IO_TYPE_FLUSH) {
 		iovcnt = 1;
 		iovs = calloc(iovcnt, sizeof(struct iovec));
 		SPDK_CU_ASSERT_FATAL(iovs != NULL);
+
 		iovs->iov_len = blocks * g_block_len;
-		iovs->iov_base = calloc(1, iovs->iov_len);
-		SPDK_CU_ASSERT_FATAL(iovs->iov_base != NULL);
 
 		if (spdk_bdev_is_md_separate(&raid_bdev->bdev)) {
-			md_buf = calloc(1, blocks * spdk_bdev_get_md_size(&raid_bdev->bdev));
+			md_buf = calloc(1, blocks * md_size);
 			SPDK_CU_ASSERT_FATAL(md_buf != NULL);
+
+		} else if (spdk_bdev_is_md_interleaved(&raid_bdev->bdev)) {
+			iovs->iov_len += blocks * md_size;
 		}
+
+		iovs->iov_base = calloc(1, iovs->iov_len);
+		SPDK_CU_ASSERT_FATAL(iovs->iov_base != NULL);
 	}
 
 	raid_test_bdev_io_init(raid_io, raid_bdev, raid_ch, iotype, lba, blocks, iovs, iovcnt, md_buf);
@@ -467,6 +511,7 @@ verify_io(struct raid_bdev_io *raid_io, uint32_t io_status)
 	uint64_t pd_blocks;
 	uint32_t index = 0;
 	struct io_output *output;
+	int rc;
 
 	SPDK_CU_ASSERT_FATAL(raid_bdev != NULL);
 	SPDK_CU_ASSERT_FATAL(num_base_drives != 0);
@@ -497,13 +542,14 @@ verify_io(struct raid_bdev_io *raid_io, uint32_t io_status)
 		CU_ASSERT(raid_bdev_channel_get_base_channel(raid_io->raid_ch, pd_idx) == output->ch);
 		CU_ASSERT(raid_bdev->base_bdev_info[pd_idx].desc == output->desc);
 		CU_ASSERT(raid_io->type == output->iotype);
-		if (raid_io->type == SPDK_BDEV_IO_TYPE_WRITE) {
-			verify_dif(output->iovs, output->iovcnt, output->md_buf,
-				   output->offset_blocks, output->num_blocks,
-				   spdk_bdev_desc_get_bdev(raid_bdev->base_bdev_info[pd_idx].desc));
-		}
 	}
 	CU_ASSERT(g_io_comp_status == io_status);
+	if (raid_io->type == SPDK_BDEV_IO_TYPE_READ) {
+		rc = verify_pi(raid_io->iovs, raid_io->iovcnt, raid_io->md_buf,
+			       raid_io->offset_blocks, raid_io->num_blocks, &raid_bdev->bdev,
+			       raid_bdev->bdev.dif_check_flags);
+		SPDK_CU_ASSERT_FATAL(rc == 0);
+	}
 }
 
 static void
@@ -625,7 +671,9 @@ create_raid0(void)
 		.base_bdev_blockcnt = BLOCK_CNT,
 		.base_bdev_blocklen = g_block_len,
 		.strip_size = g_strip_size,
-		.md_type = g_enable_dif ? RAID_PARAMS_MD_SEPARATE : RAID_PARAMS_MD_NONE,
+		.md_type = !g_enable_dif ? RAID_PARAMS_MD_NONE :
+		!g_interleaved_dif ? RAID_PARAMS_MD_SEPARATE :
+		RAID_PARAMS_MD_INTERLEAVED
 	};
 
 	raid_bdev = raid_test_create_raid_bdev(&params, &g_raid0_module);
@@ -679,8 +727,8 @@ test_write_io(void)
 		lba += g_strip_size;
 		memset(g_io_output, 0, ((g_max_io_size / g_strip_size) + 1) * sizeof(struct io_output));
 		g_io_output_index = 0;
-		generate_dif(raid_io->iovs, raid_io->iovcnt, raid_io->md_buf,
-			     raid_io->offset_blocks, raid_io->num_blocks, &raid_bdev->bdev);
+		generate_pi(raid_io->iovs, raid_io->iovcnt, raid_io->md_buf,
+			    raid_io->offset_blocks, raid_io->num_blocks, &raid_bdev->bdev);
 		raid0_submit_rw_request(raid_io);
 		verify_io(raid_io, g_child_io_status_flag);
 		raid_io_cleanup(raid_io);
@@ -864,10 +912,91 @@ test_io_failure(void)
 		lba += g_strip_size;
 		memset(g_io_output, 0, ((g_max_io_size / g_strip_size) + 1) * sizeof(struct io_output));
 		g_io_output_index = 0;
-		generate_dif(raid_io->iovs, raid_io->iovcnt, raid_io->md_buf,
-			     raid_io->offset_blocks, raid_io->num_blocks, &raid_bdev->bdev);
+		generate_pi(raid_io->iovs, raid_io->iovcnt, raid_io->md_buf,
+			    raid_io->offset_blocks, raid_io->num_blocks, &raid_bdev->bdev);
 		raid0_submit_rw_request(raid_io);
 		verify_io(raid_io, g_child_io_status_flag);
+		raid_io_cleanup(raid_io);
+	}
+
+	raid_test_destroy_io_channel(raid_ch);
+	delete_raid0(raid_bdev);
+
+	reset_globals();
+}
+
+/* Test Ref Tag verify failure on write (before remap) */
+static void
+test_ref_tag_verify_failure_write(void)
+{
+	struct raid_bdev *raid_bdev;
+	uint32_t count;
+	uint64_t io_len;
+	uint64_t lba;
+	struct raid_bdev_io *raid_io;
+	struct raid_bdev_io_channel *raid_ch;
+
+	if (g_enable_dif == false) {
+		return;
+	}
+
+	set_globals();
+
+	raid_bdev = create_raid0();
+	raid_ch = raid_test_create_io_channel(raid_bdev);
+
+	lba = 0;
+	for (count = 0; count < 1; count++) {
+		raid_io = calloc(1, sizeof(*raid_io));
+		SPDK_CU_ASSERT_FATAL(raid_io != NULL);
+		io_len = (g_strip_size / 2) << count;
+		raid_io_initialize(raid_io, raid_ch, raid_bdev, lba, io_len, SPDK_BDEV_IO_TYPE_WRITE);
+		lba += g_strip_size;
+		memset(g_io_output, 0, ((g_max_io_size / g_strip_size) + 1) * sizeof(struct io_output));
+		g_io_output_index = 0;
+		raid0_submit_rw_request(raid_io);
+		SPDK_CU_ASSERT_FATAL(g_io_comp_status == false);
+		raid_io_cleanup(raid_io);
+	}
+
+	raid_test_destroy_io_channel(raid_ch);
+	delete_raid0(raid_bdev);
+
+	reset_globals();
+}
+
+/* Test Ref Tag verify failure on read (before remap) */
+static void
+test_ref_tag_verify_failure_read(void)
+{
+	struct raid_bdev *raid_bdev;
+	uint32_t count;
+	uint64_t io_len;
+	uint64_t lba;
+	struct raid_bdev_io *raid_io;
+	struct raid_bdev_io_channel *raid_ch;
+
+	if (g_enable_dif == false) {
+		return;
+	}
+
+	set_globals();
+
+	raid_bdev = create_raid0();
+	raid_ch = raid_test_create_io_channel(raid_bdev);
+
+	lba = 0;
+	g_child_enable_dif = false;
+	for (count = 0; count < 1; count++) {
+		raid_io = calloc(1, sizeof(*raid_io));
+		SPDK_CU_ASSERT_FATAL(raid_io != NULL);
+		io_len = (g_strip_size / 2) << count;
+		raid_io_initialize(raid_io, raid_ch, raid_bdev, lba, io_len, SPDK_BDEV_IO_TYPE_READ);
+		lba += g_strip_size;
+		memset(g_io_output, 0, ((g_max_io_size / g_strip_size) + 1) * sizeof(struct io_output));
+		g_io_output_index = 0;
+		raid0_submit_rw_request(raid_io);
+		SPDK_CU_ASSERT_FATAL(g_io_comp_status == false);
 		raid_io_cleanup(raid_io);
 	}
 
@@ -887,11 +1016,14 @@ main(int argc, char **argv)
 		{ "test_read_io", test_read_io },
 		{ "test_unmap_io", test_unmap_io },
 		{ "test_io_failure", test_io_failure },
+		{ "test_ref_tag_verify_failure_write", test_ref_tag_verify_failure_write },
+		{ "test_ref_tag_verify_failure_read", test_ref_tag_verify_failure_read },
 		CU_TEST_INFO_NULL,
 	};
 	CU_SuiteInfo suites[] = {
 		{ "raid0", set_test_opts, NULL, NULL, NULL, tests },
 		{ "raid0_dif", set_test_opts_dif, NULL, NULL, NULL, tests },
+		{ "raid0_interleaved_dif", set_test_opts_interleaved_dif, NULL, NULL, NULL, tests },
 		CU_SUITE_INFO_NULL,
 	};
 
