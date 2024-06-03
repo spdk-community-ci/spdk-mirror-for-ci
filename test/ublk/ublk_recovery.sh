@@ -20,7 +20,7 @@ spdk_pid=$!
 trap 'cleanup; exit 1' SIGINT SIGTERM EXIT
 waitforlisten $spdk_pid
 
-rpc_cmd ublk_create_target
+rpc_cmd ublk_create_target --enable-user-recovery
 rpc_cmd bdev_malloc_create -b malloc0 64 4096
 rpc_cmd ublk_start_disk malloc0 1 -q 2 -d 128
 
@@ -32,8 +32,8 @@ fio_proc=$!
 
 sleep 5
 
-# use `kill -9` so that `spdk_tgt` exit without destroying ublk device
-kill -9 $spdk_pid
+# `enable-user-recovery` turns all signal to SIGKILL so that `spdk_tgt` exit without destroying ublk device
+kill $spdk_pid
 
 sleep 5
 

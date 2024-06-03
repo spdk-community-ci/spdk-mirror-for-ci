@@ -59,7 +59,7 @@ int ublk_destroy_target(spdk_ublk_fini_cb cb_fn, void *cb_arg);
 int ublk_start_disk(const char *bdev_name, uint32_t ublk_id,
 		    uint32_t num_queues, uint32_t queue_depth,
 		    ublk_ctrl_cb ctrl_cb, void *cb_arg);
-int ublk_stop_disk(uint32_t ublk_id, ublk_ctrl_cb ctrl_cb, void *cb_arg);
+int ublk_stop_disk(uint32_t ublk_id, bool stop_retained, ublk_ctrl_cb ctrl_cb, void *cb_arg);
 int
 ublk_start_disk_recovery(const char *bdev_name, uint32_t ublk_id, ublk_ctrl_cb ctrl_cb,
 			 void *cb_arg);

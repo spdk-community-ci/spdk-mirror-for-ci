@@ -3,12 +3,14 @@
 #  All rights reserved.
 
 
-def ublk_create_target(client, cpumask=None, disable_user_copy=None):
+def ublk_create_target(client, cpumask=None, disable_user_copy=None, enable_user_recovery=None):
     params = {}
     if cpumask:
         params['cpumask'] = cpumask
     if disable_user_copy:
         params['disable_user_copy'] = True
+    if enable_user_recovery:
+        params['enable_user_recovery'] = True
     return client.call('ublk_create_target', params)
 
 
@@ -28,8 +30,10 @@ def ublk_start_disk(client, bdev_name, ublk_id=1, num_queues=1, queue_depth=128)
     return client.call('ublk_start_disk', params)
 
 
-def ublk_stop_disk(client, ublk_id=1):
+def ublk_stop_disk(client, ublk_id=1, stop_retained=None):
     params = {'ublk_id': ublk_id}
+    if stop_retained:
+        params['stop_retained'] = True
     return client.call('ublk_stop_disk', params)
 
 

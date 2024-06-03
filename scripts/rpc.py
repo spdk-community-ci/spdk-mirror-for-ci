@@ -2429,11 +2429,14 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     def ublk_create_target(args):
         rpc.ublk.ublk_create_target(args.client,
                                     cpumask=args.cpumask,
-                                    disable_user_copy=args.disable_user_copy)
+                                    disable_user_copy=args.disable_user_copy,
+                                    enable_user_recovery=args.enable_user_recovery,
+                                    )
     p = subparsers.add_parser('ublk_create_target',
                               help='Create spdk ublk target for ublk dev')
     p.add_argument('-m', '--cpumask', help='cpu mask for ublk dev')
     p.add_argument('--disable-user-copy', help='Disable user copy feature', action='store_true')
+    p.add_argument('--enable-user-recovery', help='Enable user recovery feature', action='store_true')
     p.set_defaults(func=ublk_create_target)
 
     def ublk_destroy_target(args):
@@ -2459,11 +2462,13 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
 
     def ublk_stop_disk(args):
         rpc.ublk.ublk_stop_disk(args.client,
-                                ublk_id=args.ublk_id)
+                                ublk_id=args.ublk_id,
+                                stop_retained=args.stop_retained)
 
     p = subparsers.add_parser('ublk_stop_disk',
                               help='Stop a ublk device')
     p.add_argument('ublk_id', help='ublk device id to be deleted. Example: 1.', type=int)
+    p.add_argument('--stop-retained', help='Stop ublk device that only exists in ublk driver.', action='store_true')
     p.set_defaults(func=ublk_stop_disk)
 
     def ublk_recover_disk(args):

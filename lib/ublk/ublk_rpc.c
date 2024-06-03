@@ -157,6 +157,7 @@ SPDK_RPC_REGISTER("ublk_start_disk", rpc_ublk_start_disk, SPDK_RPC_RUNTIME)
 
 struct rpc_ublk_stop_disk {
 	uint32_t ublk_id;
+	bool stop_retained;
 	struct spdk_jsonrpc_request *request;
 };
 
@@ -168,6 +169,7 @@ free_rpc_ublk_stop_disk(struct rpc_ublk_stop_disk *req)
 
 static const struct spdk_json_object_decoder rpc_ublk_stop_disk_decoders[] = {
 	{"ublk_id", offsetof(struct rpc_ublk_stop_disk, ublk_id), spdk_json_decode_uint32},
+	{"stop_retained", offsetof(struct rpc_ublk_stop_disk, stop_retained), spdk_json_decode_bool, true},
 };
 
 static void
@@ -203,7 +205,7 @@ rpc_ublk_stop_disk(struct spdk_jsonrpc_request *request,
 		goto invalid;
 	}
 
-	rc = ublk_stop_disk(req->ublk_id, rpc_ublk_stop_disk_done, req);
+	rc = ublk_stop_disk(req->ublk_id, req->stop_retained, rpc_ublk_stop_disk_done, req);
 	if (rc) {
 		spdk_jsonrpc_send_error_response(request, rc, spdk_strerror(-rc));
 		goto invalid;

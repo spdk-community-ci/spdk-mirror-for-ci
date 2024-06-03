@@ -45,6 +45,7 @@ static uint32_t g_next_ublk_poll_group = 0;
 static uint32_t g_ublks_max = UBLK_DEFAULT_MAX_SUPPORTED_DEVS;
 static struct spdk_cpuset g_core_mask;
 static bool g_disable_user_copy = false;
+static bool g_enable_user_recovery = false;
 
 struct ublk_queue;
 struct ublk_poll_group;
@@ -56,9 +57,10 @@ static int ublk_poll(void *arg);
 static int ublk_set_params(struct spdk_ublk_dev *ublk);
 static int ublk_start_dev(struct spdk_ublk_dev *ublk, bool is_recovering);
 static void ublk_free_dev(struct spdk_ublk_dev *ublk);
-static void ublk_delete_dev(void *arg);
+static void ublk_delete_dev(void *arg, bool retain_in_drv);
 static int ublk_close_dev(struct spdk_ublk_dev *ublk);
 static int ublk_ctrl_start_recovery(struct spdk_ublk_dev *ublk);
+static int ublk_stop_retained_disk(uint32_t ublk_id, ublk_ctrl_cb ctrl_cb, void *cb_arg);
 
 static int ublk_ctrl_cmd_submit(struct spdk_ublk_dev *ublk, uint32_t cmd_op);
 
@@ -138,6 +140,7 @@ struct spdk_ublk_dev {
 	uint32_t		ctrl_ops_in_progress;
 	bool			is_closing;
 	bool			is_recovering;
+	bool			retained;
 
 	TAILQ_ENTRY(spdk_ublk_dev) tailq;
 	TAILQ_ENTRY(spdk_ublk_dev) wait_tailq;
@@ -290,7 +293,8 @@ ublk_ctrl_cmd_error(struct spdk_ublk_dev *ublk, int32_t res)
 {
 	assert(res != 0);
 
-	SPDK_ERRLOG("ctrlr cmd %s failed, %s\n", ublk_op_name[ublk->current_cmd_op], spdk_strerror(-res));
+	SPDK_ERRLOG("ctrlr cmd %s failed, ublk_id: %d, %s\n",
+		    ublk_op_name[ublk->current_cmd_op], ublk->ublk_id, spdk_strerror(-res));
 	if (ublk->ctrl_cb) {
 		ublk->ctrl_cb(ublk->cb_arg, res);
 		ublk->ctrl_cb = NULL;
@@ -299,18 +303,19 @@ ublk_ctrl_cmd_error(struct spdk_ublk_dev *ublk, int32_t res)
 	switch (ublk->current_cmd_op) {
 	case UBLK_CMD_ADD_DEV:
 	case UBLK_CMD_SET_PARAMS:
+		ublk_delete_dev(ublk, false);
+		break;
 	case UBLK_CMD_START_USER_RECOVERY:
 	case UBLK_CMD_END_USER_RECOVERY:
-		ublk_delete_dev(ublk);
+		ublk_delete_dev(ublk, g_enable_user_recovery);
 		break;
 	case UBLK_CMD_START_DEV:
 		ublk_close_dev(ublk);
 		break;
 	case UBLK_CMD_GET_DEV_INFO:
-		ublk_free_dev(ublk);
-		break;
 	case UBLK_CMD_STOP_DEV:
 	case UBLK_CMD_DEL_DEV:
+		ublk_free_dev(ublk);
 		break;
 	default:
 		SPDK_ERRLOG("No match cmd operation,cmd_op = %d\n", ublk->current_cmd_op);
@@ -337,14 +342,14 @@ ublk_ctrl_process_cqe(struct io_uring_cqe *cqe)
 	case UBLK_CMD_ADD_DEV:
 		rc = ublk_set_params(ublk);
 		if (rc < 0) {
-			ublk_delete_dev(ublk);
+			ublk_delete_dev(ublk, false);
 			goto cb_done;
 		}
 		break;
 	case UBLK_CMD_SET_PARAMS:
 		rc = ublk_start_dev(ublk, false);
 		if (rc < 0) {
-			ublk_delete_dev(ublk);
+			ublk_delete_dev(ublk, false);
 			goto cb_done;
 		}
 		break;
@@ -363,14 +368,14 @@ ublk_ctrl_process_cqe(struct io_uring_cqe *cqe)
 	case UBLK_CMD_GET_DEV_INFO:
 		rc = ublk_ctrl_start_recovery(ublk);
 		if (rc < 0) {
-			ublk_delete_dev(ublk);
+			ublk_delete_dev(ublk, false);
 			goto cb_done;
 		}
 		break;
 	case UBLK_CMD_START_USER_RECOVERY:
 		rc = ublk_start_dev(ublk, true);
 		if (rc < 0) {
-			ublk_delete_dev(ublk);
+			ublk_delete_dev(ublk, g_enable_user_recovery);
 			goto cb_done;
 		}
 		break;
@@ -671,10 +676,12 @@ ublk_poller_register(void *args)
 
 struct rpc_create_target {
 	bool disable_user_copy;
+	bool enable_user_recovery;
 };
 
 static const struct spdk_json_object_decoder rpc_ublk_create_target[] = {
 	{"disable_user_copy", offsetof(struct rpc_create_target, disable_user_copy), spdk_json_decode_bool, true},
+	{"enable_user_recovery", offsetof(struct rpc_create_target, enable_user_recovery), spdk_json_decode_bool, true},
 };
 
 int
@@ -704,6 +711,8 @@ ublk_create_target(const char *cpumask_str, const struct spdk_json_val *params)
 			return -EINVAL;
 		}
 		g_disable_user_copy = req.disable_user_copy;
+		g_enable_user_recovery = req.enable_user_recovery;
+		SPDK_NOTICELOG("User Recovery %s\n", g_enable_user_recovery ? "enabled" : "disabled");
 	}
 
 	assert(g_ublk_tgt.poll_groups == NULL);
@@ -806,6 +815,15 @@ ublk_close_dev(struct spdk_ublk_dev *ublk)
 }
 
 static void
+_ublk_retain_ublk_device_fini(void *args)
+{
+	assert(spdk_thread_is_app_thread(NULL));
+
+	SPDK_NOTICELOG("Exiting without closing ublk devices.\n");
+	kill(getpid(), SIGKILL);
+}
+
+static void
 _ublk_fini(void *args)
 {
 	struct spdk_ublk_dev	*ublk, *ublk_tmp;
@@ -844,7 +862,11 @@ spdk_ublk_fini(spdk_ublk_fini_cb cb_fn, void *cb_arg)
 	g_ublk_tgt.cb_fn = cb_fn;
 	g_ublk_tgt.cb_arg = cb_arg;
 	g_ublk_tgt.is_destroying = true;
-	_ublk_fini(NULL);
+	if (g_enable_user_recovery) {
+		_ublk_retain_ublk_device_fini(NULL);
+	} else {
+		_ublk_fini(NULL);
+	}
 
 	return 0;
 }
@@ -978,7 +1000,7 @@ ublk_dev_list_unregister(struct spdk_ublk_dev *ublk)
 }
 
 static void
-ublk_delete_dev(void *arg)
+ublk_delete_dev(void *arg, bool retain_in_drv)
 {
 	struct spdk_ublk_dev *ublk = arg;
 	int rc = 0;
@@ -993,9 +1015,14 @@ ublk_delete_dev(void *arg)
 		close(ublk->cdev_fd);
 	}
 
-	rc = ublk_ctrl_cmd_submit(ublk, UBLK_CMD_DEL_DEV);
-	if (rc < 0) {
-		SPDK_ERRLOG("delete dev %d failed\n", ublk->ublk_id);
+	if (retain_in_drv) {
+		ublk->retained = true;
+		ublk_free_dev(ublk);
+	} else {
+		rc = ublk_ctrl_cmd_submit(ublk, UBLK_CMD_DEL_DEV);
+		if (rc < 0) {
+			SPDK_ERRLOG("delete dev %d failed\n", ublk->ublk_id);
+		}
 	}
 }
 
@@ -1011,7 +1038,7 @@ _ublk_close_dev_retry(void *arg)
 		SPDK_ERRLOG("Timeout on ctrl op completion.\n");
 	}
 	spdk_poller_unregister(&ublk->retry_poller);
-	ublk_delete_dev(ublk);
+	ublk_delete_dev(ublk, false);
 	return SPDK_POLLER_BUSY;
 }
 
@@ -1035,7 +1062,7 @@ ublk_try_close_dev(void *arg)
 		ublk->retry_poller = SPDK_POLLER_REGISTER(_ublk_close_dev_retry, ublk,
 				     UBLK_BUSY_POLLING_INTERVAL_US);
 	} else {
-		ublk_delete_dev(ublk);
+		ublk_delete_dev(ublk, false);
 	}
 }
 
@@ -1060,11 +1087,15 @@ ublk_try_close_queue(struct ublk_queue *q)
 }
 
 int
-ublk_stop_disk(uint32_t ublk_id, ublk_ctrl_cb ctrl_cb, void *cb_arg)
+ublk_stop_disk(uint32_t ublk_id, bool stop_retained, ublk_ctrl_cb ctrl_cb, void *cb_arg)
 {
 	struct spdk_ublk_dev *ublk;
 
 	assert(spdk_thread_is_app_thread(NULL));
+
+	if (stop_retained) {
+		return ublk_stop_retained_disk(ublk_id, ctrl_cb, cb_arg);
+	}
 
 	ublk = ublk_dev_find_by_id(ublk_id);
 	if (ublk == NULL) {
@@ -1083,6 +1114,34 @@ ublk_stop_disk(uint32_t ublk_id, ublk_ctrl_cb ctrl_cb, void *cb_arg)
 	ublk->ctrl_cb = ctrl_cb;
 	ublk->cb_arg = cb_arg;
 	return ublk_close_dev(ublk);
+}
+
+static int
+ublk_stop_retained_disk(uint32_t ublk_id, ublk_ctrl_cb ctrl_cb, void *cb_arg)
+{
+	struct spdk_ublk_dev *ublk;
+
+	ublk = ublk_dev_find_by_id(ublk_id);
+	if (ublk != NULL) {
+		SPDK_ERRLOG("ublk dev %d exists, "
+			    "should be stopped without `--stop-retained` option.\n", ublk_id);
+		return -EBUSY;
+	}
+
+	ublk = calloc(1, sizeof(*ublk));
+	if (ublk == NULL) {
+		return -ENOMEM;
+	}
+	ublk->ublk_id = ublk_id;
+	/* initialize cdev_fd to -1 to avoid freeing the file
+	 * descriptor 0 of stdout in ublk_free_dev() */
+	ublk->cdev_fd = -1;
+
+	ublk->ctrl_cb = ctrl_cb;
+	ublk->cb_arg = cb_arg;
+	ublk_dev_list_register(ublk);
+	ublk_delete_dev(ublk, false);
+	return 0;
 }
 
 static inline void
@@ -1800,7 +1859,11 @@ ublk_free_dev(struct spdk_ublk_dev *ublk)
 	}
 
 	ublk_dev_list_unregister(ublk);
-	SPDK_NOTICELOG("ublk dev %d stopped\n", ublk->ublk_id);
+	if (ublk->retained) {
+		SPDK_NOTICELOG("ublk dev %d stopped on server side\n", ublk->ublk_id);
+	} else {
+		SPDK_NOTICELOG("ublk dev %d stopped\n", ublk->ublk_id);
+	}
 
 	free(ublk);
 }
