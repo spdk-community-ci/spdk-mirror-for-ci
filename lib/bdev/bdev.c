@@ -5613,6 +5613,11 @@ bdev_writev_blocks_with_md(struct spdk_bdev_desc *desc, struct spdk_io_channel *
 		return -EINVAL;
 	}
 
+	/* No metadata feature of bdev doesn't support accel sequences and memory domains yet */
+	if (spdk_unlikely(desc->no_metadata && (seq != NULL || domain != NULL))) {
+		return -EINVAL;
+	}
+
 	bdev_io = bdev_channel_get_io(channel);
 	if (spdk_unlikely(!bdev_io)) {
 		return -ENOMEM;
@@ -8324,11 +8329,6 @@ spdk_bdev_open_async(const char *bdev_name, bool write, spdk_bdev_event_cb_t eve
 
 	if (opts != NULL && opts->size == 0) {
 		SPDK_ERRLOG("size in the options structure should not be zero\n");
-		return -EINVAL;
-	}
-
-	if (opts->no_metadata == true) {
-		SPDK_ERRLOG("No metadata option not supported\n");
 		return -EINVAL;
 	}
 
