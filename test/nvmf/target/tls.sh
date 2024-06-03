@@ -23,8 +23,8 @@ cleanup() {
 }
 
 function run_bdevperf() {
-	local subnqn hostnqn psk
-	subnqn=$1 hostnqn=$2 psk=${3:+--psk $3}
+	local subnqn hostnqn psk key key_name="bdevperf_key"
+	subnqn=$1 hostnqn=$2 key=$3 psk=""
 
 	# use bdevperf to test "bdev_nvme_attach_controller"
 	$bdevperf_app -m 0x4 -z -r $bdevperf_rpc_sock -q 128 -o 4096 -w verify -t 10 "${NO_HUGE[@]}" &
@@ -32,6 +32,11 @@ function run_bdevperf() {
 
 	trap 'cleanup; exit 1' SIGINT SIGTERM EXIT
 	waitforlisten $bdevperf_pid $bdevperf_rpc_sock
+
+	if [ -n "$key" ]; then
+		$rpc_py -s $bdevperf_rpc_sock keyring_file_add_key $key_name "$key"
+		psk=${key:+--psk $key_name}
+	fi
 
 	# send RPC
 	if ! $rpc_py -s $bdevperf_rpc_sock bdev_nvme_attach_controller -b TLSTEST -t $TEST_TRANSPORT \
@@ -49,7 +54,7 @@ function run_bdevperf() {
 }
 
 setup_nvmf_tgt() {
-	local key=$1
+	local key=$1 key_name=$2
 
 	$rpc_py nvmf_create_transport $NVMF_TRANSPORT_OPTS
 	$rpc_py nvmf_create_subsystem $NVME_SUBNQN -s $NVMF_SERIAL -m 10
@@ -58,7 +63,9 @@ setup_nvmf_tgt() {
 	$rpc_py bdev_malloc_create 32 4096 -b $bdev_malloc
 	$rpc_py nvmf_subsystem_add_ns $NVME_SUBNQN $bdev_malloc -n 1
 
-	$rpc_py nvmf_subsystem_add_host $NVME_SUBNQN $NVME_HOSTNQN --psk $key
+	$rpc_py keyring_file_add_key $key_name $key
+
+	$rpc_py nvmf_subsystem_add_host $NVME_SUBNQN $NVME_HOSTNQN --psk $key_name
 }
 
 nvmftestinit
@@ -132,7 +139,7 @@ chmod 0600 $key_2_path
 $rpc_py sock_impl_set_options -i ssl --tls-version 13
 $rpc_py framework_start_init
 
-setup_nvmf_tgt $key_path
+setup_nvmf_tgt $key_path "key1"
 
 # Test #1 - test connectivity with perf and bdevperf application
 # Check connectivity with nvmeperf"
@@ -164,7 +171,9 @@ echo -n "$key_long" > $key_long_path
 chmod 0600 $key_long_path
 nvmfappstart -m 0x2
 
-setup_nvmf_tgt $key_long_path
+key_long_name="key_long"
+
+setup_nvmf_tgt $key_long_path $key_long_name
 
 run_bdevperf $NVME_SUBNQN $NVME_HOSTNQN "$key_long_path"
 
@@ -176,7 +185,7 @@ NOT run_bdevperf $NVME_SUBNQN $NVME_HOSTNQN "$key_long_path"
 killprocess $nvmfpid
 nvmfappstart -m 0x2
 
-NOT setup_nvmf_tgt $key_long_path
+NOT setup_nvmf_tgt $key_long_path $key_long_name
 
 # Test #9 - test saving/loading JSON configuration by connecting to bdevperf
 killprocess $nvmfpid
@@ -184,16 +193,18 @@ chmod 0600 $key_long_path
 
 # Run both applications just to get their JSON configs
 nvmfappstart -m 0x2
-setup_nvmf_tgt $key_long_path
+setup_nvmf_tgt $key_long_path $key_long_name
 
 $bdevperf_app -m 0x4 -z -r $bdevperf_rpc_sock -q 128 -o 4096 -w verify -t 10 "${NO_HUGE[@]}" &
 bdevperf_pid=$!
 
 trap 'cleanup; exit 1' SIGINT SIGTERM EXIT
 waitforlisten $bdevperf_pid $bdevperf_rpc_sock
+
+$rpc_py -s $bdevperf_rpc_sock keyring_file_add_key $key_long_name $key_long_path
 $rpc_py -s $bdevperf_rpc_sock bdev_nvme_attach_controller -b TLSTEST -t $TEST_TRANSPORT \
 	-a $NVMF_FIRST_TARGET_IP -s $NVMF_PORT -f ipv4 -n $NVME_SUBNQN \
-	-q $NVME_HOSTNQN --psk $key_long_path
+	-q $NVME_HOSTNQN --psk $key_long_name
 
 tgtconf=$($rpc_py save_config)
 bdevperfconf=$($rpc_py -s $bdevperf_rpc_sock save_config)
@@ -218,7 +229,7 @@ killprocess $nvmfpid
 
 # Load the keys using keyring
 nvmfappstart
-setup_nvmf_tgt "$key_long_path"
+setup_nvmf_tgt "$key_long_path" $key_long_name
 "$bdevperf_app" -m 2 -z -r "$bdevperf_rpc_sock" \
 	-q 128 -o 4k -w verify -t 1 "${NO_HUGE[@]}" &
 bdevperf_pid=$!
