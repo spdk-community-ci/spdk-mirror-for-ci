@@ -1,7 +1,8 @@
 /*   SPDX-License-Identifier: BSD-3-Clause
  *   Copyright (C) 2019 Intel Corporation.
+ *   Copyright (c) 2021 Mellanox Technologies LTD.
+ *   Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES.
  *   All rights reserved.
- *   Copyright (c) 2021 Mellanox Technologies LTD. All rights reserved.
  */
 
 #include "spdk/stdinc.h"
@@ -1778,8 +1779,7 @@ vhost_user_dev_init(struct spdk_vhost_dev *vdev, const char *name,
 	struct spdk_vhost_user_dev *user_dev;
 
 	if (snprintf(path, sizeof(path), "%s%s", g_vhost_user_dev_dirname, name) >= (int)sizeof(path)) {
-		SPDK_ERRLOG("Resulting socket path for controller %s is too long: %s%s\n",
-			    name, g_vhost_user_dev_dirname, name);
+		SPDK_ERRLOG("Resulting socket path for controller exceeds %d symbols\n", PATH_MAX);
 		return -EINVAL;
 	}
 
