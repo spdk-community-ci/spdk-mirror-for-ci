@@ -2364,13 +2364,13 @@ before SPDK subsystems have been initialized.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-bdev_io_pool_size       | Optional | number      | Number of spdk_bdev_io structures in shared buffer pool
-bdev_io_cache_size      | Optional | number      | Maximum number of spdk_bdev_io structures cached per thread
-bdev_auto_examine       | Optional | boolean     | If set to false, the bdev layer will not examine every disks automatically
-iobuf_small_cache_size  | Optional | number      | Size of the small iobuf per thread cache
-iobuf_large_cache_size  | Optional | number      | Size of the large iobuf per thread cache
+ Name                   | Optional   | Type    | Description
+----------------------- | ---------- | ------- | ---------------------------------------------------------------------------
+ bdev_io_pool_size      | Optional   | number  | Number of spdk_bdev_io structures in shared buffer pool
+ bdev_io_cache_size     | Optional   | number  | Maximum number of spdk_bdev_io structures cached per thread
+ bdev_auto_examine      | Optional   | boolean | If set to false, the bdev layer will not examine every disks automatically
+ iobuf_small_cache_size | Optional   | number  | Size of the small iobuf per thread cache
+ iobuf_large_cache_size | Optional   | number  | Size of the large iobuf per thread cache
 
 #### Example
 
@@ -2402,17 +2402,17 @@ Example response:
 
 Get information about block devices (bdevs).
 
-#### Parameters
-
 The user may specify no parameters in order to list all block devices, or a block device may be
 specified by name.  If a timeout is specified, the method will block until a bdev with a specified
 name appears or the timeout expires.  By default, the timeout is zero, meaning the method returns
 immediately whether the bdev exists or not.
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Optional | string      | Block device name
-timeout                 | Optional | number      | Time (ms) to wait for a bdev with specified name to appear
+#### Parameters
+
+ Name    | Optional   | Type   | Description
+-------- | ---------- | ------ | --------------------------------------------------------------
+ name    | Optional   | string | Bdev name to query (if omitted, query all bdevs)
+ timeout | Optional   | number | Time in ms to wait for the bdev with specified name to appear
 
 #### Response
 
@@ -2472,9 +2472,9 @@ and bdev examination is automatic.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Block device name
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | ------------------
+ name   | Required   | string | Block device name
 
 #### Response
 
@@ -2511,7 +2511,7 @@ Report when all bdevs have been examined by every bdev module.
 
 #### Parameters
 
-None
+No parameters required
 
 #### Response
 
@@ -2543,15 +2543,15 @@ Example response:
 
 Get I/O statistics of block devices (bdevs).
 
-#### Parameters
-
 The user may specify no parameters in order to list all block devices, or a block device may be
 specified by name.
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Optional | string      | Block device name
-per_channel             | Optional | bool        | Display per channel data for specified block device.
+#### Parameters
+
+ Name        | Optional   | Type    | Description
+------------ | ---------- | ------- | -------------------------------------------------
+ name        | Optional   | string  | Bdev name to query (if omitted, query all bdevs)
+ per_channel | Optional   | boolean | Display per channel IO stats for specified bdev
 
 #### Response
 
@@ -2610,13 +2610,10 @@ it affects all other consumers.
 
 #### Parameters
 
-The user may specify no parameters in order to reset I/O statistics for all block devices, or
-a block device may be specified by name.
-
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Optional | string      | Block device name
-mode                    | Optional | string      | Mode to reset I/O statistics: all, maxmin (default: all)
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | ---------------------------------------------------------
+ name   | Optional   | string | Bdev name to reset (if omitted, reset all bdevs)
+ mode   | Optional   | string | Mode to reset I/O statistics: all, maxmin (default: all)
 
 #### Example
 
@@ -2649,10 +2646,10 @@ Control whether collecting data for histogram is enabled for specified bdev.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Block device name
-enable                  | Required | boolean     | Enable or disable histogram on specified device
+ Name   | Optional   | Type    | Description
+------- | ---------- | ------- | ------------------------------------------------
+ name   | Required   | string  | Block device name
+ enable | Required   | boolean | Enable or disable histogram on specified device
 
 #### Example
 
@@ -2686,9 +2683,9 @@ Get latency histogram for specified bdev.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Block device name
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | ------------------
+ name   | Required   | string | Block device name
 
 #### Result
 
@@ -2734,13 +2731,13 @@ Set the quality of service rate limit on a bdev.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Block device name
-rw_ios_per_sec          | Optional | number      | Number of R/W I/Os per second to allow. 0 means unlimited.
-rw_mbytes_per_sec       | Optional | number      | Number of R/W megabytes per second to allow. 0 means unlimited.
-r_mbytes_per_sec        | Optional | number      | Number of Read megabytes per second to allow. 0 means unlimited.
-w_mbytes_per_sec        | Optional | number      | Number of Write megabytes per second to allow. 0 means unlimited.
+ Name              | Optional   | Type   | Description
+------------------ | ---------- | ------ | ---------------------------------------------------------------------------------------
+ name              | Required   | string | Block device name
+ rw_ios_per_sec    | Optional   | number | Number of R/W I/Os per second to allow (>=1000, example: 20000). 0 means unlimited.
+ rw_mbytes_per_sec | Optional   | number | Number of R/W megabytes per second to allow (>=10, example: 100). 0 means unlimited.
+ r_mbytes_per_sec  | Optional   | number | Number of Read megabytes per second to allow (>=10, example: 100). 0 means unlimited.
+ w_mbytes_per_sec  | Optional   | number | Number of Write megabytes per second to allow (>=10, example: 100). 0 means unlimited.
 
 #### Example
 
@@ -2777,10 +2774,10 @@ Enable queue depth tracking on a specified bdev.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Block device name
-period                  | Required | int         | period (in microseconds).If set to 0, polling will be disabled.
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | ------------------------------------------------------------------------------------------------------------
+ name   | Required   | string | Block device name
+ period | Required   | number | Period (in microseconds) at which to update the queue depth reading. If set to 0, polling will be disabled.
 
 #### Example
 
@@ -2814,11 +2811,11 @@ Create a new compress bdev on a given base bdev.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-base_bdev_name          | Required | string      | Name of the base bdev
-pm_path                 | Required | string      | Path to persistent memory
-lb_size                 | Optional | int         | Compressed vol logical block size (512 or 4096)
+ Name           | Optional   | Type   | Description
+--------------- | ---------- | ------ | ------------------------------------------------
+ base_bdev_name | Required   | string | Name of the base bdev
+ pm_path        | Required   | string | Path to persistent memory
+ lb_size        | Optional   | number | Compressed vol logical block size (512 or 4096)
 
 #### Result
 
@@ -2847,9 +2844,9 @@ Delete a compressed bdev.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Name of the compress bdev
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | --------------------------
+ name   | Required   | string | Name of the compress bdev
 
 #### Example
 
@@ -2882,9 +2879,9 @@ Get a list of compressed volumes that are missing their pmem metadata.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Optional | string      | Name of the compress bdev
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | --------------------------
+ name   | Optional   | string | Name of the compress bdev
 
 #### Example
 
@@ -2915,20 +2912,20 @@ Example response:
 
 Create a new crypto bdev on a given base bdev.
 
-#### Parameters
-
-Name                    | Optional | Type        | Description
------------------------ |----------| ----------- | -----------
-base_bdev_name          | Required | string      | Name of the base bdev
-name                    | Required | string      | Name of the crypto vbdev to create
-crypto_pmd              | Optional | string      | Name of the crypto device driver. Obsolete, see accel_crypto_key_create
-key                     | Optional | string      | Key in hex form. Obsolete, see accel_crypto_key_create
-cipher                  | Optional | string      | Cipher to use, AES_CBC or AES_XTS (QAT and MLX5). Obsolete, see accel_crypto_key_create
-key2                    | Optional | string      | 2nd key in hex form only required for cipher AET_XTS. Obsolete, see accel_crypto_key_create
-key_name                | Optional | string      | Name of the key created with accel_crypto_key_create
-
 Both key and key2 must be passed in the hexlified form. For example, 256bit AES key may look like this:
 afd9477abf50254219ccb75965fbe39f23ebead5676e292582a0a67f66b88215
+
+#### Parameters
+
+ Name           | Optional   | Type   | Description
+--------------- | ---------- | ------ | --------------------------------------------------------------------------------------------
+ base_bdev_name | Required   | string | Name of the base bdev
+ name           | Required   | string | Name of the crypto vbdev to create
+ crypto_pmd     | Optional   | string | Name of the crypto device driver. Obsolete, see accel_crypto_key_create
+ key            | Optional   | string | Key in hex form. Obsolete, see accel_crypto_key_create
+ cipher         | Optional   | string | Cipher to use, AES_CBC or AES_XTS (QAT and MLX5). Obsolete, see accel_crypto_key_create
+ key2           | Optional   | string | 2nd key in hex form only required for cipher AET_XTS. Obsolete, see accel_crypto_key_create
+ key_name       | Optional   | string | Name of the key created with accel_crypto_key_create
 
 #### Result
 
@@ -2970,9 +2967,9 @@ Delete a crypto bdev.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Name of the crypto bdev
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | ------------------------
+ name   | Required   | string | Name of the crypto bdev
 
 #### Example
 
@@ -3007,13 +3004,13 @@ You can find more details about supported cache modes in the [OCF documentation]
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name to use
-mode                    | Required | string      | OCF cache mode: wb, wt, pt, wa, wi, wo
-cache_line_size         | Optional | int         | OCF cache line size in KiB: 4, 8, 16, 32, 64
-cache_bdev_name         | Required | string      | Name of underlying cache bdev
-core_bdev_name          | Required | string      | Name of underlying core bdev
+ Name            | Optional   | Type   | Description
+---------------- | ---------- | ------ | ---------------------------------------------
+ name            | Required   | string | Bdev name to use
+ mode            | Required   | string | OCF cache mode: wb, wt, pt, wa, wi, wo
+ cache_bdev_name | Required   | string | Name of underlying cache bdev
+ core_bdev_name  | Required   | string | Name of underlying core bdev
+ cache_line_size | Optional   | number | OCF cache line size in KiB: 4, 8, 16, 32, 64
 
 #### Result
 
@@ -3054,9 +3051,9 @@ Delete the OCF bdev
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | --------------
+ name   | Required   | string | Bdev name
 
 #### Example
 
@@ -3089,9 +3086,9 @@ Get statistics of chosen OCF block device.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Block device name
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | ------------------
+ name   | Required   | string | Block device name
 
 #### Response
 
@@ -3296,9 +3293,9 @@ Reset statistics of chosen OCF block device.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Block device name
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | ------------------
+ name   | Required   | string | Block device name
 
 #### Response
 
@@ -3335,9 +3332,9 @@ Get list of OCF devices including unregistered ones.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Optional | string      | Name of OCF vbdev or name of cache device or name of core device
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | -----------------------------------------------------------------
+ name   | Optional   | string | Name of OCF vbdev or name of cache device or name of core device
 
 #### Response
 
@@ -3384,10 +3381,10 @@ Set new cache mode on OCF bdev.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
-mode                    | Required | string      | OCF cache mode: wb, wt, pt, wa, wi, wo
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | ---------------------------------------
+ name   | Required   | string | Bdev name
+ mode   | Required   | string | OCF cache mode: wb, wt, pt, wa, wi, wo
 
 #### Response
 
@@ -3426,12 +3423,12 @@ A brief description of this functionality can be found in [OpenCAS documentation
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
-policy                  | Required | string      | Sequential cutoff policy: always, full, never
-threshold               | Optional | int         | Activation threshold in KiB
-promotion_count         | Optional | int         | Promotion request count
+ Name            | Optional   | Type   | Description
+---------------- | ---------- | ------ | ----------------------------------------------
+ name            | Required   | string | Bdev name
+ policy          | Required   | string | Sequential cutoff policy: always, full, never
+ threshold       | Optional   | number | Activation threshold in KiB
+ promotion_count | Optional   | number | Promotion request count
 
 #### Example
 
@@ -3476,9 +3473,9 @@ background. To see the status of flushing operation use bdev_ocf_flush_status.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | --------------
+ name   | Required   | string | Bdev name
 
 #### Example
 
@@ -3520,9 +3517,9 @@ was successful. To start manual flush use bdev_ocf_flush_start.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | --------------
+ name   | Required   | string | Bdev name
 
 #### Response
 
@@ -3571,18 +3568,18 @@ it to the upper layer yet.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Optional | string      | Bdev name to use
-block_size              | Required | number      | Data block size in bytes -must be multiple of 512
-num_blocks              | Required | number      | Number of blocks
-uuid                    | Optional | string      | UUID of new bdev
-optimal_io_boundary     | Optional | number      | Split on optimal IO boundary, in number of blocks, default 0
-md_size                 | Optional | number      | Metadata size for this bdev (0, 8, 16, 32, 64, or 128). Default is 0.
-md_interleave           | Optional | boolean     | Metadata location, interleaved if true, and separated if false. Default is false.
-dif_type                | Optional | number      | Protection information type. Parameter --md-size needs to be set along --dif-type. Default=0 - no protection.
-dif_is_head_of_md       | Optional | boolean     | Protection information is in the first 8 bytes of metadata. Default=false.
-physical_block_size     | Optional | number      | Physical block size of device; must be a power of 2 and at least 512
+ Name                | Optional   | Type    | Description
+-------------------- | ---------- | ------- | ------------------------------------------------------------------------------------------------------------
+ num_blocks          | Required   | number  | Number of blocks
+ block_size          | Required   | number  | Data block size in bytes -must be multiple of 512
+ physical_block_size | Optional   | number  | Physical block size of device; must be a power of 2 and at least 512
+ name                | Optional   | string  | Bdev name to use
+ uuid                | Optional   | string  | UUID of new bdev
+ optimal_io_boundary | Optional   | number  | Split on optimal IO boundary, in number of blocks, default 0
+ md_size             | Optional   | number  | Metadata size for this bdev (0, 8, 16, 32, 64, or 128). Default is 0.
+ md_interleave       | Optional   | boolean | Metadata location, interleaved if true, and separated if false. Default is false.
+ dif_type            | Optional   | number  | Protection information type. Parameter -md-size needs to be set along -dif-type. Default=0 - no protection.
+ dif_is_head_of_md   | Optional   | boolean | Protection information is in the first 8 bytes of metadata. Default=false.
 
 #### Result
 
@@ -3623,9 +3620,9 @@ Delete @ref bdev_config_malloc
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | --------------
+ name   | Required   | string | Bdev name
 
 #### Example
 
@@ -3658,15 +3655,16 @@ Construct @ref bdev_config_null
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name to use
-block_size              | Required | number      | Block size in bytes
-num_blocks              | Required | number      | Number of blocks
-uuid                    | Optional | string      | UUID of new bdev
-md_size                 | Optional | number      | Metadata size for this bdev. Default=0.
-dif_type                | Optional | number      | Protection information type. Parameter --md-size needs to be set along --dif-type. Default=0 - no protection.
-dif_is_head_of_md       | Optional | boolean     | Protection information is in the first 8 bytes of metadata. Default=false.
+ Name                | Optional   | Type    | Description
+-------------------- | ---------- | ------- | ------------------------------------------------------------------------------------------------------------
+ num_blocks          | Required   | number  | Number of blocks
+ block_size          | Required   | number  | Block size in bytes
+ name                | Required   | string  | Bdev name to use
+ physical_block_size | Optional   | number  | physical block size of the device; data part size must be a power of 2 and at least 512
+ uuid                | Optional   | string  | UUID of new bdev
+ md_size             | Optional   | number  | Metadata size for this bdev. Default=0.
+ dif_type            | Optional   | number  | Protection information type. Parameter -md-size needs to be set along -dif-type. Default=0 - no protection.
+ dif_is_head_of_md   | Optional   | boolean | Protection information is in the first 8 bytes of metadata. Default=false.
 
 #### Result
 
@@ -3709,9 +3707,9 @@ Delete @ref bdev_config_null.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | --------------
+ name   | Required   | string | Bdev name
 
 #### Example
 
@@ -3744,10 +3742,10 @@ Resize @ref bdev_config_null.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
-new_size                | Required | number      | Bdev new capacity in MiB
+ Name     | Optional   | Type   | Description
+--------- | ---------- | ------ | -------------------------
+ name     | Required   | string | Bdev name
+ new_size | Required   | number | Bdev new capacity in MiB
 
 #### Example
 
@@ -3781,13 +3779,13 @@ Construct @ref bdev_config_aio.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name to use
-filename                | Required | number      | Path to device or file
-block_size              | Optional | number      | Block size in bytes
-readonly                | Optional | boolean     | set aio bdev as read-only
-fallocate               | Optional | boolean     | Enable UNMAP and WRITE ZEROES support. Intended only for testing purposes due to synchronous syscall.
+ Name       | Optional   | Type    | Description
+----------- | ---------- | ------- | ------------------------------------------------------------------------------------------------------
+ filename   | Required   | number  | Path to device or file
+ name       | Required   | string  | Bdev name to use
+ block_size | Optional   | number  | Block size in bytes
+ readonly   | Optional   | boolean | Set aio bdev as read-only
+ fallocate  | Optional   | boolean | Enable UNMAP and WRITE ZEROES support. Intended only for testing purposes due to synchronous syscall.
 
 #### Result
 
@@ -3826,9 +3824,9 @@ Rescan the size of @ref bdev_config_aio.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | --------------
+ name   | Required   | string | Bdev name
 
 #### Example
 
@@ -3861,9 +3859,9 @@ Delete @ref bdev_config_aio.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | --------------
+ name   | Required   | string | Bdev name
 
 #### Example
 
@@ -3900,37 +3898,37 @@ They can be overridden if they are given by the RPC bdev_nvme_attach_controller.
 
 #### Parameters
 
-Name                       | Optional | Type        | Description
--------------------------- | -------- | ----------- | -----------
-action_on_timeout          | Optional | string      | Action to take on command time out: none, reset or abort
-timeout_us                 | Optional | number      | Timeout for each command, in microseconds. If 0, don't track timeouts
-timeout_admin_us           | Optional | number      | Timeout for each admin command, in microseconds. If 0, treat same as io timeouts ('timeout_us')
-keep_alive_timeout_ms      | Optional | number      | Keep alive timeout period in milliseconds, default is 10s
-arbitration_burst          | Optional | number      | The value is expressed as a power of two, a value of 111b indicates no limit
-low_priority_weight        | Optional | number      | The maximum number of commands that the controller may launch at one time from a low priority queue
-medium_priority_weight     | Optional | number      | The maximum number of commands that the controller may launch at one time from a medium priority queue
-high_priority_weight       | Optional | number      | The maximum number of commands that the controller may launch at one time from a high priority queue
-nvme_adminq_poll_period_us | Optional | number      | How often the admin queue is polled for asynchronous events in microseconds
-nvme_ioq_poll_period_us    | Optional | number      | How often I/O queues are polled for completions, in microseconds. Default: 0 (as fast as possible).
-io_queue_requests          | Optional | number      | The number of requests allocated for each NVMe I/O queue. Default: 512.
-delay_cmd_submit           | Optional | boolean     | Enable delaying NVMe command submission to allow batching of multiple commands. Default: `true`.
-transport_retry_count      | Optional | number      | The number of attempts per I/O in the transport layer before an I/O fails.
-bdev_retry_count           | Optional | number      | The number of attempts per I/O in the bdev layer before an I/O fails. -1 means infinite retries.
-transport_ack_timeout      | Optional | number      | Time to wait ack until retransmission for RDMA or connection close for TCP. Range 0-31 where 0 means use default.
-ctrlr_loss_timeout_sec     | Optional | number      | Time to wait until ctrlr is reconnected before deleting ctrlr.  -1 means infinite reconnects. 0 means no reconnect.
-reconnect_delay_sec        | Optional | number      | Time to delay a reconnect trial. 0 means no reconnect.
-fast_io_fail_timeout_sec   | Optional | number      | Time to wait until ctrlr is reconnected before failing I/O to ctrlr. 0 means no such timeout.
-disable_auto_failback      | Optional | boolean     | Disable automatic failback. The RPC bdev_nvme_set_preferred_path can be used to do manual failback.
-generate_uuids             | Optional | boolean     | Enable generation of UUIDs for NVMe bdevs that do not provide this value themselves.
-transport_tos              | Optional | number      | IPv4 Type of Service value. Only applicable for RDMA transport. Default: 0 (no TOS is applied).
-nvme_error_stat            | Optional | boolean     | Enable collecting NVMe error counts.
-rdma_srq_size              | Optional | number      | Set the size of a shared rdma receive queue. Default: 0 (disabled).
-io_path_stat               | Optional | boolean     | Enable collecting I/O stat of each nvme bdev io path. Default: `false`.
-allow_accel_sequence       | Optional | boolean     | Allow NVMe bdevs to advertise support for accel sequences if the controller also supports them.  Default: `false`.
-rdma_max_cq_size           | Optional | number      | Set the maximum size of a rdma completion queue. Default: 0 (unlimited)
-rdma_cm_event_timeout_ms   | Optional | number      | Time to wait for RDMA CM events. Default: 0 (0 means using default value of driver).
-dhchap_digests             | Optional | list        | List of allowed DH-HMAC-CHAP digests.
-dhchap_dhgroups            | Optional | list        | List of allowed DH-HMAC-CHAP DH groups.
+ Name                       | Optional   | Type    | Description
+--------------------------- | ---------- | ------- | -------------------------------------------------------------------------------------------------------------------
+ action_on_timeout          | Optional   | string  | Action to take on command time out. Valid values are: none, reset, abort
+ timeout_us                 | Optional   | number  | Timeout for each command, in microseconds. If 0, don't track timeouts
+ timeout_admin_us           | Optional   | number  | Timeout for each admin command, in microseconds. If 0, treat same as io timeouts
+ keep_alive_timeout_ms      | Optional   | number  | Keep alive timeout period in millisecond, default is 10s
+ arbitration_burst          | Optional   | number  | The value is expressed as a power of two, a value of 111b indicates no limit
+ low_priority_weight        | Optional   | number  | The maximum number of commands that the controller may launch at one time from a low
+ medium_priority_weight     | Optional   | number  | The maximum number of commands that the controller may launch at one time from a medium priority queue
+ high_priority_weight       | Optional   | number  | The maximum number of commands that the controller may launch at one time from a high priority queue
+ nvme_adminq_poll_period_us | Optional   | number  | How often the admin queue is polled for asynchronous events in microseconds
+ nvme_ioq_poll_period_us    | Optional   | number  | How often I/O queues are polled for completions, in microseconds. Default: 0 (as fast as possible).
+ io_queue_requests          | Optional   | number  | The number of requests allocated for each NVMe I/O queue. Default: 512.
+ delay_cmd_submit           | Optional   | boolean | Enable delaying NVMe command submission to allow batching of multiple commands. Default: true.
+ transport_retry_count      | Optional   | number  | The number of attempts per I/O in the transport layer before an I/O fails.
+ bdev_retry_count           | Optional   | number  | The number of attempts per I/O in the bdev layer before an I/O fails. -1 means infinite retries.
+ transport_ack_timeout      | Optional   | number  | Time to wait ack until retransmission for RDMA or connection close for TCP. Range 0-31 where 0 means use default.
+ ctrlr_loss_timeout_sec     | Optional   | number  | Time to wait until ctrlr is reconnected before deleting ctrlr. -1 means infinite reconnects. 0 means no reconnect.
+ reconnect_delay_sec        | Optional   | number  | Time to delay a reconnect trial. 0 means no reconnect.
+ fast_io_fail_timeout_sec   | Optional   | number  | Time to wait until ctrlr is reconnected before failing I/O to ctrlr. 0 means no such timeout.
+ disable_auto_failback      | Optional   | boolean | Disable automatic failback. The RPC bdev_nvme_set_preferred_path can be used to do manual failback.
+ generate_uuids             | Optional   | boolean | Enable generation of UUIDs for NVMe bdevs that do not provide this value themselves.
+ transport_tos              | Optional   | number  | IPv4 Type of Service value. Only applicable for RDMA transport. Default: 0 (no TOS is applied).
+ nvme_error_stat            | Optional   | boolean | Enable collecting NVMe error counts.
+ rdma_srq_size              | Optional   | number  | Set the size of a shared rdma receive queue. Default: 0 (disabled).
+ io_path_stat               | Optional   | boolean | Enable collecting I/O stat of each nvme bdev io path. Default: `false`.
+ allow_accel_sequence       | Optional   | boolean | Allow NVMe bdevs to advertise support for accel sequences if the controller also supports them. Default: `false`.
+ rdma_max_cq_size           | Optional   | number  | Set the maximum size of a rdma completion queue. Default: 0 (unlimited)
+ rdma_cm_event_timeout_ms   | Optional   | number  | Time to wait for RDMA CM events. Default: 0 (0 means using default value of driver).
+ dhchap_digests             | Optional   | string  | List of allowed DH-HMAC-CHAP digests.
+ dhchap_dhgroups            | Optional   | string  | List of allowed DH-HMAC-CHAP DH groups.
 
 #### Example
 
@@ -3984,10 +3982,10 @@ and deleted on removal.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-enable                  | Required | string      | True to enable, false to disable
-period_us               | Optional | number      | How often to poll for hot-insert and hot-remove events. Values: 0 - reset/use default or 1 to 10000000.
+ Name      | Optional   | Type   | Description
+---------- | ---------- | ------ | --------------------------------------------------------------------------------------------------------
+ enable    | Required   | string | True to enable, false to disable
+ period_us | Optional   | number | How often to poll for hot-insert and hot-remove events. Values: 0 - reset/use default or 1 to 10000000.
 
 #### Example
 
@@ -4034,32 +4032,32 @@ Array of names of newly created bdevs.
 
 #### Parameters
 
-Name                       | Optional | Type        | Description
--------------------------- | -------- | ----------- | -----------
-name                       | Required | string      | Name of the NVMe controller, prefix for each bdev name
-trtype                     | Required | string      | NVMe-oF target trtype: rdma or pcie
-traddr                     | Required | string      | NVMe-oF target address: ip or BDF
-adrfam                     | Optional | string      | NVMe-oF target adrfam: ipv4, ipv6, ib, fc, intra_host
-trsvcid                    | Optional | string      | NVMe-oF target trsvcid: port number
-priority                   | Optional | string      | Transport connection priority. Supported by TCP transport with POSIX sock module (see socket(7) man page).
-subnqn                     | Optional | string      | NVMe-oF target subnqn
-hostnqn                    | Optional | string      | NVMe-oF target hostnqn
-hostaddr                   | Optional | string      | NVMe-oF host address: ip address
-hostsvcid                  | Optional | string      | NVMe-oF host trsvcid: port number
-prchk_reftag               | Optional | bool        | Enable checking of PI reference tag for I/O processing
-prchk_guard                | Optional | bool        | Enable checking of PI guard for I/O processing
-hdgst                      | Optional | bool        | Enable TCP header digest
-ddgst                      | Optional | bool        | Enable TCP data digest
-fabrics_connect_timeout_us | Optional | bool        | Timeout for fabrics connect (in microseconds)
-multipath                  | Optional | string      | Multipathing behavior: disable, failover, multipath. Default is failover.
-num_io_queues              | Optional | number      | The number of IO queues to request during initialization. Range: (0, UINT16_MAX + 1], Default is 1024.
-ctrlr_loss_timeout_sec     | Optional | number      | Time to wait until ctrlr is reconnected before deleting ctrlr.  -1 means infinite reconnects. 0 means no reconnect.
-reconnect_delay_sec        | Optional | number      | Time to delay a reconnect trial. 0 means no reconnect.
-fast_io_fail_timeout_sec   | Optional | number      | Time to wait until ctrlr is reconnected before failing I/O to ctrlr. 0 means no such timeout.
-psk                        | Optional | string      | Name of the pre-shared key to be used for TLS (Enables SSL socket implementation for TCP)
-max_bdevs                  | Optional | number      | The size of the name array for newly created bdevs. Default is 128.
-dhchap_key                 | Optional | string      | DH-HMAC-CHAP key name.
-dhchap_ctrlr_key           | Optional | string      | DH-HMAC-CHAP controller key name.
+ Name                       | Optional   | Type   | Description
+--------------------------- | ---------- | ------ | -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ name                       | Required   | string | Name of the NVMe controller, prefix for each bdev name
+ trtype                     | Required   | string | NVMe-oF target trtype: 'PCIe', 'RDMA', 'FC', 'TCP'
+ traddr                     | Required   | string | NVMe-oF target address: PCI BDF or IP address
+ adrfam                     | Optional   | string | NVMe-oF target adrfam: ipv4, ipv6, ib, fc, intra_host
+ trsvcid                    | Optional   | string | NVMe-oF target trsvcid: port number for IP-based addresses
+ priority                   | Optional   | string | Transport connection priority. Supported by TCP transport with POSIX sock module (see socket(7) man page).
+ subnqn                     | Optional   | string | NVMe-oF target subnqn
+ hostnqn                    | Optional   | string | NVMe-oF target hostnqn
+ hostaddr                   | Optional   | string | NVMe-oF host address: ip address
+ hostsvcid                  | Optional   | string | NVMe-oF host trsvcid: port number
+ prchk_reftag               | Optional   | string | Enable checking of PI reference tag for I/O processing
+ prchk_guard                | Optional   | string | Enable checking of PI guard for I/O processing
+ hdgst                      | Optional   | string | Enable TCP header digest
+ ddgst                      | Optional   | string | Enable TCP data digest
+ fabrics_connect_timeout_us | Optional   | number | Timeout for fabrics connect (in microseconds)
+ multipath                  | Optional   | string | Multipathing behavior: disable, failover, multipath. Default is failover.
+ num_io_queues              | Optional   | string | The number of IO queues to request during initialization. Range: (0, UINT16_MAX + 1], Default is 1024.
+ ctrlr_loss_timeout_sec     | Optional   | string | Time to wait until ctrlr is reconnected before deleting ctrlr.  -1 means infinite reconnects. 0 means no reconnect.
+ reconnect_delay_sec        | Optional   | number | Time to delay a reconnect retry.
+ fast_io_fail_timeout_sec   | Optional   | number | Time to wait until ctrlr is reconnected before failing I/O to ctrlr. 0 means no such timeout.
+ psk                        | Optional   | string | Name of the pre-shared key to be used for TLS (Enables SSL socket implementation for TCP)
+ max_bdevs                  | Optional   | number | The size of the name array for newly created bdevs. Default is 128.
+ dhchap_key                 | Optional   | string | DH-HMAC-CHAP key name.
+ dhchap_ctrlr_key           | Optional   | string | DH-HMAC-CHAP controller key name.
 
 #### Example
 
@@ -4154,16 +4152,16 @@ or the address was properly removed, false otherwise.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Controller name
-trtype                  | Optional | string      | NVMe-oF target trtype: rdma or tcp
-traddr                  | Optional | string      | NVMe-oF target address: ip or BDF
-adrfam                  | Optional | string      | NVMe-oF target adrfam: ipv4, ipv6, ib, fc, intra_host
-trsvcid                 | Optional | string      | NVMe-oF target trsvcid: port number
-subnqn                  | Optional | string      | NVMe-oF target subnqn
-hostaddr                | Optional | string      | NVMe-oF host address: ip
-hostsvcid               | Optional | string      | NVMe-oF host svcid: port number
+ Name      | Optional   | Type   | Description
+---------- | ---------- | ------ | ------------------------------------------------------
+ name      | Required   | string | Controller name
+ trtype    | Optional   | string | NVMe-oF target trtype: rdma or tcp
+ traddr    | Optional   | string | NVMe-oF target address: ip or BDF
+ adrfam    | Optional   | string | NVMe-oF target adrfam: ipv4, ipv6, ib, fc, intra_host
+ trsvcid   | Optional   | string | NVMe-oF target trsvcid: port number
+ subnqn    | Optional   | string | NVMe-oF target subnqn
+ hostaddr  | Optional   | string | NVMe-oF host address: ip
+ hostsvcid | Optional   | string | NVMe-oF host svcid: port number
 
 #### Example
 
@@ -4203,10 +4201,10 @@ Returns true if the controller reset was successful, false otherwise.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | NVMe controller name (or NVMe bdev controller name for multipath)
-cntlid                  | Optional | number      | NVMe controller ID (used as NVMe controller name for multipath)
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | ------------------------------------------------------------------
+ name   | Required   | string | NVMe controller name (or NVMe bdev controller name for multipath)
+ cntlid | Optional   | number | NVMe controller ID (used as NVMe controller name for multipath)
 
 #### Example
 
@@ -4246,10 +4244,10 @@ Returns true if the controller enablement was successful or a controller was alr
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | NVMe controller name (or NVMe bdev controller name for multipath)
-cntlid                  | Optional | number      | NVMe controller ID (used as NVMe controller name for multipath)
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | ------------------------------------------------------------------
+ name   | Required   | string | NVMe controller name (or NVMe bdev controller name for multipath)
+ cntlid | Optional   | number | NVMe controller ID (used as NVMe controller name for multipath)
 
 #### Example
 
@@ -4289,10 +4287,10 @@ Returns true if the controller disablement was successful or a controller was al
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | NVMe controller name (or NVMe bdev controller name for multipath)
-cntlid                  | Optional | number      | NVMe controller ID (used as NVMe controller name for multipath)
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | ------------------------------------------------------------------
+ name   | Required   | string | NVMe controller name (or NVMe bdev controller name for multipath)
+ cntlid | Optional   | number | NVMe controller ID (used as NVMe controller name for multipath)
 
 #### Example
 
@@ -4338,19 +4336,19 @@ The 'name' is also used to later stop the discovery service.
 
 #### Parameters
 
-Name                       | Optional | Type        | Description
--------------------------- | -------- | ----------- | -----------
-name                       | Required | string      | Prefix for NVMe controllers
-trtype                     | Required | string      | NVMe-oF target trtype: rdma or tcp
-traddr                     | Required | string      | NVMe-oF target address: ip
-adrfam                     | Optional | string      | NVMe-oF target adrfam: ipv4, ipv6
-trsvcid                    | Optional | string      | NVMe-oF target trsvcid: port number
-hostnqn                    | Optional | string      | NVMe-oF target hostnqn
-wait_for_attach            | Optional | bool        | Wait to complete until all discovered NVM subsystems are attached
-attach_timeout_ms          | Optional | number      | Time to wait until the discovery and all discovered NVM subsystems are attached
-ctrlr_loss_timeout_sec     | Optional | number      | Time to wait until ctrlr is reconnected before deleting ctrlr.  -1 means infinite reconnects. 0 means no reconnect.
-reconnect_delay_sec        | Optional | number      | Time to delay a reconnect trial. 0 means no reconnect.
-fast_io_fail_timeout_sec   | Optional | number      | Time to wait until ctrlr is reconnected before failing I/O to ctrlr. 0 means no such timeout.
+ Name                     | Optional   | Type    | Description
+------------------------- | ---------- | ------- | -------------------------------------------------------------------------------------------------------------------
+ name                     | Required   | string  | Prefix for NVMe controllers
+ trtype                   | Required   | string  | NVMe-oF target trtype: rdma or tcp
+ traddr                   | Required   | string  | NVMe-oF target address: ip
+ adrfam                   | Optional   | string  | NVMe-oF target adrfam: ipv4, ipv6
+ trsvcid                  | Optional   | string  | NVMe-oF target trsvcid: port number
+ hostnqn                  | Optional   | string  | NVMe-oF target hostnqn
+ wait_for_attach          | Optional   | boolean | Wait to complete until all discovered NVM subsystems are attached
+ ctrlr_loss_timeout_sec   | Optional   | number  | Time to wait until ctrlr is reconnected before deleting ctrlr. -1 means infinite reconnects. 0 means no reconnect.
+ reconnect_delay_sec      | Optional   | number  | Time to delay a reconnect trial. 0 means no reconnect.
+ fast_io_fail_timeout_sec | Optional   | number  | Time to wait until ctrlr is reconnected before failing I/O to ctrlr. 0 means no such timeout.
+ attach_timeout_ms        | Optional   | number  | Time to wait until the discovery and all discovered NVM subsystems are attached
 
 #### Example
 
@@ -4389,9 +4387,9 @@ discovered via the service that is being stopped.
 
 #### Parameters
 
-Name                       | Optional | Type        | Description
--------------------------- | -------- | ----------- | -----------
-name                       | Required | string      | Name of service to stop
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | ------------------------
+ name   | Required   | string | Name of service to stop
 
 #### Example
 
@@ -4421,6 +4419,10 @@ Example response:
 ### bdev_nvme_get_discovery_info {#rpc_bdev_nvme_get_discovery_info}
 
 Get information about the discovery service.
+
+#### Parameters
+
+No parameters required
 
 #### Example
 
@@ -4461,9 +4463,9 @@ Display all or the specified NVMe bdev's active I/O paths.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Optional | string      | Name of the NVMe bdev
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | ----------------------
+ name   | Optional   | string | Name of the NVMe bdev
 
 #### Example
 
@@ -4519,10 +4521,10 @@ NOTE: This RPC does not support NVMe bdevs in failover mode.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Name of the NVMe bdev
-cntlid                  | Required | number      | NVMe-oF controller ID
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | ----------------------
+ name   | Required   | string | Name of the NVMe bdev
+ cntlid | Required   | number | NVMe-oF controller ID
 
 #### Example
 
@@ -4557,12 +4559,12 @@ selector for active-active multipath policy.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Name of the NVMe bdev
-policy                  | Required | string      | Multipath policy: active_active or active_passive
-selector                | Optional | string      | Multipath selector: round_robin or queue_depth, used in active-active mode. Default is round_robin
-rr_min_io               | Optional | number      | Number of I/Os routed to current io path before switching to another for round-robin selector. The min value is 1.
+ Name      | Optional   | Type   | Description
+---------- | ---------- | ------ | -------------------------------------------------------------------------------------------------------------------
+ name      | Required   | string | Name of the NVMe bdev
+ policy    | Required   | string | Multipath policy: active_active or active_passive
+ selector  | Optional   | string | Multipath selector: round_robin or queue_depth, used in active-active mode. Default is round_robin
+ rr_min_io | Optional   | number | Number of I/Os routed to current io path before switching to another for round-robin selector. The min value is 1.
 
 #### Example
 
@@ -4597,9 +4599,9 @@ true before using this RPC.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Name of the NVMe bdev
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | ----------------------
+ name   | Required   | string | Name of the NVMe bdev
 
 #### Example
 
@@ -4692,9 +4694,9 @@ Register CUSE device on NVMe controller.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Name of the NVMe controller
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | ----------------------------
+ name   | Required   | string | Name of the NVMe controller
 
 #### Example
 
@@ -4727,9 +4729,9 @@ Unregister CUSE device on NVMe controller.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Name of the NVMe controller
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | ----------------------------
+ name   | Required   | string | Name of the NVMe controller
 
 #### Example
 
@@ -4762,12 +4764,12 @@ Creates a virtual zone device on top of existing non-zoned bdev.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Name of the Zone device
-base_bdev               | Required | string      | Name of the Base bdev
-zone_capacity           | Required | number      | Zone capacity in blocks
-optimal_open_zones      | Required | number      | Number of zones required to reach optimal write speed
+ Name               | Optional   | Type   | Description
+------------------- | ---------- | ------ | ------------------------------------------------------
+ name               | Required   | string | Name of the Zone device
+ base_bdev          | Required   | string | Name of the Base bdev
+ zone_capacity      | Required   | number | Zone capacity in blocks
+ optimal_open_zones | Required   | number | Number of zones required to reach optimal write speed
 
 #### Example
 
@@ -4803,9 +4805,9 @@ Deletes a virtual zone device.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Name of the Zone device
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | ------------------------
+ name   | Required   | string | Name of the Zone device
 
 #### Example
 
@@ -4838,10 +4840,10 @@ Download and commit firmware to NVMe device.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-filename                | Required | string      | filename of the firmware to download
-bdev_name               | Required | string      | Name of the NVMe block device
+ Name      | Optional   | Type   | Description
+---------- | ---------- | ------ | -------------------------------------
+ bdev_name | Required   | string | Name of the NVMe block device
+ filename  | Required   | string | Filename of the firmware to download
 
 #### Example
 
@@ -4865,7 +4867,7 @@ Get bdev_nvme poll group transport statistics.
 
 #### Parameters
 
-This RPC method accepts no parameters
+No parameters required
 
 #### Response
 
@@ -4986,9 +4988,9 @@ Display health log of the required NVMe bdev device.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Name of the NVMe bdev controller
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | ---------------------------------
+ name   | Required   | string | Name of the NVMe bdev controller
 
 #### Response
 
@@ -5042,14 +5044,14 @@ This method is available only if SPDK was build with Ceph RBD support.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Optional | string      | Registered Rados cluster object name
-user_id                 | Optional | string      | Ceph ID (i.e. admin, not client.admin)
-config_param            | Optional | string map  | Explicit librados configuration
-config_file             | Optional | string      | File path of librados configuration file
-key_file                | Optional | string      | File path of librados key file
-core_mask               | Optional | string      | Core mask for librados IO context threads
+ Name         | Optional   | Type       | Description
+------------- | ---------- | ---------- | ------------------------------------------
+ name         | Optional   | string     | Registered Rados cluster object name
+ user_id      | Optional   | string     | Ceph ID (i.e. admin, not client.admin)
+ config_param | Optional   | string map | Explicit librados configuration
+ config_file  | Optional   | string     | File path of libraodos configuration file
+ key_file     | Optional   | string     | File path of libraodos key file
+ core_mask    | Optional   | string     | core mask for librbd IO context threads
 
 This RPC registers a Rados Cluster object handle which is only known
 to rbd module, it uses user_id + config_param or user_id + config_file +
@@ -5115,9 +5117,9 @@ will fail.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -------------------------
-name                    | Required | string      | Rados cluster object name
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | ----------------------------------------
+ name   | Required   | string | Rados cluster object name to unregister
 
 #### Example
 
@@ -5155,9 +5157,9 @@ returns the cluster info of every registered Raods Cluster name.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -------------------------
-name                    | Optional | string      | Rados cluster object name
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | --------------------------------------------------------------------
+ name   | Optional   | string | Rados cluster object name to query (if omitted, query all clusters)
 
 #### Example
 
@@ -5191,16 +5193,16 @@ This method is available only if SPDK was build with Ceph RBD support.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Optional | string      | Bdev name
-user_id                 | Optional | string      | Ceph ID (i.e. admin, not client.admin)
-pool_name               | Required | string      | Pool name
-rbd_name                | Required | string      | Image name
-block_size              | Required | number      | Block size
-config                  | Optional | string map  | Explicit librados configuration
-cluster_name            | Optional | string      | Rados cluster object name created in this module.
-uuid                    | Optional | string      | UUID of new bdev
+ Name         | Optional   | Type       | Description
+------------- | ---------- | ---------- | --------------------------------------------------
+ pool_name    | Required   | string     | Ceph RBD pool name
+ rbd_name     | Required   | string     | Ceph RBD image name
+ block_size   | Required   | number     | Block size of RBD volume
+ name         | Optional   | string     | Name of block device
+ user_id      | Optional   | string     | Ceph user name (i.e. admin, not client.admin)
+ config       | Optional   | string map | Explicit librados configuration
+ cluster_name | Optional   | string     | Rados cluster object name created in this module.
+ uuid         | Optional   | string     | UUID of new bdev
 
 If no config is specified, Ceph configuration files must exist with
 all relevant settings for accessing the pool. If a config map is
@@ -5296,9 +5298,9 @@ This method is available only if SPDK was build with Ceph RBD support.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | ---------------------------
+ name   | Required   | string | Name of rbd bdev to delete
 
 #### Example
 
@@ -5337,10 +5339,10 @@ This method is available only if SPDK was build with Ceph RBD support.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
-new_size                | Required | int         | New bdev size for resize operation in MiB
+ Name     | Optional   | Type   | Description
+--------- | ---------- | ------ | ---------------------------------------------------
+ name     | Required   | string | Name of rbd bdev to resize
+ new_size | Required   | number | New bdev size of resize operation. The unit is MiB
 
 #### Example
 
@@ -5375,15 +5377,15 @@ path to create an artificial drive latency. All latency values supplied to this 
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
-base_bdev_name          | Required | string      | Base bdev name
-avg_read_latency        | Required | number      | average read latency (us)
-p99_read_latency        | Required | number      | p99 read latency (us)
-avg_write_latency       | Required | number      | average write latency (us)
-p99_write_latency       | Required | number      | p99 write latency (us)
-uuid                    | Optional | string      | UUID of new bdev
+ Name              | Optional   | Type   | Description
+------------------ | ---------- | ------ | ----------------------------------------------------------------------
+ base_bdev_name    | Required   | string | Name of the existing bdev
+ name              | Required   | string | Name of block device
+ avg_read_latency  | Required   | number | Average read latency (us). Complete 99% of read ops with this delay
+ p99_read_latency  | Required   | number | p99 read latency (us). Complete 1% of read ops with this delay
+ avg_write_latency | Required   | number | average write latency (us). Complete 99% of write ops with this delay
+ p99_write_latency | Required   | number | p99 write latency (us). Complete 1% of write ops with this delay
+ uuid              | Optional   | string | UUID of block device
 
 #### Result
 
@@ -5425,9 +5427,9 @@ Delete delay bdev.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | -----------------------------
+ name   | Required   | string | Name of delay bdev to delete
 
 #### Example
 
@@ -5462,11 +5464,11 @@ outstanding I/O will be completed with the old latency.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-delay_bdev_name         | Required | string      | Name of the delay bdev
-latency_type            | Required | string      | One of: avg_read, avg_write, p99_read, p99_write
-latency_us              | Required | number      | The new latency value in microseconds
+ Name            | Optional   | Type   | Description
+---------------- | ---------- | ------ | -------------------------------------------------
+ delay_bdev_name | Required   | string | Name of the delay bdev
+ latency_type    | Required   | string | One of: avg_read, avg_write, p99_read, p99_write
+ latency_us      | Required   | number | The new latency value in microseconds
 
 #### Result
 
@@ -5503,10 +5505,10 @@ Construct error bdev.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-base_name               | Required | string      | Base bdev name
-uuid                    | Optional | string      | UUID for this bdev
+ Name      | Optional   | Type   | Description
+---------- | ---------- | ------ | -------------------
+ base_name | Required   | string | Base bdev name
+ uuid      | Optional   | string | UUID for this bdev
 
 #### Example
 
@@ -5543,9 +5545,9 @@ Delete error bdev
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Error bdev name
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | -----------------------------
+ name   | Required   | string | Name of error bdev to delete
 
 #### Example
 
@@ -5579,15 +5581,15 @@ value is 1 and if 'num' is set to zero, the specified injection is disabled.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Name of the error injection bdev
-io_type                 | Required | string      | io type 'clear' 'read' 'write' 'unmap' 'flush' 'all'
-error_type              | Required | string      | error type 'failure' 'pending' 'corrupt_data' 'nomem'
-num                     | Optional | int         | the number of commands you want to fail.(default:1)
-queue_depth             | Optional | int         | the queue depth at which to trigger the error
-corrupt_offset          | Optional | int         | the offset in bytes to xor with corrupt_value
-corrupt_value           | Optional | int         | the value for xor (1-255, 0 is invalid)
+ Name           | Optional   | Type   | Description
+--------------- | ---------- | ------ | -------------------------------------------------------------
+ name           | Required   | string | Name of the error injection bdev
+ io_type        | Required   | string | IO type one of 'clear' 'read' 'write' 'unmap' 'flush' 'all'
+ error_type     | Required   | string | Error type one of 'failure' 'pending' 'corrupt_data' 'nomem'
+ num            | Optional   | number | The number of commands you want to fail.(default:1)
+ queue_depth    | Optional   | number | The queue depth at which to trigger the error
+ corrupt_offset | Optional   | number | The offset in bytes to xor with corrupt_value
+ corrupt_value  | Optional   | number | The value for xor (1-255, 0 is invalid)
 
 #### Example
 
@@ -5623,9 +5625,9 @@ This RPC can be called at any time, but the new value will only take effect for 
 
 #### Parameters
 
-Name                       | Optional | Type        | Description
--------------------------- | -------- | ----------- | -----------
-timeout_sec                | Optional | number      | Timeout for command, in seconds, if 0, don't track timeout
+ Name        | Optional   | Type   | Description
+------------ | ---------- | ------ | -----------------------------------------------------------
+ timeout_sec | Optional   | number | Timeout for command, in seconds, if 0, don't track timeout
 
 #### Example
 
@@ -5661,11 +5663,11 @@ This method is available only if SPDK was build with iSCSI initiator support.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
-initiator_iqn           | Required | string      | IQN name used during connection
-url                     | Required | string      | iSCSI resource URI
+ Name          | Optional   | Type   | Description
+-------------- | ---------- | ------ | --------------------------------
+ name          | Required   | string | Name of block device
+ url           | Required   | string | iSCSI resource URI
+ initiator_iqn | Required   | string | IQN name used during connection
 
 #### Result
 
@@ -5706,9 +5708,9 @@ This method is available only if SPDK was built with iSCSI initiator support.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | -----------------------------
+ name   | Required   | string | Name of iSCSI bdev to delete
 
 #### Example
 
@@ -5743,16 +5745,16 @@ This RPC is subject to change.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
-base_bdev               | Required | string      | Name of the base device
-cache                   | Required | string      | Name of the cache device
-uuid                    | Optional | string      | UUID of restored bdev (not applicable when creating new instance)
-core_mask               | Optional | string      | CPU core(s) possible for placement of the ftl core thread, application main thread by default
-overprovisioning        | Optional | int         | Percentage of base device used for relocation, 20% by default
-fast_shutdown           | Optional | bool        | When set FTL will minimize persisted data on target application shutdown and rely on shared memory during next load
-l2p_dram_limit          | Optional | int         | DRAM limit for most recent L2P addresses (default 2048 MiB)
+ Name             | Optional   | Type    | Description
+----------------- | ---------- | ------- | --------------------------------------------------------------------------------------------------------------------
+ name             | Required   | string  | Name of the bdev
+ base_bdev        | Required   | string  | Name of the base device
+ cache            | Required   | string  | Name of the cache device
+ core_mask        | Optional   | string  | CPU core(s) possible for placement of the ftl core thread, application main thread by default
+ fast_shutdown    | Optional   | boolean | When set FTL will minimize persisted data on target application shutdown and rely on shared memory during next load
+ uuid             | Optional   | string  | UUID of restored bdev (not applicable when creating new instance)
+ overprovisioning | Optional   | number  | Percentage of base device used for relocation, 20% by default
+ l2p_dram_limit   | Optional   | number  | l2p size that could reside in DRAM; default 2048
 
 #### Result
 
@@ -5799,16 +5801,16 @@ This RPC is subject to change.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
-base_bdev               | Required | string      | Name of the base device
-cache                   | Required | string      | Name of the cache device
-uuid                    | Required | string      | UUID of restored bdev
-core_mask               | Optional | string      | CPU core(s) possible for placement of the ftl core thread, application main thread by default
-overprovisioning        | Optional | int         | Percentage of base device used for relocation, 20% by default
-fast_shutdown           | Optional | bool        | When set FTL will minimize persisted data on target application shutdown and rely on shared memory during next load
-l2p_dram_limit          | Optional | int         | DRAM limit for most recent L2P addresses (default 2048 MiB)
+ Name             | Optional   | Type    | Description
+----------------- | ---------- | ------- | --------------------------------------------------------------------------------------------------------------------
+ name             | Required   | string  | Bdev name
+ base_bdev        | Required   | string  | Name of the base device
+ cache            | Required   | string  | Name of the cache device
+ core_mask        | Optional   | string  | CPU core(s) possible for placement of the ftl core thread, application main thread by default
+ fast_shutdown    | Optional   | boolean | When set FTL will minimize persisted data on target application shutdown and rely on shared memory during next load
+ uuid             | Optional   | string  | UUID of restored bdev
+ overprovisioning | Optional   | number  | Percentage of base device used for relocation, 20% by default
+ l2p_dram_limit   | Optional   | number  | l2p size that could reside in DRAM; default 2048
 
 #### Result
 
@@ -5855,10 +5857,10 @@ This RPC is subject to change.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
-fast_shutdown           | Optional | bool        | When set FTL will minimize persisted data during deletion and rely on shared memory during next load
+ Name          | Optional   | Type    | Description
+-------------- | ---------- | ------- | -----------------------------------------------------------------------------------------------------
+ name          | Required   | string  | Bdev name
+ fast_shutdown | Optional   | boolean | When set FTL will minimize persisted data during deletion and rely on shared memory during next load
 
 #### Example
 
@@ -5893,10 +5895,10 @@ This RPC is subject to change.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
-fast_shutdown           | Optional | bool        | When set FTL will minimize persisted data during deletion and rely on shared memory during next load
+ Name          | Optional   | Type    | Description
+-------------- | ---------- | ------- | -----------------------------------------------------------------------------------------------------
+ name          | Required   | string  | Bdev name
+ fast_shutdown | Optional   | boolean | When set FTL will minimize persisted data during deletion and rely on shared memory during next load
 
 #### Example
 
@@ -5931,11 +5933,11 @@ This RPC is subject to change.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
-lba                     | Required | number      | start lba, aligned to 1024
-num_blocks              | Required | number      | number of blocks, aligned to 1024
+ Name       | Optional   | Type   | Description
+----------- | ---------- | ------ | ---------------------------------------------
+ name       | Required   | string | Bdev name
+ lba        | Required   | number | Starting lba to be unmapped, aligned to 1024
+ num_blocks | Required   | number | Number of blocks, aligned to 1024
 
 #### Example
 
@@ -5972,9 +5974,9 @@ This RPC is subject to change.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | --------------
+ name   | Required   | string | Bdev name
 
 #### Response
 
@@ -6143,9 +6145,9 @@ Get FTL properties
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | --------------
+ name   | Required   | string | Bdev name
 
 #### Response
 
@@ -6201,11 +6203,11 @@ Set FTL property. Trying to set a read-only property will result in an error.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
-property                | Required | string      | Name of the property to modify
-value                   | Required | string      | New value of the property to be set
+ Name         | Optional   | Type   | Description
+------------- | ---------- | ------ | ------------------------------------
+ name         | Required   | string | Name of the bdev
+ ftl_property | Required   | string | Name of the property to modify
+ value        | Required   | string | New value of the property to be set
 
 #### Example
 
@@ -6241,11 +6243,11 @@ and a starting point in development of new bdev type.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
-base_bdev_name          | Required | string      | Base bdev name
-uuid                    | Optional | string      | UUID of new bdev
+ Name           | Optional   | Type   | Description
+--------------- | ---------- | ------ | --------------------------
+ base_bdev_name | Required   | string | Name of the existing bdev
+ name           | Required   | string | Name of block device
+ uuid           | Optional   | string | UUID of new bdev
 
 #### Result
 
@@ -6283,9 +6285,9 @@ Delete passthru bdev.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | ------------------------------------
+ name   | Required   | string | Name of pass through bdev to delete
 
 #### Example
 
@@ -6319,12 +6321,12 @@ Create xnvme bdev. This bdev type redirects all IO to its underlying backend.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | name of xNVMe bdev to create
-filename                | Required | string      | path to device or file (ex: /dev/nvme0n1)
-io_mechanism            | Required | string      | IO mechanism to use (ex: libaio, io_uring, io_uring_cmd, etc.)
-conserve_cpu            | Optional | boolean     | Whether or not to conserve CPU when polling (default: false)
+ Name         | Optional   | Type    | Description
+------------- | ---------- | ------- | ---------------------------------------------------------------
+ filename     | Required   | string  | Path to device or file (ex: /dev/nvme0n1)
+ name         | Required   | string  | Name of xNVMe bdev to create
+ io_mechanism | Required   | string  | IO mechanism to use (ex: libaio, io_uring, io_uring_cmd, etc.)
+ conserve_cpu | Optional   | boolean | Whether or not to conserve CPU when polling (default: false)
 
 #### Result
 
@@ -6364,9 +6366,9 @@ Delete xnvme bdev.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | name of xnvme bdev to delete
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | -----------------------------
+ name   | Required   | string | Name of xnvme bdev to delete
 
 #### Example
 
@@ -10849,9 +10851,9 @@ actually used by a raid bdev can be adjusted to the size of the raid bdev or the
 
 #### Parameters
 
-Name                       | Optional | Type        | Description
--------------------------- | -------- | ----------- | -----------
-process_window_size_kb     | Optional | number      | Background process (e.g. rebuild) window size in KiB
+ Name                   | Optional   | Type   | Description
+----------------------- | ---------- | ------ | -----------------------------------------------------
+ process_window_size_kb | Optional   | number | Background process (e.g. rebuild) window size in KiB
 
 #### Example
 
@@ -10890,9 +10892,9 @@ the raid bdev.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-category                | Required | string      | all or online or configuring or offline
+ Name     | Optional   | Type   | Description
+--------- | ---------- | ------ | ----------------------------------------
+ category | Required   | string | All or online or configuring or offline
 
 #### Example
 
@@ -10978,14 +10980,14 @@ Constructs new RAID bdev.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | RAID bdev name
-strip_size_kb           | Required | number      | Strip size in KB
-raid_level              | Required | string      | RAID level
-base_bdevs              | Required | string      | Base bdevs name, whitespace separated list in quotes
-uuid                    | Optional | string      | UUID for this RAID bdev
-superblock              | Optional | boolean     | If set, information about raid bdev will be stored in superblock on each base bdev (default: `false`)
+ Name          | Optional   | Type    | Description
+-------------- | ---------- | ------- | ------------------------------------------------------------------------------------------------------
+ name          | Required   | string  | RAID bdev name
+ raid_level    | Required   | string  | RAID level
+ base_bdevs    | Required   | string  | Base bdevs name, whitespace separated list in quotes
+ strip_size_kb | Optional   | number  | Strip size in KB
+ uuid          | Optional   | string  | UUID for this RAID bdev
+ superblock    | Optional   | boolean | If set, information about raid bdev will be stored in superblock on each base bdev (default: `false`)
 
 #### Example
 
@@ -11026,9 +11028,9 @@ Removes RAID bdev.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | RAID bdev name
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | ---------------
+ name   | Required   | string | RAID bdev name
 
 #### Example
 
@@ -11062,10 +11064,10 @@ The bdev must be large enough and have the same block size and metadata format a
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-raid_bdev               | Required | string      | Raid bdev name
-base_bdev               | Required | string      | Base bdev name
+ Name      | Optional   | Type   | Description
+---------- | ---------- | ------ | ---------------
+ base_bdev | Required   | string | Base bdev name
+ raid_bdev | Required   | string | Raid bdev name
 
 #### Example
 
@@ -11098,9 +11100,9 @@ Remove base bdev from existing raid bdev.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Base bdev name in RAID
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | -----------------------
+ name   | Required   | string | Base bdev name in RAID
 
 #### Example
 
@@ -11135,11 +11137,11 @@ This is used to split an underlying block device and create several smaller eq
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-base_bdev               | Required | string      | base bdev name
-split_count             | Required | number      | number of splits
-split_size_mb           | Optional | number      | size in MB to restrict the size
+ Name          | Optional   | Type   | Description
+-------------- | ---------- | ------ | ---------------------------------
+ base_bdev     | Required   | string | Base bdev name to split
+ split_count   | Required   | number | Number of splits bdevs to create
+ split_size_mb | Optional   | number | Size of each split volume in MiB
 
 #### Example
 
@@ -11178,9 +11180,9 @@ This is used to remove the split vbdevs.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-base_bdev               | Required | string      | base bdev name
+ Name      | Optional   | Type   | Description
+---------- | ---------- | ------ | ------------------------------
+ base_bdev | Required   | string | Name of previously split bdev
 
 #### Example
 
@@ -11215,12 +11217,12 @@ Create a bdev with io_uring backend.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-filename                | Required | string      | path to device or file (ex: /dev/nvme0n1)
-name                    | Required | string      | name of bdev
-block_size              | Optional | number      | block size of device (If omitted, get the block size from the file)
-uuid                    | Optional | string      | UUID of new bdev
+ Name       | Optional   | Type   | Description
+----------- | ---------- | ------ | --------------------------------------------------------------------
+ filename   | Required   | string | Path to device or file (ex: /dev/nvme0n1)
+ name       | Required   | string | Name of bdev
+ block_size | Optional   | number | Block size of device (If omitted, get the block size from the file)
+ uuid       | Optional   | string | UUID of new bdev
 
 #### Example
 
@@ -11255,9 +11257,9 @@ Rescan the size of a uring bdev.
 
 #### Parameters
 
-Name | Optional | Type   | Description
----- | -------- | ------ | -----------
-name | Required | string | name of uring bdev to rescan
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | -----------------------------
+ name   | Required   | string | Name of uring bdev to rescan
 
 #### Example
 
@@ -11290,9 +11292,9 @@ Remove a uring bdev.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | name of uring bdev to delete
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | -----------------------------
+ name   | Required   | string | Name of uring bdev to delete
 
 #### Example
 
@@ -11401,14 +11403,14 @@ This is used to create an OPAL virtual bdev.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-nvme_ctrlr_name         | Required | string      | name of nvme ctrlr that supports OPAL
-nsid                    | Required | number      | namespace ID
-locking_range_id        | Required | number      | OPAL locking range ID
-range_start             | Required | number      | locking range start LBA
-range_length            | Required | number      | locking range length
-password                | Required | string      | admin password of OPAL
+ Name             | Optional   | Type   | Description
+----------------- | ---------- | ------ | ---------------------------------------------------------
+ nvme_ctrlr_name  | Required   | string | Name of nvme ctrlr that supports OPAL
+ nsid             | Required   | number | Namespace ID of nvme ctrlr
+ locking_range_id | Required   | number | OPAL locking range ID corresponding to this virtual bdev
+ range_start      | Required   | number | Start address of this locking range
+ range_length     | Required   | number | Locking range length
+ password         | Required   | string | admin password of OPAL
 
 #### Response
 
@@ -11450,10 +11452,10 @@ This is used to get information of a given OPAL bdev.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-bdev_name               | Required | string      | name of OPAL vbdev
-password                | Required | string      | admin password
+ Name      | Optional   | Type   | Description
+---------- | ---------- | ------ | -------------------------------
+ bdev_name | Required   | string | name of OPAL vbdev to get info
+ password  | Required   | string | admin password
 
 #### Response
 
@@ -11499,10 +11501,10 @@ This is used to delete OPAL vbdev.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-bdev_name               | Required | string      | name of OPAL vbdev
-password                | Required | string      | admin password
+ Name      | Optional   | Type   | Description
+---------- | ---------- | ------ | ---------------------------------
+ bdev_name | Required   | string | Name of OPAL vbdev to delete
+ password  | Required   | string | Admin password of base nvme bdev
 
 #### Example
 
@@ -11537,12 +11539,12 @@ Recalling this for the same opal bdev, only the newest user will have the privil
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-bdev_name               | Required | string      | name of OPAL vbdev
-admin_password          | Required | string      | admin password
-user_id                 | Required | number      | user ID
-user_password           | Required | string      | user password
+ Name           | Optional   | Type   | Description
+--------------- | ---------- | ------ | ---------------------------------------------------
+ bdev_name      | Required   | string | Name of OPAL vbdev
+ admin_password | Required   | string | Admin password
+ user_id        | Required   | number | ID of the user who will be added to this opal bdev
+ user_password  | Required   | string | Password set for this user
 
 #### Example
 
@@ -11578,12 +11580,12 @@ This is used to lock/unlock specific opal bdev providing user ID and password.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-bdev_name               | Required | string      | name of OPAL vbdev
-user_id                 | Required | number      | user ID
-password                | Required | string      | user password
-lock_state              | Required | string      | lock state
+ Name       | Optional   | Type   | Description
+----------- | ---------- | ------ | ---------------------------------------
+ bdev_name  | Required   | string | Name of OPAL vbdev
+ user_id    | Required   | number | ID of the user who will set lock state
+ password   | Required   | string | Password of the user
+ lock_state | Required   | string | Lock state to set
 
 #### Example
 
@@ -12788,15 +12790,15 @@ Construct @ref bdev_config_daos
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name to use
-pool                    | Required | string      | DAOS pool label or its uuid
-cont                    | Required | string      | DAOS cont label or its uuid
-block_size              | Required | number      | Block size in bytes -must be multiple of 512
-num_blocks              | Required | number      | Number of blocks
-uuid                    | Optional | string      | UUID of new bdev
-oclass                  | Optional | string      | DAOS object class (default SX)
+ Name       | Optional   | Type   | Description
+----------- | ---------- | ------ | ---------------------------------------------------------------------
+ num_blocks | Required   | number | Size of block device in blocks
+ block_size | Required   | number | Block size in bytes; must be a power of 2 and at least 512
+ pool       | Required   | string | DAOS pool label or its uuid
+ cont       | Required   | string | DAOS cont label or its uuid
+ name       | Required   | string | Name of block device (also the name of the backend file on DAOS DFS)
+ oclass     | Optional   | string | DAOS object class (default SX)
+ uuid       | Optional   | string | UUID of new bdev
 
 To find more about various object classes please visit [DAOS documentation](https://github.com/daos-stack/daos/blob/master/src/object/README.md).
 Please note, that DAOS bdev module uses the same CLI flag notation as `dmg` and `daos` commands,
@@ -12842,9 +12844,9 @@ Delete @ref bdev_config_daos
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | ----------------------------
+ name   | Required   | string | Name of DAOS bdev to delete
 
 #### Example
 
@@ -12877,10 +12879,10 @@ Resize @ref bdev_config_daos.
 
 #### Parameters
 
-Name                    | Optional | Type        | Description
------------------------ | -------- | ----------- | -----------
-name                    | Required | string      | Bdev name
-new_size                | Required | number      | Bdev new capacity in MiB
+ Name     | Optional   | Type   | Description
+--------- | ---------- | ------ | ---------------------------------------------------
+ name     | Required   | string | Name of DAOS bdev to resize
+ new_size | Required   | number | New bdev size of resize operation. The unit is MiB
 
 #### Example
 
@@ -13040,11 +13042,11 @@ The 'name' is also used to later stop the discovery service.
 
 #### Parameters
 
-Name                       | Optional | Type        | Description
--------------------------- | -------- | ----------- | -----------
-name                       | Required | string      | Prefix for NVMe discovery services found
-svcname                    | Required | string      | Service to discover: e.g. _nvme-disc._tcp
-hostnqn                    | Optional | string      | NVMe-oF hostnqn
+ Name    | Optional   | Type   | Description
+-------- | ---------- | ------ | --------------------------------------------------------------------------------------------------------------------
+ name    | Required   | string | Prefix for NVMe discovery services found; 'n' + unique seqno + namespace ID will be appended to create unique names
+ svcname | Required   | string | Service to discover: e.g. _nvme-disc._tcp
+ hostnqn | Optional   | string | NVMe-oF hostnqn to connect from
 
 #### Example
 
@@ -13080,9 +13082,9 @@ discovered via the service that is being stopped.
 
 #### Parameters
 
-Name                       | Optional | Type        | Description
--------------------------- | -------- | ----------- | -----------
-name                       | Required | string      | Name of mDNS discovery instance to stop
+ Name   | Optional   | Type   | Description
+------- | ---------- | ------ | ----------------------------------------
+ name   | Required   | string | Name of mDNS discovery instance to stop
 
 #### Example
 
@@ -13112,6 +13114,10 @@ Example response:
 ### bdev_nvme_get_mdns_discovery_info {#rpc_bdev_nvme_get_mdns_discovery_info}
 
 Get the information about the mDNS discovery service instances.
+
+#### Parameters
+
+No parameters required
 
 #### Example
 
