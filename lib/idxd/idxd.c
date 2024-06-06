@@ -43,18 +43,40 @@ spdk_idxd_get_socket(struct spdk_idxd_device *idxd)
 }
 
 static inline void
-_submit_to_hw(struct spdk_idxd_io_channel *chan, struct idxd_ops *op)
+_submit_to_hw(struct spdk_idxd_io_channel *chan, struct idxd_ops *op, struct idxd_batch *batch)
 {
+	size_t ret;
+	size_t size;
+	struct idxd_hw_desc *desc;
+
 	STAILQ_INSERT_TAIL(&chan->ops_outstanding, op, link);
-	/*
-	 * We must barrier before writing the descriptor to ensure that data
-	 * has been correctly flushed from the associated data buffers before DMA
-	 * operations begin.
-	 */
-	_spdk_wmb();
-	movdir64b(chan->portal + chan->portal_offset, op->desc);
-	chan->portal_offset = (chan->portal_offset + chan->idxd->chan_per_device * PORTAL_STRIDE) &
-			      PORTAL_MASK;
+
+	if (chan->idxd->mmap_enabled) {
+		/*
+		 * We must barrier before writing the descriptor to ensure that data
+		 * has been correctly flushed from the associated data buffers before DMA
+		 * operations begin.
+		 */
+		_spdk_wmb();
+		movdir64b(chan->portal + chan->portal_offset, op->desc);
+		chan->portal_offset = (chan->portal_offset + chan->idxd->chan_per_device * PORTAL_STRIDE) &
+				      PORTAL_MASK;
+	} else {
+		if (op->desc->opcode == IDXD_OPCODE_BATCH) {
+			size = sizeof(struct idxd_hw_desc) * op->desc->desc_count;
+			desc = batch->user_desc;
+			/* Complete the batch descriptor immediately, since we don't submit it */
+			op->hw.status = 1;
+		} else {
+			size = sizeof(struct idxd_hw_desc);
+			desc = op->desc;
+		}
+
+		ret = write(chan->idxd->fd, desc, size);
+		if (ret != size) {
+			SPDK_ERRLOG("Error on submit to hw\n");
+		}
+	}
 }
 
 inline static int
@@ -254,7 +276,7 @@ spdk_idxd_get_channel(struct spdk_idxd_device *idxd)
 	pthread_mutex_unlock(&idxd->num_channels_lock);
 
 	/* Allocate descriptors and completions */
-	num_descriptors = idxd->total_wq_size / idxd->chan_per_device;
+	num_descriptors = idxd->num_batches;
 	chan->desc_base = desc = spdk_zmalloc(num_descriptors * sizeof(struct idxd_hw_desc),
 					      0x40, NULL,
 					      SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
@@ -593,7 +615,7 @@ idxd_batch_submit(struct spdk_idxd_io_channel *chan,
 	chan->batch = NULL;
 
 	/* Submit operation. */
-	_submit_to_hw(chan, op);
+	_submit_to_hw(chan, op, batch);
 	SPDK_DEBUGLOG(idxd, "Submitted batch %p\n", batch);
 
 	return 0;
@@ -1197,7 +1219,7 @@ _idxd_submit_compress_single(struct spdk_idxd_io_channel *chan, void *dst, const
 	desc->compr_flags = IAA_COMP_FLAGS;
 	op->output_size = output_size;
 
-	_submit_to_hw(chan, op);
+	_submit_to_hw(chan, op, NULL);
 	return 0;
 error:
 	STAILQ_INSERT_TAIL(&chan->ops_pool, op, link);
@@ -1261,7 +1283,7 @@ _idxd_submit_decompress_single(struct spdk_idxd_io_channel *chan, void *dst, con
 	desc->iaa.max_dst_size = nbytes_dst;
 	desc->decompr_flags = IAA_DECOMP_FLAGS;
 
-	_submit_to_hw(chan, op);
+	_submit_to_hw(chan, op, NULL);
 	return 0;
 error:
 	STAILQ_INSERT_TAIL(&chan->ops_pool, op, link);
@@ -1882,7 +1904,7 @@ spdk_idxd_submit_raw_desc(struct spdk_idxd_io_channel *chan,
 	desc->completion_addr = comp_addr;
 
 	/* Submit operation. */
-	_submit_to_hw(chan, op);
+	_submit_to_hw(chan, op, NULL);
 
 	return 0;
 }

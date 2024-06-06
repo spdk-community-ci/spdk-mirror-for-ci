@@ -143,6 +143,10 @@ struct spdk_idxd_device {
 	struct iaa_aecs			*aecs;
 	uint64_t			aecs_addr;
 	uint32_t			version;
+	int 				fd;
+	uint16_t			num_batches;
+	bool				mmap_enabled;
+
 };
 
 void idxd_impl_register(struct spdk_idxd_impl *impl);

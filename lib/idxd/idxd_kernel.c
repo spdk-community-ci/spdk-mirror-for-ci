@@ -38,7 +38,7 @@ kernel_idxd_device_destruct(struct spdk_idxd_device *idxd)
 {
 	struct spdk_kernel_idxd_device *kernel_idxd = __kernel_idxd(idxd);
 
-	if (kernel_idxd->portal != NULL) {
+	if (kernel_idxd->portal != NULL && idxd->mmap_enabled) {
 		munmap(kernel_idxd->portal, 0x1000);
 	}
 
@@ -51,6 +51,71 @@ kernel_idxd_device_destruct(struct spdk_idxd_device *idxd)
 }
 
 static struct spdk_idxd_impl g_kernel_idxd_impl;
+
+static bool
+send_noop(int fd)
+{
+	size_t ret;
+	struct idxd_hw_desc *desc;
+	struct dsa_hw_comp_record *comp;
+	uint64_t comp_addr, phys_size;
+	int flags = 0;
+
+	flags |= IDXD_FLAG_COMPLETION_ADDR_VALID;
+	flags |= IDXD_FLAG_REQUEST_COMPLETION;
+
+	desc = spdk_zmalloc(sizeof(struct idxd_hw_desc),
+			    0x40, NULL,
+			    SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
+	if (desc == NULL) {
+		SPDK_ERRLOG("Unable to allocate the descriptor for no-op.\n");
+		return false;
+	}
+
+	comp = spdk_zmalloc(sizeof(struct dsa_hw_comp_record),
+			    0x40, NULL,
+			    SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
+	if (comp == NULL) {
+		SPDK_ERRLOG("Unable to allocate the completion record for no-op.\n");
+		spdk_free(desc);
+		return false;
+	}
+
+	phys_size = sizeof(struct dsa_hw_comp_record);
+	comp_addr = spdk_vtophys(comp, &phys_size);
+	if (phys_size < sizeof(struct dsa_hw_comp_record)) {
+		SPDK_ERRLOG("Unable to translate the completion record address. Returned size: %ld\n",
+			    phys_size);
+		goto error;
+	}
+
+	desc->opcode = IDXD_OPCODE_NOOP;
+	desc->completion_addr = comp_addr;
+	desc->flags = flags;
+
+	ret = write(fd, desc, sizeof(struct idxd_hw_desc));
+	if (ret != sizeof(struct idxd_hw_desc)) {
+		SPDK_ERRLOG("Unable to submit the no-op command.\n");
+		goto error;
+	}
+
+	while (comp->status == 0) {
+	}
+
+	if (comp->status > 1) {
+		SPDK_ERRLOG("The no-op command completed with error: %d.\n", comp->status);
+		goto error;
+	}
+
+	spdk_free(desc);
+	spdk_free(comp);
+	return true;
+
+error:
+	spdk_free(desc);
+	spdk_free(comp);
+	return false;
+}
 
 static int
 kernel_idxd_probe(void *cb_ctx, spdk_idxd_attach_cb attach_cb, spdk_idxd_probe_cb probe_cb)
@@ -112,7 +177,7 @@ kernel_idxd_probe(void *cb_ctx, spdk_idxd_attach_cb attach_cb, spdk_idxd_probe_c
 			enum accfg_wq_state wstate;
 			enum accfg_wq_mode mode;
 			enum accfg_wq_type type;
-			int major, minor;
+			int major, minor, batch_size;
 			char path[1024];
 
 			wstate = accfg_wq_get_state(wq);
@@ -141,6 +206,11 @@ kernel_idxd_probe(void *cb_ctx, spdk_idxd_attach_cb attach_cb, spdk_idxd_probe_c
 				continue;
 			}
 
+			batch_size = accfg_wq_get_max_batch_size(wq);
+			if (batch_size <= 0) {
+				continue;
+			}
+
 			/* Map the portal */
 			snprintf(path, sizeof(path), "/dev/char/%u:%u", major, minor);
 			kernel_idxd->fd = open(path, O_RDWR);
@@ -152,12 +222,19 @@ kernel_idxd_probe(void *cb_ctx, spdk_idxd_attach_cb attach_cb, spdk_idxd_probe_c
 
 			kernel_idxd->portal = mmap(NULL, 0x1000, PROT_WRITE,
 						   MAP_SHARED | MAP_POPULATE, kernel_idxd->fd, 0);
+
+
 			if (kernel_idxd->portal == MAP_FAILED) {
-				if (errno == EPERM) {
-					SPDK_ERRLOG("CAP_SYS_RAWIO capabilities required to mmap the portal\n");
+				/* EPERM means, that the driver does not support mmap, we need to fall back
+				 * to the write syscall and test it with a no-op */
+				if (errno == EPERM && send_noop(kernel_idxd->fd)) {
+					kernel_idxd->idxd.mmap_enabled = false;
+				} else {
+					perror("mmap");
+					continue;
 				}
-				perror("mmap");
-				continue;
+			} else {
+				kernel_idxd->idxd.mmap_enabled = true;
 			}
 
 			kernel_idxd->wq = wq;
@@ -166,7 +243,16 @@ kernel_idxd_probe(void *cb_ctx, spdk_idxd_attach_cb attach_cb, spdk_idxd_probe_c
 			kernel_idxd->idxd.total_wq_size = accfg_wq_get_size(wq);
 			kernel_idxd->idxd.chan_per_device = (kernel_idxd->idxd.total_wq_size >= 128) ? 8 : 4;
 
-			kernel_idxd->idxd.batch_size = accfg_wq_get_max_batch_size(wq);
+			if (kernel_idxd->idxd.mmap_enabled) {
+				kernel_idxd->idxd.num_batches = kernel_idxd->idxd.total_wq_size /
+								kernel_idxd->idxd.chan_per_device;
+				kernel_idxd->idxd.batch_size = batch_size;
+			} else {
+				kernel_idxd->idxd.fd = kernel_idxd->fd;
+				kernel_idxd->idxd.num_batches = 2;
+				kernel_idxd->idxd.batch_size = kernel_idxd->idxd.total_wq_size /
+							       kernel_idxd->idxd.chan_per_device / kernel_idxd->idxd.num_batches;
+			}
 
 			/* We only use a single WQ, so once we've found one we can stop looking. */
 			break;
