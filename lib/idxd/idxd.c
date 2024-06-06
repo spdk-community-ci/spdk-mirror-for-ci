@@ -199,6 +199,7 @@ _dsa_alloc_batches(struct spdk_idxd_io_channel *chan, int num_descriptors)
 			op++;
 			desc++;
 		}
+		batch->chan = chan;
 		TAILQ_INSERT_TAIL(&chan->batch_pool, batch, link);
 		batch++;
 	}
@@ -477,35 +478,29 @@ _idxd_prep_batch_cmd(struct spdk_idxd_io_channel *chan, spdk_idxd_req_cb cb_fn,
 }
 
 static struct idxd_batch *
-idxd_batch_create(struct spdk_idxd_io_channel *chan)
+idxd_batch_get(struct spdk_idxd_io_channel *chan)
 {
-	struct idxd_batch *batch;
+	struct idxd_batch *batch = NULL;
 
 	assert(chan != NULL);
-	assert(chan->batch == NULL);
 
 	if (!TAILQ_EMPTY(&chan->batch_pool)) {
 		batch = TAILQ_FIRST(&chan->batch_pool);
 		batch->index = 0;
-		batch->chan = chan;
-		chan->batch = batch;
 		TAILQ_REMOVE(&chan->batch_pool, batch, link);
-	} else {
-		/* The application needs to handle this. */
-		return NULL;
 	}
 
 	return batch;
 }
 
 static void
-_free_batch(struct idxd_batch *batch, struct spdk_idxd_io_channel *chan)
+idxd_batch_put(struct idxd_batch *batch)
 {
 	SPDK_DEBUGLOG(idxd, "Free batch %p\n", batch);
 	assert(batch->refcnt == 0);
+	assert(batch->chan != NULL);
 	batch->index = 0;
-	batch->chan = NULL;
-	TAILQ_INSERT_TAIL(&chan->batch_pool, batch, link);
+	TAILQ_INSERT_TAIL(&batch->chan->batch_pool, batch, link);
 }
 
 static int
@@ -534,7 +529,7 @@ idxd_batch_cancel(struct spdk_idxd_io_channel *chan, int status)
 		}
 	}
 
-	_free_batch(batch, chan);
+	idxd_batch_put(batch);
 
 	return 0;
 }
@@ -573,7 +568,7 @@ idxd_batch_submit(struct spdk_idxd_io_channel *chan,
 		op->cb_fn = batch->user_ops[0].cb_fn;
 		op->cb_arg = batch->user_ops[0].cb_arg;
 		op->crc_dst = batch->user_ops[0].crc_dst;
-		_free_batch(batch, chan);
+		idxd_batch_put(batch);
 	} else {
 		/* Command specific. */
 		desc->opcode = IDXD_OPCODE_BATCH;
@@ -602,11 +597,9 @@ idxd_batch_submit(struct spdk_idxd_io_channel *chan,
 static int
 _idxd_setup_batch(struct spdk_idxd_io_channel *chan)
 {
-	struct idxd_batch *batch;
-
 	if (chan->batch == NULL) {
-		batch = idxd_batch_create(chan);
-		if (batch == NULL) {
+		chan->batch = idxd_batch_get(chan);
+		if (chan->batch == NULL) {
 			return -EBUSY;
 		}
 	}
@@ -1984,7 +1977,7 @@ spdk_idxd_process_events(struct spdk_idxd_io_channel *chan)
 				 */
 				parent_op->batch->refcnt--;
 				if (parent_op->batch->refcnt == 0) {
-					_free_batch(parent_op->batch, chan);
+					idxd_batch_put(parent_op->batch);
 				}
 
 				if (cb_fn) {
@@ -2002,7 +1995,7 @@ spdk_idxd_process_events(struct spdk_idxd_io_channel *chan)
 				op->batch->refcnt--;
 
 				if (op->batch->refcnt == 0) {
-					_free_batch(op->batch, chan);
+					idxd_batch_put(op->batch);
 				}
 			} else {
 				STAILQ_INSERT_HEAD(&chan->ops_pool, op, link);
