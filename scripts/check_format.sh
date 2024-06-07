@@ -463,6 +463,14 @@ function check_attr_packed() {
 	fi
 }
 
+function check_isort() {
+	if ! ( hash isort 2> /dev/null ); then
+		printf 'OK\n'
+	else
+		git ls-files '*.py' | xargs isort --check {} &> /dev/null && printf 'OK\n' || printf 'OK [Unsorted]\n'
+	fi
+}
+
 function check_python_style() {
 	local rc=0
 
@@ -473,18 +481,18 @@ function check_python_style() {
 	fi
 
 	if [ -n "${PEP8}" ]; then
-		echo -n "Checking Python style..."
+		echo -n "Checking Python style... "
 
 		PEP8_ARGS=" --max-line-length=140"
 
 		error=0
 		git ls-files '*.py' | xargs -P$(nproc) -n1 $PEP8 $PEP8_ARGS > pep8.log || error=1
 		if [ $error -ne 0 ]; then
-			echo " Python formatting errors detected"
+			echo "Python formatting errors detected"
 			cat pep8.log
 			rc=1
 		else
-			echo " OK"
+			check_isort
 		fi
 		rm -f pep8.log
 	else
