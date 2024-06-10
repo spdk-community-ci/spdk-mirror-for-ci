@@ -15,6 +15,7 @@
 
 static void *g_accel_p = (void *)0xdeadbeaf;
 static bool g_test_degraded;
+static bool g_test_with_error;
 
 DEFINE_STUB_V(raid_bdev_module_list_add, (struct raid_bdev_module *raid_module));
 DEFINE_STUB(spdk_bdev_get_buf_align, size_t, (const struct spdk_bdev *bdev), 0);
@@ -28,8 +29,31 @@ DEFINE_STUB_V(raid_bdev_io_init, (struct raid_bdev_io *raid_io,
 				  enum spdk_bdev_io_type type, uint64_t offset_blocks,
 				  uint64_t num_blocks, struct iovec *iovs, int iovcnt, void *md_buf,
 				  struct spdk_memory_domain *memory_domain, void *memory_domain_ctx));
-DEFINE_STUB(raid_bdev_remap_pi_reftag, int, (struct iovec *iovs, int iovcnt, void *md_buf,
-		uint64_t num_blocks, struct spdk_bdev *bdev, uint32_t remapped_offset), -1);
+DEFINE_STUB(spdk_bdev_is_dif_head_of_md, bool, (const struct spdk_bdev *bdev), false);
+
+bool
+spdk_bdev_is_md_interleaved(const struct spdk_bdev *bdev)
+{
+	return (bdev->md_len != 0) && bdev->md_interleave;
+}
+
+bool
+spdk_bdev_is_md_separate(const struct spdk_bdev *bdev)
+{
+	return (bdev->md_len != 0) && !bdev->md_interleave;
+}
+
+uint32_t
+spdk_bdev_get_md_size(const struct spdk_bdev *bdev)
+{
+	return bdev->md_len;
+}
+
+uint32_t
+spdk_bdev_get_block_size(const struct spdk_bdev *bdev)
+{
+	return bdev->blocklen;
+}
 
 struct spdk_io_channel *
 spdk_accel_get_io_channel(void)
@@ -89,12 +113,14 @@ test_suite_init(void)
 	uint64_t base_bdev_blockcnt_values[] = { 1, 1024, 1024 * 1024 };
 	uint32_t base_bdev_blocklen_values[] = { 512, 4096 };
 	uint32_t strip_size_kb_values[] = { 1, 4, 128 };
-	enum raid_params_md_type md_type_values[] = { RAID_PARAMS_MD_NONE };
+	enum raid_params_md_type md_type_values[] = { RAID_PARAMS_MD_NONE, RAID_PARAMS_MD_INTERLEAVED, RAID_PARAMS_MD_SEPARATE };
+	enum spdk_dif_type dif_type_values[] = { SPDK_DIF_DISABLE, SPDK_DIF_TYPE1 };
 	uint8_t *num_base_bdevs;
 	uint64_t *base_bdev_blockcnt;
 	uint32_t *base_bdev_blocklen;
 	uint32_t *strip_size_kb;
 	enum raid_params_md_type *md_type;
+	enum spdk_dif_type *dif_type;
 	uint64_t params_count;
 	int rc;
 
@@ -102,7 +128,8 @@ test_suite_init(void)
 		       SPDK_COUNTOF(base_bdev_blockcnt_values) *
 		       SPDK_COUNTOF(base_bdev_blocklen_values) *
 		       SPDK_COUNTOF(strip_size_kb_values) *
-		       SPDK_COUNTOF(md_type_values);
+		       SPDK_COUNTOF(md_type_values) *
+		       SPDK_COUNTOF(dif_type_values);
 	rc = raid_test_params_alloc(params_count);
 	if (rc) {
 		return rc;
@@ -113,18 +140,31 @@ test_suite_init(void)
 			ARRAY_FOR_EACH(base_bdev_blocklen_values, base_bdev_blocklen) {
 				ARRAY_FOR_EACH(strip_size_kb_values, strip_size_kb) {
 					ARRAY_FOR_EACH(md_type_values, md_type) {
-						struct raid_params params = {
-							.num_base_bdevs = *num_base_bdevs,
-							.base_bdev_blockcnt = *base_bdev_blockcnt,
-							.base_bdev_blocklen = *base_bdev_blocklen,
-							.strip_size = *strip_size_kb * 1024 / *base_bdev_blocklen,
-							.md_type = *md_type,
-						};
-						if (params.strip_size == 0 ||
-						    params.strip_size > params.base_bdev_blockcnt) {
-							continue;
+						ARRAY_FOR_EACH(dif_type_values, dif_type) {
+							struct raid_params params = {
+								.num_base_bdevs = *num_base_bdevs,
+								.base_bdev_blockcnt = *base_bdev_blockcnt,
+								.base_bdev_blocklen = *base_bdev_blocklen,
+								.strip_size = *strip_size_kb * 1024 / *base_bdev_blocklen,
+								.md_type = *md_type,
+								.dif_type = *dif_type
+							};
+							if (params.strip_size == 0 ||
+							    params.strip_size > params.base_bdev_blockcnt) {
+								continue;
+							}
+							if (params.dif_type != SPDK_DIF_DISABLE) {
+								if (params.md_type != RAID_PARAMS_MD_NONE) {
+									params.dif_check_flags =
+										SPDK_DIF_FLAGS_GUARD_CHECK |
+										SPDK_DIF_FLAGS_REFTAG_CHECK |
+										SPDK_DIF_FLAGS_APPTAG_CHECK;
+								} else {
+									continue;
+								}
+							}
+							raid_test_params_add(&params);
 						}
-						raid_test_params_add(&params);
 					}
 				}
 			}
@@ -148,6 +188,7 @@ static void
 test_setup(void)
 {
 	g_test_degraded = false;
+	g_test_with_error = false;
 }
 
 static struct raid5f_info *
@@ -242,6 +283,160 @@ struct test_raid_bdev_io {
 	void *buf_md;
 };
 
+static void
+generate_pi(struct iovec *iovs, int iovcnt, void *md_buf,
+	    uint64_t offset_blocks, uint32_t num_blocks, struct spdk_bdev *bdev,
+	    uint32_t dif_check_flags)
+{
+	struct spdk_dif_ctx dif_ctx;
+	int rc;
+	struct spdk_dif_ctx_init_ext_opts dif_opts;
+	spdk_dif_type_t dif_type;
+	bool md_interleaved;
+	struct iovec md_iov;
+
+	dif_type = spdk_bdev_get_dif_type(bdev);
+	md_interleaved = spdk_bdev_is_md_interleaved(bdev);
+
+	if (dif_type == SPDK_DIF_DISABLE) {
+		return;
+	}
+
+	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
+	dif_opts.dif_pi_format = SPDK_DIF_PI_FORMAT_16;
+	rc = spdk_dif_ctx_init(&dif_ctx,
+			       spdk_bdev_get_block_size(bdev),
+			       spdk_bdev_get_md_size(bdev),
+			       md_interleaved,
+			       spdk_bdev_is_dif_head_of_md(bdev),
+			       dif_type,
+			       dif_check_flags,
+			       offset_blocks,
+			       0xFFFF, 0x123, 0, 0, &dif_opts);
+	SPDK_CU_ASSERT_FATAL(rc == 0);
+
+	if (!md_interleaved) {
+		md_iov.iov_base = md_buf;
+		md_iov.iov_len	= spdk_bdev_get_md_size(bdev) * num_blocks;
+
+		rc = spdk_dix_generate(iovs, iovcnt, &md_iov, num_blocks, &dif_ctx);
+		SPDK_CU_ASSERT_FATAL(rc == 0);
+	} else {
+		rc = spdk_dif_generate(iovs, iovcnt, num_blocks, &dif_ctx);
+		SPDK_CU_ASSERT_FATAL(rc == 0);
+	}
+}
+
+static void
+verify_pi(struct iovec *iovs, int iovcnt, void *md_buf,
+	  uint64_t offset_blocks, uint32_t num_blocks, struct spdk_bdev *bdev,
+	  uint32_t dif_check_flags)
+{
+	struct spdk_dif_ctx dif_ctx;
+	struct spdk_dif_error errblk;
+	struct spdk_dif_ctx_init_ext_opts dif_opts;
+	spdk_dif_type_t dif_type;
+	bool md_interleaved;
+	int rc;
+
+	dif_type = spdk_bdev_get_dif_type(bdev);
+	md_interleaved = spdk_bdev_is_md_interleaved(bdev);
+
+	if (dif_type == SPDK_DIF_DISABLE) {
+		return;
+	}
+
+	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
+	dif_opts.dif_pi_format = SPDK_DIF_PI_FORMAT_16;
+	rc = spdk_dif_ctx_init(&dif_ctx,
+			       spdk_bdev_get_block_size(bdev),
+			       spdk_bdev_get_md_size(bdev),
+			       md_interleaved,
+			       spdk_bdev_is_dif_head_of_md(bdev),
+			       dif_type,
+			       bdev->dif_check_flags,
+			       offset_blocks,
+			       0xFFFF, 0x123, 0, 0, &dif_opts);
+	SPDK_CU_ASSERT_FATAL(rc == 0);
+
+	if (md_interleaved) {
+		rc = spdk_dif_verify(iovs, iovcnt, num_blocks, &dif_ctx, &errblk);
+	} else {
+		struct iovec md_iov = {
+			.iov_base	= md_buf,
+			.iov_len	= spdk_bdev_get_md_size(bdev) * num_blocks
+		};
+		rc = spdk_dix_verify(iovs, iovcnt, &md_iov, num_blocks, &dif_ctx, &errblk);
+	}
+	SPDK_CU_ASSERT_FATAL(rc == 0);
+}
+
+static void
+remap_pi(struct iovec *iovs, int iovcnt, void *md_buf, uint64_t num_blocks,
+	 struct spdk_bdev *bdev, uint32_t remapped_offset)
+{
+	struct spdk_dif_ctx dif_ctx;
+	struct spdk_dif_error errblk;
+	struct spdk_dif_ctx_init_ext_opts dif_opts;
+	spdk_dif_type_t dif_type;
+	bool md_interleaved;
+	int rc;
+
+	dif_type = spdk_bdev_get_dif_type(bdev);
+	md_interleaved = spdk_bdev_is_md_interleaved(bdev);
+
+	if (dif_type == SPDK_DIF_DISABLE) {
+		return;
+	}
+
+	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
+	dif_opts.dif_pi_format = SPDK_DIF_PI_FORMAT_16;
+	rc = spdk_dif_ctx_init(&dif_ctx,
+			       spdk_bdev_get_block_size(bdev),
+			       spdk_bdev_get_md_size(bdev),
+			       md_interleaved,
+			       spdk_bdev_is_dif_head_of_md(bdev),
+			       dif_type,
+			       bdev->dif_check_flags,
+			       remapped_offset,
+			       0xFFFF, 0x123, 0, 0, &dif_opts);
+	SPDK_CU_ASSERT_FATAL(rc == 0);
+
+	spdk_dif_ctx_set_remapped_init_ref_tag(&dif_ctx, remapped_offset);
+
+	if (md_interleaved) {
+		rc = spdk_dif_remap_ref_tag(iovs, iovcnt, num_blocks, &dif_ctx, &errblk, false);
+
+	} else {
+		struct iovec md_iov = {
+			.iov_base	= md_buf,
+			.iov_len	= spdk_bdev_get_md_size(bdev) * num_blocks
+		};
+		rc = spdk_dix_remap_ref_tag(&md_iov, num_blocks, &dif_ctx, &errblk, false);
+	}
+	SPDK_CU_ASSERT_FATAL(rc == 0);
+}
+
+int
+raid_bdev_verify_pi_reftag(struct iovec *iovs, int iovcnt, void *md_buf, uint64_t num_blocks,
+			   struct spdk_bdev *bdev, uint32_t offset_blocks)
+{
+	if (!g_test_degraded && !g_test_with_error) {
+		verify_pi(iovs, iovcnt, md_buf, offset_blocks, num_blocks, bdev, SPDK_DIF_FLAGS_REFTAG_CHECK);
+	}
+
+	return 0;
+}
+
+int
+raid_bdev_remap_pi_reftag(struct iovec *iovs, int iovcnt, void *md_buf, uint64_t num_blocks,
+			  struct spdk_bdev *bdev, uint32_t remapped_offset)
+{
+	remap_pi(iovs, iovcnt, md_buf, num_blocks, bdev, remapped_offset);
+
+	return 0;
+}
+
 void
 raid_bdev_queue_io_wait(struct raid_bdev_io *raid_io, struct spdk_bdev *bdev,
 			struct spdk_io_channel *ch, spdk_bdev_io_wait_cb cb_fn)
@@ -266,6 +461,14 @@ raid_test_bdev_io_complete(struct raid_bdev_io *raid_io, enum spdk_bdev_io_statu
 
 	free(raid_io->iovs);
 	free(test_raid_bdev_io);
+}
+
+static void
+xor_block(uint8_t *a, uint8_t *b, size_t size)
+{
+	while (size-- > 0) {
+		a[size] ^= b[size];
+	}
 }
 
 static struct raid_bdev_io *
@@ -318,6 +521,32 @@ get_raid_io(struct raid_io_info *io_info)
 
 	raid_io = &test_raid_bdev_io->raid_io;
 
+	if (io_info->io_type == SPDK_BDEV_IO_TYPE_WRITE) {
+		generate_pi(iovs, iovcnt, md_buf, io_info->offset_blocks, io_info->num_blocks,
+			    &raid_bdev->bdev, raid_bdev->bdev.dif_check_flags);
+
+		if (io_info->reference_parity != NULL) {
+			size_t strip_len = raid_bdev->strip_size * blocklen;
+			memset(io_info->reference_parity, 0, io_info->parity_buf_size);
+
+			void *src = io_info->src_buf;
+			for (i = 0; i < raid5f_stripe_data_chunks_num(raid_bdev); i++) {
+				xor_block(io_info->reference_parity, src, strip_len);
+				src += strip_len;
+			}
+		}
+		if (io_info->reference_md_parity != NULL) {
+			size_t strip_md_len = raid_bdev->strip_size * raid_bdev->bdev.md_len;
+			memset(io_info->reference_md_parity, 0, io_info->parity_md_buf_size);
+
+			void *src_md = io_info->src_md_buf;
+			for (i = 0; i < raid5f_stripe_data_chunks_num(raid_bdev); i++) {
+				xor_block(io_info->reference_md_parity, src_md, strip_md_len);
+				src_md += strip_md_len;
+			}
+		}
+	}
+
 	raid_test_bdev_io_init(raid_io, raid_bdev, io_info->raid_ch, io_info->io_type,
 			       io_info->offset_blocks, io_info->num_blocks, iovs, iovcnt, md_buf);
 
@@ -350,6 +579,7 @@ submit_io(struct raid_io_info *io_info, struct spdk_bdev_desc *desc,
 	bdev_io->bdev = bdev;
 	bdev_io->internal.cb = cb;
 	bdev_io->internal.caller_ctx = cb_arg;
+	bdev_io->u.bdev.md_buf = io_info->src_md_buf;
 
 	TAILQ_INSERT_TAIL(&io_info->bdev_io_queue, bdev_io, internal.link);
 
@@ -574,18 +804,9 @@ spdk_bdev_readv_blocks_ext(struct spdk_bdev_desc *desc, struct spdk_io_channel *
 }
 
 static void
-xor_block(uint8_t *a, uint8_t *b, size_t size)
-{
-	while (size-- > 0) {
-		a[size] ^= b[size];
-	}
-}
-
-static void
 test_raid5f_write_request(struct raid_io_info *io_info)
 {
 	struct raid_bdev_io *raid_io;
-
 	SPDK_CU_ASSERT_FATAL(io_info->num_blocks / io_info->r5f_info->stripe_blocks == 1);
 
 	raid_io = get_raid_io(io_info);
@@ -707,6 +928,7 @@ init_io_info(struct raid_io_info *io_info, struct raid5f_info *r5f_info,
 		for (block = 0; block < num_blocks; block++) {
 			*((uint64_t *)(src_buf + block * blocklen)) = block;
 		}
+
 	} else {
 		src_buf = NULL;
 		dest_buf = NULL;
@@ -852,6 +1074,7 @@ test_raid5f_submit_rw_request(struct raid5f_info *r5f_info, struct raid_bdev_io_
 
 	CU_ASSERT(io_info.status == SPDK_BDEV_IO_STATUS_SUCCESS);
 	CU_ASSERT(memcmp(io_info.src_buf, io_info.dest_buf, io_info.buf_size) == 0);
+
 	if (io_info.buf_md_size) {
 		CU_ASSERT(memcmp(io_info.src_md_buf, io_info.dest_md_buf, io_info.buf_md_size) == 0);
 	}
@@ -1038,6 +1261,7 @@ __test_raid5f_chunk_write_error(struct raid_bdev *raid_bdev, struct raid_bdev_io
 static void
 test_raid5f_chunk_write_error(void)
 {
+	g_test_with_error = true;
 	run_for_each_raid5f_config(__test_raid5f_chunk_write_error);
 }
 
@@ -1098,6 +1322,7 @@ __test_raid5f_chunk_write_error_with_enomem(struct raid_bdev *raid_bdev,
 static void
 test_raid5f_chunk_write_error_with_enomem(void)
 {
+	g_test_with_error = true;
 	run_for_each_raid5f_config(__test_raid5f_chunk_write_error_with_enomem);
 }
 
@@ -1129,6 +1354,7 @@ main(int argc, char **argv)
 	CU_ADD_TEST(suite, test_raid5f_submit_read_request);
 	CU_ADD_TEST(suite, test_raid5f_stripe_request_map_iovecs);
 	CU_ADD_TEST(suite, test_raid5f_submit_full_stripe_write_request);
+
 	CU_ADD_TEST(suite, test_raid5f_chunk_write_error);
 	CU_ADD_TEST(suite, test_raid5f_chunk_write_error_with_enomem);
 	CU_ADD_TEST(suite, test_raid5f_submit_full_stripe_write_request_degraded);

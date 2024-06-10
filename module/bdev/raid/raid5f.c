@@ -388,16 +388,30 @@ raid5f_chunk_complete_bdev_io(struct spdk_bdev_io *bdev_io, bool success, void *
 	struct stripe_request *stripe_req = raid5f_chunk_stripe_req(chunk);
 	enum spdk_bdev_io_status status = success ? SPDK_BDEV_IO_STATUS_SUCCESS :
 					  SPDK_BDEV_IO_STATUS_FAILED;
-
-	spdk_bdev_free_io(bdev_io);
+	int rc;
 
 	if (spdk_likely(stripe_req->type == STRIPE_REQ_WRITE)) {
 		raid5f_stripe_request_chunk_write_complete(stripe_req, status);
+
 	} else if (stripe_req->type == STRIPE_REQ_RECONSTRUCT) {
+		if (chunk != stripe_req->parity_chunk &&
+		    spdk_unlikely(spdk_bdev_get_dif_type(bdev_io->bdev) != SPDK_DIF_DISABLE &&
+				  bdev_io->bdev->dif_check_flags & SPDK_DIF_FLAGS_REFTAG_CHECK)) {
+
+			rc = raid_bdev_verify_pi_reftag(bdev_io->u.bdev.iovs, bdev_io->u.bdev.iovcnt,
+							bdev_io->u.bdev.md_buf, bdev_io->u.bdev.num_blocks,
+							bdev_io->bdev, bdev_io->u.bdev.offset_blocks);
+			if (rc != 0) {
+				SPDK_ERRLOG("Reftag verify failed.\n");
+				status = SPDK_BDEV_IO_STATUS_FAILED;
+			}
+		}
+
 		raid5f_stripe_request_chunk_read_complete(stripe_req, status);
 	} else {
 		assert(false);
 	}
+	spdk_bdev_free_io(bdev_io);
 }
 
 static void raid5f_stripe_request_submit_chunks(struct stripe_request *stripe_req);
@@ -436,6 +450,12 @@ raid5f_chunk_submit(struct chunk *chunk)
 
 	raid5f_init_ext_io_opts(&io_opts, raid_io);
 	io_opts.metadata = chunk->md_buf;
+
+	if (chunk == stripe_req->parity_chunk) {
+		io_opts.dif_check_flags_exclude_mask = SPDK_DIF_FLAGS_GUARD_CHECK |
+						       SPDK_DIF_FLAGS_REFTAG_CHECK |
+						       SPDK_DIF_FLAGS_APPTAG_CHECK;
+	}
 
 	raid_io->base_bdev_io_submitted++;
 
@@ -588,8 +608,24 @@ static void
 raid5f_stripe_request_submit_chunks(struct stripe_request *stripe_req)
 {
 	struct raid_bdev_io *raid_io = stripe_req->raid_io;
+	struct spdk_bdev *bdev = &raid_io->raid_bdev->bdev;
 	struct chunk *start = &stripe_req->chunks[raid_io->base_bdev_io_submitted];
 	struct chunk *chunk;
+	int rc;
+
+	if (spdk_unlikely(spdk_bdev_get_dif_type(bdev) != SPDK_DIF_DISABLE &&
+			  bdev->dif_check_flags & SPDK_DIF_FLAGS_REFTAG_CHECK &&
+			  stripe_req->type == STRIPE_REQ_WRITE)) {
+
+		rc = raid_bdev_verify_pi_reftag(raid_io->iovs, raid_io->iovcnt,
+						raid_io->md_buf, raid_io->num_blocks,
+						bdev, raid_io->offset_blocks);
+		if (rc != 0) {
+			SPDK_ERRLOG("bdev io submit error due to DIF/DIX verify failure\n");
+			raid_bdev_io_complete(raid_io, SPDK_BDEV_IO_STATUS_FAILED);
+			return;
+		}
+	}
 
 	FOR_EACH_CHUNK_FROM(stripe_req, chunk, start) {
 		if (spdk_unlikely(raid5f_chunk_submit(chunk) != 0)) {
@@ -659,11 +695,27 @@ static void
 raid5f_chunk_read_complete(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
 {
 	struct raid_bdev_io *raid_io = cb_arg;
+	enum spdk_bdev_io_status status = SPDK_BDEV_IO_STATUS_SUCCESS;
+	int rc;
+
+	if (!success) {
+		status = SPDK_BDEV_IO_STATUS_FAILED;
+	} else {
+		if (spdk_unlikely(spdk_bdev_get_dif_type(bdev_io->bdev) != SPDK_DIF_DISABLE &&
+				  bdev_io->bdev->dif_check_flags & SPDK_DIF_FLAGS_REFTAG_CHECK)) {
+
+			rc = raid_bdev_verify_pi_reftag(bdev_io->u.bdev.iovs, bdev_io->u.bdev.iovcnt,
+							bdev_io->u.bdev.md_buf, bdev_io->u.bdev.num_blocks,
+							bdev_io->bdev, bdev_io->u.bdev.offset_blocks);
+			if (rc != 0) {
+				SPDK_ERRLOG("Reftag verify failed.\n");
+				status = SPDK_BDEV_IO_STATUS_FAILED;
+			}
+		}
+	}
 
 	spdk_bdev_free_io(bdev_io);
-
-	raid_bdev_io_complete(raid_io, success ? SPDK_BDEV_IO_STATUS_SUCCESS :
-			      SPDK_BDEV_IO_STATUS_FAILED);
+	raid_bdev_io_complete(raid_io, status);
 }
 
 static void raid5f_submit_rw_request(struct raid_bdev_io *raid_io);
@@ -682,7 +734,6 @@ raid5f_stripe_request_reconstruct_xor_done(struct stripe_request *stripe_req, in
 	struct raid_bdev_io *raid_io = stripe_req->raid_io;
 
 	raid5f_stripe_request_release(stripe_req);
-
 	raid_bdev_io_complete(raid_io,
 			      status == 0 ? SPDK_BDEV_IO_STATUS_SUCCESS : SPDK_BDEV_IO_STATUS_FAILED);
 }
@@ -1239,6 +1290,7 @@ static struct raid_bdev_module g_raid5f_module = {
 	.level = RAID5F,
 	.base_bdevs_min = 3,
 	.base_bdevs_constraint = {CONSTRAINT_MAX_BASE_BDEVS_REMOVED, 1},
+	.dif_supported = true,
 	.start = raid5f_start,
 	.stop = raid5f_stop,
 	.submit_rw_request = raid5f_submit_rw_request,
