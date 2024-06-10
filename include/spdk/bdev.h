@@ -235,8 +235,18 @@ union spdk_bdev_nvme_cdw12 {
 		uint32_t reserved	: 20;
 		/* Directive type */
 		uint32_t dtype		: 4;
-		uint32_t reserved2	: 8;
+		uint32_t reserved2	: 5;
+		/* Protection information action */
+		uint32_t pract		: 1;
+		uint32_t reserved3	: 2;
 	} write;
+
+	struct {
+		uint32_t reserved	: 29;
+		/* Protection information action */
+		uint32_t pract		: 1;
+		uint32_t reserved2	: 2;
+	} read;
 };
 SPDK_STATIC_ASSERT(sizeof(union spdk_bdev_nvme_cdw12) == 4, "Incorrect size");
 
