@@ -221,6 +221,8 @@ nvmf_bdev_ctrlr_get_rw_ext_params(const struct spdk_nvme_cmd *cmd,
 
 	if (spdk_likely(!req->dif_enabled)) {
 		opts->dif_check_flags_exclude_mask = (~opts->nvme_cdw12.raw) & SPDK_NVME_IO_FLAGS_PRCHK_MASK;
+	} else {
+		opts->nvme_cdw12.raw &= ~SPDK_NVME_IO_FLAGS_PRACT;
 	}
 }
 

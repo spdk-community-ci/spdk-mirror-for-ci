@@ -311,10 +311,10 @@ test_get_rw_ext_params(void)
 	struct spdk_bdev_ext_io_opts opts = {0};
 
 	to_le32(&cmd.cdw12, 0x9875 | SPDK_NVME_IO_FLAGS_DATA_PLACEMENT_DIRECTIVE |
-		SPDK_NVME_IO_FLAGS_PRCHK_GUARD);
+		SPDK_NVME_IO_FLAGS_PRCHK_GUARD | SPDK_NVME_IO_FLAGS_PRACT);
 	to_le32(&cmd.cdw13, 0x2 << 16);
 	nvmf_bdev_ctrlr_get_rw_ext_params(&cmd, &req, &opts);
-	CU_ASSERT(opts.nvme_cdw12.raw == 0x10209875);
+	CU_ASSERT(opts.nvme_cdw12.raw == 0x30209875);
 	CU_ASSERT(opts.nvme_cdw13.raw == 0x20000);
 	CU_ASSERT((opts.dif_check_flags_exclude_mask ^ SPDK_NVME_IO_FLAGS_PRCHK_MASK)
 		  == SPDK_NVME_IO_FLAGS_PRCHK_GUARD);
