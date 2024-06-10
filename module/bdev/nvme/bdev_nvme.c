@@ -171,7 +171,7 @@ static void bdev_nvme_submit_request(struct spdk_io_channel *ch,
 static int bdev_nvme_readv(struct nvme_bdev_io *bio, struct iovec *iov, int iovcnt,
 			   void *md, uint64_t lba_count, uint64_t lba,
 			   uint32_t flags, struct spdk_memory_domain *domain, void *domain_ctx,
-			   struct spdk_accel_sequence *seq);
+			   struct spdk_accel_sequence *seq, union spdk_bdev_nvme_cdw12 cdw12);
 static int bdev_nvme_no_pi_readv(struct nvme_bdev_io *bio, struct iovec *iov, int iovcnt,
 				 void *md, uint64_t lba_count, uint64_t lba);
 static int bdev_nvme_writev(struct nvme_bdev_io *bio, struct iovec *iov, int iovcnt,
@@ -2971,7 +2971,8 @@ bdev_nvme_get_buf_cb(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_io,
 			      bdev_io->u.bdev.dif_check_flags,
 			      bdev_io->u.bdev.memory_domain,
 			      bdev_io->u.bdev.memory_domain_ctx,
-			      bdev_io->u.bdev.accel_sequence);
+			      bdev_io->u.bdev.accel_sequence,
+			      bdev_io->u.bdev.nvme_cdw12);
 
 exit:
 	if (spdk_unlikely(ret != 0)) {
@@ -3000,7 +3001,8 @@ _bdev_nvme_submit_request(struct nvme_bdev_channel *nbdev_ch, struct spdk_bdev_i
 					     bdev_io->u.bdev.dif_check_flags,
 					     bdev_io->u.bdev.memory_domain,
 					     bdev_io->u.bdev.memory_domain_ctx,
-					     bdev_io->u.bdev.accel_sequence);
+					     bdev_io->u.bdev.accel_sequence,
+					     bdev_io->u.bdev.nvme_cdw12);
 		} else {
 			spdk_bdev_io_get_buf(bdev_io, bdev_nvme_get_buf_cb,
 					     bdev_io->u.bdev.num_blocks * bdev->blocklen);
@@ -7759,7 +7761,7 @@ static int
 bdev_nvme_readv(struct nvme_bdev_io *bio, struct iovec *iov, int iovcnt,
 		void *md, uint64_t lba_count, uint64_t lba, uint32_t flags,
 		struct spdk_memory_domain *domain, void *domain_ctx,
-		struct spdk_accel_sequence *seq)
+		struct spdk_accel_sequence *seq, union spdk_bdev_nvme_cdw12 cdw12)
 {
 	struct spdk_nvme_ns *ns = bio->io_path->nvme_ns->ns;
 	struct spdk_nvme_qpair *qpair = bio->io_path->qpair->qpair;
@@ -7777,7 +7779,7 @@ bdev_nvme_readv(struct nvme_bdev_io *bio, struct iovec *iov, int iovcnt,
 		bio->ext_opts.size = SPDK_SIZEOF(&bio->ext_opts, accel_sequence);
 		bio->ext_opts.memory_domain = domain;
 		bio->ext_opts.memory_domain_ctx = domain_ctx;
-		bio->ext_opts.io_flags = flags;
+		bio->ext_opts.io_flags = flags | (cdw12.read.pract ? SPDK_NVME_IO_FLAGS_PRACT : 0);
 		bio->ext_opts.metadata = md;
 		bio->ext_opts.accel_sequence = seq;
 
@@ -7831,7 +7833,8 @@ bdev_nvme_writev(struct nvme_bdev_io *bio, struct iovec *iov, int iovcnt,
 		bio->ext_opts.size = SPDK_SIZEOF(&bio->ext_opts, accel_sequence);
 		bio->ext_opts.memory_domain = domain;
 		bio->ext_opts.memory_domain_ctx = domain_ctx;
-		bio->ext_opts.io_flags = flags | SPDK_NVME_IO_FLAGS_DIRECTIVE(cdw12.write.dtype);
+		bio->ext_opts.io_flags = flags | SPDK_NVME_IO_FLAGS_DIRECTIVE(cdw12.write.dtype) |
+					 (cdw12.write.pract ? SPDK_NVME_IO_FLAGS_PRACT : 0);
 		bio->ext_opts.cdw13 = cdw13.raw;
 		bio->ext_opts.metadata = md;
 		bio->ext_opts.accel_sequence = seq;
