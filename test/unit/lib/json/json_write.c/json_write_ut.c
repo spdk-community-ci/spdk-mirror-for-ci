@@ -530,26 +530,29 @@ test_write_number_uint64(void)
 }
 
 static void
+verify_double(double value)
+{
+	char ref[32];
+	struct spdk_json_write_ctx *w;
+	int rc;
+
+	rc = sprintf(ref, "%.20e", value);
+	CU_ASSERT_FATAL(rc > 0);
+	CU_ASSERT_FATAL((unsigned int) rc < sizeof(ref));
+
+	BEGIN();
+	VAL_DOUBLE(value);
+	END_SIZE(ref, (ssize_t) strlen(ref));
+}
+
+
+static void
 test_write_number_double(void)
 {
-	struct spdk_json_write_ctx *w;
-
-	BEGIN();
-	VAL_DOUBLE(0);
-	END_SIZE("0.00000000000000000000e+00", 26);
-
-	BEGIN();
-	VAL_DOUBLE(1.2);
-	END_SIZE("1.19999999999999995559e+00", 26);
-
-
-	BEGIN();
-	VAL_DOUBLE(1234.5678);
-	END_SIZE("1.23456780000000003383e+03", 26);
-
-	BEGIN();
-	VAL_DOUBLE(-1234.5678);
-	END_SIZE("-1.23456780000000003383e+03", 27);
+	verify_double(0);
+	verify_double(1.2);
+	verify_double(1234.5678);
+	verify_double(-1234.5678);
 }
 
 static void
