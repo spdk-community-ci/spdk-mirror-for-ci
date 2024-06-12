@@ -38,46 +38,37 @@ def read_json_stats(file):
                 # measurements were done, so just return zeroes
                 return [0, 0, 0, 0]
 
+        def extract_latency_data(job_data, rw_operation):
+            lat_key, lat_unit = get_lat_unit("lat", job_data[rw_operation])
+            lat_data = job_data[rw_operation][lat_key]
+            avg_lat = float(lat_data["mean"])
+            min_lat = float(lat_data["min"])
+            max_lat = float(lat_data["max"])
+
+            clat_key, clat_unit = get_lat_unit("clat", job_data[rw_operation])
+            p99_lat, p99_9_lat, p99_99_lat, p99_999_lat = get_clat_percentiles(job_data[rw_operation][clat_key])
+
+            if "ns" in lat_unit:
+                avg_lat, min_lat, max_lat = [x / 1000 for x in [avg_lat, min_lat, max_lat]]
+            if "ns" in clat_unit:
+                p99_lat = p99_lat / 1000
+                p99_9_lat = p99_9_lat / 1000
+                p99_99_lat = p99_99_lat / 1000
+                p99_999_lat = p99_999_lat / 1000
+
+            return [avg_lat, min_lat, max_lat, p99_lat,
+                    p99_9_lat, p99_99_lat, p99_999_lat]
+
         read_iops = float(job_data["read"]["iops"])
         read_bw = float(job_data["read"]["bw"])
-        lat_key, lat_unit = get_lat_unit("lat", job_data["read"])
-        read_avg_lat = float(job_data["read"][lat_key]["mean"])
-        read_min_lat = float(job_data["read"][lat_key]["min"])
-        read_max_lat = float(job_data["read"][lat_key]["max"])
-        clat_key, clat_unit = get_lat_unit("clat", job_data["read"])
-        read_p99_lat, read_p99_9_lat, read_p99_99_lat, read_p99_999_lat = get_clat_percentiles(
-            job_data["read"][clat_key])
-
-        if "ns" in lat_unit:
-            read_avg_lat, read_min_lat, read_max_lat = [x / 1000 for x in [read_avg_lat, read_min_lat, read_max_lat]]
-        if "ns" in clat_unit:
-            read_p99_lat = read_p99_lat / 1000
-            read_p99_9_lat = read_p99_9_lat / 1000
-            read_p99_99_lat = read_p99_99_lat / 1000
-            read_p99_999_lat = read_p99_999_lat / 1000
+        read_latency = extract_latency_data(job_data, "read")
 
         write_iops = float(job_data["write"]["iops"])
         write_bw = float(job_data["write"]["bw"])
-        lat_key, lat_unit = get_lat_unit("lat", job_data["write"])
-        write_avg_lat = float(job_data["write"][lat_key]["mean"])
-        write_min_lat = float(job_data["write"][lat_key]["min"])
-        write_max_lat = float(job_data["write"][lat_key]["max"])
-        clat_key, clat_unit = get_lat_unit("clat", job_data["write"])
-        write_p99_lat, write_p99_9_lat, write_p99_99_lat, write_p99_999_lat = get_clat_percentiles(
-            job_data["write"][clat_key])
+        write_latency = extract_latency_data(job_data, "write")
 
-        if "ns" in lat_unit:
-            write_avg_lat, write_min_lat, write_max_lat = [x / 1000 for x in [write_avg_lat, write_min_lat, write_max_lat]]
-        if "ns" in clat_unit:
-            write_p99_lat = write_p99_lat / 1000
-            write_p99_9_lat = write_p99_9_lat / 1000
-            write_p99_99_lat = write_p99_99_lat / 1000
-            write_p99_999_lat = write_p99_999_lat / 1000
-
-    return [read_iops, read_bw, read_avg_lat, read_min_lat, read_max_lat,
-            read_p99_lat, read_p99_9_lat, read_p99_99_lat, read_p99_999_lat,
-            write_iops, write_bw, write_avg_lat, write_min_lat, write_max_lat,
-            write_p99_lat, write_p99_9_lat, write_p99_99_lat, write_p99_999_lat]
+    return [read_iops, read_bw, *read_latency,
+            write_iops, write_bw, *write_latency]
 
 
 def read_target_stats(measurement_name, results_file_list, results_dir):
