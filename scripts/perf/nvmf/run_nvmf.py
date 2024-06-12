@@ -1016,11 +1016,8 @@ class Initiator(Server):
                                               ramp_time=fio_settings["ramp_time"], run_time=fio_settings["run_time"],
                                               rate_iops=fio_settings["rate_iops"], group_reporting=fio_settings["group_reporting"])
 
-        # TODO: hipri disabled for now, as it causes fio errors:
-        # io_u error on file /dev/nvme2n1: Operation not supported
-        # See comment in KernelInitiator class, init_connect() function
         if "io_uring" in self.ioengine:
-            fio_config = "\n".join([fio_config, "fixedbufs=1", "registerfiles=1", "#hipri=1"])
+            fio_config = "\n".join([fio_config, "fixedbufs=1", "registerfiles=1", "hipri=1"])
         if fio_settings["num_jobs"]:
             fio_config = "\n".join([fio_config, f"numjobs={fio_settings['num_jobs']}"])
         if self.cpus_allowed is not None:
@@ -1517,12 +1514,13 @@ class KernelInitiator(Initiator):
         if "io_uring" in self.ioengine:
             self.log.info("Setting block layer settings for io_uring.")
 
-            # TODO: io_poll=1 and io_poll_delay=-1 params not set here, because
-            #       apparently it's not possible for connected subsystems.
-            #       Results in "error: Invalid argument"
+            # io_poll=1 and io_poll_delay=-1 are automatically set to when connecting using
+            # nvme-cli --nr-poll-queues parameter. No need to set these fields ourselves.
+            # TODO: rq_affinity was moved to controller instance (e.g. "nvme0c0n1") - figure out
+            # where should we actually set these params.
             block_sysfs_settings = {
                 "iostats": "0",
-                "rq_affinity": "0",
+                # "rq_affinity": "0",
                 "nomerges": "2"
             }
 
