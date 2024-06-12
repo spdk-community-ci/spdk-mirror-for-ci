@@ -42,6 +42,7 @@ TMP_BPF_FILE=$testdir/bpftraces.txt
 PLUGIN="nvme"
 DISKCFG=""
 USE_LVOL_BDEVS=false
+USE_DIF_VBDEVS=false
 BDEV_CACHE=""
 BDEV_POOL=""
 DISKNO="ALL"
@@ -105,6 +106,8 @@ function usage() {
 	echo "                            Lines starting with # are ignored as comments."
 	echo "    --use-lvol-bdevs        Create Logical Volume Store and Bdev on top of each NVMe drive"
 	echo "                            To be used only with spdk-*-bdev driver options."
+	echo "    --use-dif-vbdevs        Create DIF VBdev on top of each NVMe drive"
+	echo "                            To be used only with spdk-*-bdev driver options."
 	echo "    --bdev-io-cache-size    Set IO cache size for for SPDK bdev subsystem."
 	echo "    --bdev-io-pool-size     Set IO pool size for for SPDK bdev subsystem."
 	echo "    --max-disk=INT,ALL      Number of disks to test on, this will run multiple workloads with increasing number of disk each run."
@@ -163,6 +166,7 @@ while getopts 'h-:' optchar; do
 					fi
 					;;
 				use-lvol-bdevs) USE_LVOL_BDEVS=true ;;
+				use-dif-vbdevs) USE_DIF_VBDEVS=true ;;
 				bdev-io-cache-size=*) BDEV_CACHE="${OPTARG#*=}" ;;
 				bdev-io-pool-size=*) BDEV_POOL="${OPTARG#*=}" ;;
 				max-disk=*) DISKNO="${OPTARG#*=}" ;;
@@ -203,9 +207,14 @@ mkdir -p $result_dir
 
 trap 'rm -f *.state $testdir/bdev.conf; kill $perf_pid; wait $dpdk_mem_pid; print_backtrace' ERR SIGTERM SIGABRT
 
-if $USE_LVOL_BDEVS && ! [[ "$PLUGIN" =~ 'bdev' ]]; then
-	echo 'ERROR: lvol bdevs are supported only with bdev plugin'
-	exit 1
+if [[ ! "$PLUGIN" =~ 'bdev' ]]; then
+	if $USE_LVOL_BDEVS; then
+		echo 'ERROR: lvol bdevs are supported only with bdev plugin'
+		exit 1
+	elif $USE_DIF_VBDEVS; then
+		echo 'ERROR: DIF vbdevs are supported only with bdev plugin'
+		exit 1
+	fi
 fi
 
 if [[ "$PLUGIN" =~ "xnvme" ]]; then
@@ -214,7 +223,7 @@ elif [[ "$PLUGIN" =~ "bdev" ]]; then
 	if $USE_LVOL_BDEVS; then
 		create_lvols
 	fi
-	create_spdk_bdev_conf "$BDEV_CACHE" "$BDEV_POOL"
+	create_spdk_bdev_conf "$BDEV_CACHE" "$BDEV_POOL" "$USE_DIF_VBDEVS"
 fi
 
 if [[ -s $testdir/bdev.conf ]]; then
@@ -350,6 +359,9 @@ for ((j = 0; j < REPEAT_NO; j++)); do
 	else
 		if $USE_LVOL_BDEVS; then
 			create_fio_config $DISKNO $PLUGIN "$LVOL_BDEVS" "$DISKS_NUMA" "$CORES"
+		elif $USE_DIF_VBDEVS; then
+			DIF_VBDEVS=( $DISK_NAMES ) DIF_VBDEVS=( "${DIF_VBDEVS[@]/%n1/DIF}" )
+			create_fio_config $DISKNO $PLUGIN "${DIF_VBDEVS[*]}" "$DISKS_NUMA" "$CORES"
 		else
 			create_fio_config $DISKNO $PLUGIN "$DISK_NAMES" "$DISKS_NUMA" "$CORES"
 		fi

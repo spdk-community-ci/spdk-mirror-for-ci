@@ -45,6 +45,7 @@ function create_spdk_bdev_conf() {
 	local disk_cfg
 	local bdev_io_cache_size=$1
 	local bdev_io_pool_size=$2
+	local want_dif_vbdev=$3
 	local bdev_json_cfg=()
 	local dev_opts=()
 	local i
@@ -86,6 +87,19 @@ function create_spdk_bdev_conf() {
 				}
 			JSON
 		)")
+		if $want_dif_vbdev; then
+			bdev_json_cfg+=("$(
+				cat <<- JSON
+					{
+						"method": "bdev_dif_create",
+						"params": {
+							"base_bdev_name": "Nvme${i}n1",
+							"name": "Nvme${i}DIF"
+						}
+					}
+				JSON
+			)")
+		fi
 	done
 
 	local IFS=","
