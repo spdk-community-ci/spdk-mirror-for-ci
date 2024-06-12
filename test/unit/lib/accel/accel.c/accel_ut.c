@@ -1657,6 +1657,141 @@ test_sequence_dif_generate_copy(void)
 }
 
 static void
+test_sequence_dif_verify_copy(void)
+{
+	struct spdk_accel_sequence *seq = NULL;
+	struct spdk_io_channel *ioch;
+	struct ut_sequence ut_seq;
+	char source[4160], tmp[4096], tmp_md[4160], destination[4096], expected[4096];
+	struct iovec src_iovs[2], dst_iovs[2], exp_iovs;
+	int rc, completed = 0, block_size = 520, md_size = 8, num_blocks = 8;
+	struct spdk_dif_ctx dif_ctx;
+	struct spdk_dif_ctx_init_ext_opts dif_opts;
+	struct spdk_dif_error dif_err;
+
+	ioch = spdk_accel_get_io_channel();
+	SPDK_CU_ASSERT_FATAL(ioch != NULL);
+
+	memset(source, 0xa5, sizeof(source));
+
+	src_iovs[0].iov_base = source;
+	src_iovs[0].iov_len = sizeof(source);
+	exp_iovs.iov_base = expected;
+	exp_iovs.iov_len = sizeof(expected);
+
+	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
+	dif_opts.dif_pi_format = SPDK_DIF_PI_FORMAT_16;
+	rc = spdk_dif_ctx_init(&dif_ctx,
+			       block_size,
+			       md_size,
+			       true,
+			       true,
+			       SPDK_DIF_TYPE1,
+			       SPDK_DIF_FLAGS_GUARD_CHECK | SPDK_DIF_FLAGS_REFTAG_CHECK |
+			       SPDK_DIF_FLAGS_APPTAG_CHECK,
+			       0, 0xFFFF, 0x123,
+			       0, 0, &dif_opts);
+	CU_ASSERT_EQUAL(rc, 0);
+
+	rc = spdk_dif_generate(&src_iovs[0], 1, num_blocks, &dif_ctx);
+	CU_ASSERT_EQUAL(rc, 0);
+
+	rc = spdk_dif_verify_copy(&exp_iovs, 1, &src_iovs[0], 1, num_blocks, &dif_ctx, &dif_err);
+	CU_ASSERT_EQUAL(rc, 0);
+
+	/* Check a single DIF verify copy operation in a sequence */
+	seq = NULL;
+	completed = 0;
+
+	dst_iovs[0].iov_base = destination;
+	dst_iovs[0].iov_len = sizeof(destination);
+	rc = spdk_accel_append_dif_verify_copy(&seq, ioch, &dst_iovs[0], 1, NULL, NULL,
+					       &src_iovs[0], 1, NULL, NULL, num_blocks, &dif_ctx, &dif_err,
+					       ut_sequence_step_cb, &completed);
+	CU_ASSERT_EQUAL(rc, 0);
+
+	ut_seq.complete = false;
+	spdk_accel_sequence_finish(seq, ut_sequence_complete_cb, &ut_seq);
+
+	poll_threads();
+
+	CU_ASSERT_EQUAL(completed, 1);
+	CU_ASSERT(ut_seq.complete);
+	CU_ASSERT_EQUAL(ut_seq.status, 0);
+	CU_ASSERT_EQUAL(memcmp(destination, expected, sizeof(destination)), 0);
+
+	/* Check sequence with DIF verify copy at the beginning: DIF verify copy -> copy */
+	seq = NULL;
+	completed = 0;
+
+	memset(destination, 0, sizeof(destination));
+
+	dst_iovs[0].iov_base = tmp;
+	dst_iovs[0].iov_len = sizeof(tmp);
+
+	rc = spdk_accel_append_dif_verify_copy(&seq, ioch, &dst_iovs[0], 1, NULL, NULL,
+					       &src_iovs[0], 1, NULL, NULL, num_blocks, &dif_ctx, &dif_err,
+					       ut_sequence_step_cb, &completed);
+	CU_ASSERT_EQUAL(rc, 0);
+
+	dst_iovs[1].iov_base = destination;
+	dst_iovs[1].iov_len = sizeof(destination);
+	src_iovs[1].iov_base = tmp;
+	src_iovs[1].iov_len = sizeof(tmp);
+	rc = spdk_accel_append_copy(&seq, ioch, &dst_iovs[1], 1, NULL, NULL,
+				    &src_iovs[1], 1, NULL, NULL,
+				    ut_sequence_step_cb, &completed);
+	CU_ASSERT_EQUAL(rc, 0);
+
+	ut_seq.complete = false;
+	spdk_accel_sequence_finish(seq, ut_sequence_complete_cb, &ut_seq);
+
+	poll_threads();
+
+	CU_ASSERT_EQUAL(completed, 2);
+	CU_ASSERT(ut_seq.complete);
+	CU_ASSERT_EQUAL(ut_seq.status, 0);
+	CU_ASSERT_EQUAL(memcmp(destination, expected, sizeof(destination)), 0);
+
+	/* Check sequence with DIF verify copy at the end: copy -> DIF verify copy */
+	seq = NULL;
+	completed = 0;
+
+	memset(destination, 0, sizeof(destination));
+
+	dst_iovs[0].iov_base = tmp_md;
+	dst_iovs[0].iov_len = sizeof(tmp_md);
+
+	rc = spdk_accel_append_copy(&seq, ioch, &dst_iovs[0], 1, NULL, NULL,
+				    &src_iovs[0], 1, NULL, NULL,
+				    ut_sequence_step_cb, &completed);
+	CU_ASSERT_EQUAL(rc, 0);
+
+	dst_iovs[1].iov_base = destination;
+	dst_iovs[1].iov_len = sizeof(destination);
+	src_iovs[1].iov_base = tmp_md;
+	src_iovs[1].iov_len = sizeof(tmp_md);
+
+	rc = spdk_accel_append_dif_verify_copy(&seq, ioch, &dst_iovs[1], 1, NULL, NULL,
+					       &src_iovs[1], 1, NULL, NULL, num_blocks, &dif_ctx, &dif_err,
+					       ut_sequence_step_cb, &completed);
+	CU_ASSERT_EQUAL(rc, 0);
+
+	ut_seq.complete = false;
+	spdk_accel_sequence_finish(seq, ut_sequence_complete_cb, &ut_seq);
+
+	poll_threads();
+
+	CU_ASSERT_EQUAL(completed, 2);
+	CU_ASSERT(ut_seq.complete);
+	CU_ASSERT_EQUAL(ut_seq.status, 0);
+	CU_ASSERT_EQUAL(memcmp(destination, expected, sizeof(destination)), 0);
+
+	spdk_put_io_channel(ioch);
+	poll_threads();
+}
+
+static void
 test_sequence_copy_elision(void)
 {
 	struct spdk_accel_sequence *seq = NULL;
@@ -4319,6 +4454,7 @@ main(int argc, char **argv)
 	CU_ADD_TEST(seq_suite, test_sequence_same_iovs);
 	CU_ADD_TEST(seq_suite, test_sequence_crc32);
 	CU_ADD_TEST(seq_suite, test_sequence_dif_generate_copy);
+	CU_ADD_TEST(seq_suite, test_sequence_dif_verify_copy);
 
 	suite = CU_add_suite("accel", test_setup, test_cleanup);
 	CU_ADD_TEST(suite, test_spdk_accel_task_complete);
