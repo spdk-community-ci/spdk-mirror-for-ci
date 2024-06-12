@@ -6,9 +6,46 @@ import os
 import re
 import json
 import logging
+from dataclasses import dataclass, field
 from subprocess import check_output
 from collections import OrderedDict
 from json.decoder import JSONDecodeError
+
+
+@dataclass
+class LatencyData:
+    avg_lat: float
+    min_lat: float
+    max_lat: float
+    percentiles: list = field(default_factory=list)
+    unit: str = "us"
+    unit_p99: str = "us"
+
+    def convert_ns_to_us(self):
+        if self.unit == "ns":
+            self.avg_lat /= 1000
+            self.min_lat /= 1000
+            self.max_lat /= 1000
+        if self.unit_p99:
+            self.percentiles = [p / 1000 for p in self.percentiles]
+
+    def get_metrics(self):
+        return [self.avg_lat, self.min_lat, self.max_lat] + self.percentiles
+
+
+@dataclass
+class PerformanceMetrics:
+    read_iops: float
+    read_bw: float
+    read_latency: LatencyData
+    write_iops: float
+    write_bw: float
+    write_latency: LatencyData
+
+    def to_list(self):
+        metrics = [self.read_iops, self.read_bw, *self.read_latency.get_metrics(),
+                   self.write_iops, self.write_bw, *self.write_latency.get_metrics()]
+        return [round(m, 3) for m in metrics]
 
 
 def read_json_stats(file):
@@ -46,18 +83,12 @@ def read_json_stats(file):
             max_lat = float(lat_data["max"])
 
             clat_key, clat_unit = get_lat_unit("clat", job_data[rw_operation])
-            p99_lat, p99_9_lat, p99_99_lat, p99_999_lat = get_clat_percentiles(job_data[rw_operation][clat_key])
+            percentiles = get_clat_percentiles(job_data[rw_operation][clat_key])
 
-            if "ns" in lat_unit:
-                avg_lat, min_lat, max_lat = [x / 1000 for x in [avg_lat, min_lat, max_lat]]
-            if "ns" in clat_unit:
-                p99_lat = p99_lat / 1000
-                p99_9_lat = p99_9_lat / 1000
-                p99_99_lat = p99_99_lat / 1000
-                p99_999_lat = p99_999_lat / 1000
+            lat_data = LatencyData(avg_lat, min_lat, max_lat, percentiles, lat_unit, clat_unit)
+            lat_data.convert_ns_to_us()
 
-            return [avg_lat, min_lat, max_lat, p99_lat,
-                    p99_9_lat, p99_99_lat, p99_999_lat]
+            return lat_data
 
         read_iops = float(job_data["read"]["iops"])
         read_bw = float(job_data["read"]["bw"])
@@ -67,8 +98,10 @@ def read_json_stats(file):
         write_bw = float(job_data["write"]["bw"])
         write_latency = extract_latency_data(job_data, "write")
 
-    return [read_iops, read_bw, *read_latency,
-            write_iops, write_bw, *write_latency]
+        performance_metrics = PerformanceMetrics(read_iops, read_bw, read_latency,
+                                                 write_iops, write_bw, write_latency)
+
+    return performance_metrics.to_list()
 
 
 def read_target_stats(measurement_name, results_file_list, results_dir):
