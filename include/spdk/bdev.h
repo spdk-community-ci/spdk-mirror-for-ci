@@ -286,8 +286,16 @@ struct spdk_bdev_ext_io_opts {
 	union spdk_bdev_nvme_cdw12 nvme_cdw12;
 	/** defined by \ref spdk_bdev_nvme_cdw13 */
 	union spdk_bdev_nvme_cdw13 nvme_cdw13;
+	/**
+	 * If set, this flag indicates, that the buffers for this IO do not include
+	 * any metadata. If metadata, or DIF/DIX is required by the underlying bdev,
+	 * it will be added by the generic bdev layer.
+	 * The flag is valid only for bdevs, which are formatted with the extended
+	 * sector size.
+	 */
+	bool no_metadata;
 } __attribute__((packed));
-SPDK_STATIC_ASSERT(sizeof(struct spdk_bdev_ext_io_opts) == 52, "Incorrect size");
+SPDK_STATIC_ASSERT(sizeof(struct spdk_bdev_ext_io_opts) == 53, "Incorrect size");
 
 /**
  * Get the options for the bdev module.

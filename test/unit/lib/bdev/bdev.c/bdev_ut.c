@@ -5854,7 +5854,8 @@ bdev_io_ext(void)
 	struct spdk_bdev_ext_io_opts ext_io_opts = {
 		.metadata = (void *)0xFF000000,
 		.size = sizeof(ext_io_opts),
-		.dif_check_flags_exclude_mask = 0
+		.dif_check_flags_exclude_mask = 0,
+		.no_metadata = false
 	};
 
 	_bdev_io_ext(&ext_io_opts);
@@ -5877,7 +5878,8 @@ bdev_io_ext_invalid_opts(void)
 	struct spdk_bdev_ext_io_opts ext_io_opts = {
 		.metadata = (void *)0xFF000000,
 		.size = sizeof(ext_io_opts),
-		.dif_check_flags_exclude_mask = 0
+		.dif_check_flags_exclude_mask = 0,
+		.no_metadata = false
 	};
 	int rc;
 
@@ -5932,7 +5934,8 @@ bdev_io_ext_split(void)
 	struct spdk_bdev_ext_io_opts ext_io_opts = {
 		.metadata = (void *)0xFF000000,
 		.size = sizeof(ext_io_opts),
-		.dif_check_flags_exclude_mask = 0
+		.dif_check_flags_exclude_mask = 0,
+		.no_metadata = false
 	};
 	int rc;
 
@@ -6025,7 +6028,8 @@ bdev_io_ext_bounce_buffer(void)
 	struct spdk_bdev_ext_io_opts ext_io_opts = {
 		.metadata = (void *)0xFF000000,
 		.size = sizeof(ext_io_opts),
-		.dif_check_flags_exclude_mask = 0
+		.dif_check_flags_exclude_mask = 0,
+		.no_metadata = false
 	};
 	int rc;
 

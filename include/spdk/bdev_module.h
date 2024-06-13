@@ -849,6 +849,9 @@ struct spdk_bdev_io {
 			/** defined by \ref spdk_bdev_nvme_cdw13 */
 			union spdk_bdev_nvme_cdw13 nvme_cdw13;
 
+			/** If set, the IO doesn't include any metadata in the memory buffers */
+			bool no_metadata;
+
 			struct {
 				/** Whether the buffer should be populated with the real data */
 				uint8_t populate : 1;
