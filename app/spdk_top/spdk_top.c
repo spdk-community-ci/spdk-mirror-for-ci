@@ -42,7 +42,7 @@
 #define TABS_LOCATION_COL 0
 #define TABS_DATA_START_ROW 3
 #define TABS_DATA_START_COL 2
-#define TABS_COL_COUNT 13
+#define TABS_COL_COUNT 14
 #define MENU_WIN_HEIGHT 3
 #define MENU_WIN_SPACING 4
 #define MENU_WIN_LOCATION_COL 0
@@ -118,6 +118,7 @@ enum column_cores_type {
 	COL_CORES_IDLE_TIME,
 	COL_CORES_BUSY_TIME,
 	COL_CORES_BUSY_PCT,
+	COL_CORES_RDELAY_PCT,
 	COL_CORES_STATUS,
 	COL_CORES_INTR,
 	COL_CORES_SYS_PCT,
@@ -152,7 +153,7 @@ struct run_counter_history {
 uint8_t g_sleep_time = 1;
 uint16_t g_selected_row;
 uint16_t g_max_selected_row;
-uint64_t g_tick_rate;
+uint64_t g_tick_rate, g_spdk_pid;
 const char *poller_type_str[SPDK_POLLER_TYPES_COUNT] = {"Active", "Timed", "Paused"};
 const char *g_tab_title[NUMBER_OF_TABS] = {"[1] THREADS", "[2] POLLERS", "[3] CORES"};
 struct spdk_jsonrpc_client *g_rpc_client;
@@ -194,6 +195,7 @@ static struct col_desc g_col_desc[NUMBER_OF_TABS][TABS_COL_COUNT] = {
 		{.name = "Idle [us]", .max_data_string = MAX_TIME_STR_LEN},
 		{.name = "Busy [us]", .max_data_string = MAX_TIME_STR_LEN},
 		{.name = "Busy %", .max_data_string = MAX_FLOAT_STR_LEN},
+		{.name = "RDelay %", .max_data_string = MAX_FLOAT_STR_LEN},
 		{.name = "Status", .max_data_string = MAX_STATUS_IND_STR_LEN},
 		{.name = "Intr", .max_data_string = MAX_INTR_LEN},
 		{.name = "Sys %", .max_data_string = MAX_FLOAT_STR_LEN},
@@ -257,6 +259,10 @@ struct rpc_core_info {
 	uint64_t last_sys;
 	uint64_t last_usr;
 	uint64_t last_irq;
+	uint64_t runtime;
+	uint64_t run_delay;
+	uint64_t last_runtime;
+	uint64_t last_run_delay;
 	bool in_interrupt;
 	struct rpc_core_threads threads;
 	uint64_t tid;
@@ -618,6 +624,32 @@ get_cpu_usage(uint64_t busy_ticks, uint64_t idle_ticks)
 		/* Increase numerator to convert fraction into decimal with
 		 * additional precision */
 		return busy_ticks * 10000 / (busy_ticks + idle_ticks);
+	}
+
+	return 0;
+}
+
+static void
+get_cpu_runtime_info(const uint64_t pid, const uint64_t tid, uint64_t *runtime, uint64_t *rdelay)
+{
+	FILE    *fp;
+	char    line[4096], sched_stat_file[4096];
+
+	snprintf(sched_stat_file, sizeof(sched_stat_file), "/proc/%ld/task/%ld/schedstat", pid, tid);
+	if ((fp = fopen(sched_stat_file, "r"))) {
+		if (fgets(line, sizeof(line), fp)) {
+			sscanf(line, "%lu %lu", runtime, rdelay);
+		}
+
+		fclose(fp);
+	}
+}
+
+static int
+get_rdelay_pct(uint64_t rdelay, uint64_t runtime)
+{
+	if (rdelay + runtime > 0) {
+		return rdelay * 10000 / (rdelay + runtime);
 	}
 
 	return 0;
@@ -999,6 +1031,12 @@ subsort_cores(enum column_cores_type sort_column, const void *p1, const void *p2
 		count2 = get_cpu_usage(core_info2.last_busy - core_info2.busy,
 				       core_info2.last_idle - core_info2.idle);
 		break;
+	case COL_CORES_RDELAY_PCT:
+		count1 = get_rdelay_pct(core_info1.last_run_delay - core_info1.run_delay,
+					core_info1.last_runtime - core_info1.runtime);
+		count2 = get_rdelay_pct(core_info2.last_run_delay - core_info2.run_delay,
+					core_info2.last_runtime - core_info2.runtime);
+		break;
 	case COL_CORES_NONE:
 	default:
 		return 0;
@@ -1047,6 +1085,11 @@ get_cores_data(void)
 		goto end;
 	}
 
+	for (i = 0; i < current_cores_count; i++) {
+		get_cpu_runtime_info(g_spdk_pid, cores_info[i].tid, &cores_info[i].runtime,
+				     &cores_info[i].run_delay);
+	}
+
 	pthread_mutex_lock(&g_thread_lock);
 	for (i = 0; i < current_cores_count; i++) {
 		for (j = 0; j < g_last_cores_count; j++) {
@@ -1056,6 +1099,8 @@ get_cores_data(void)
 				cores_info[i].last_irq = g_cores_info[j].irq;
 				cores_info[i].last_sys = g_cores_info[j].sys;
 				cores_info[i].last_usr = g_cores_info[j].usr;
+				cores_info[i].last_runtime = g_cores_info[j].runtime;
+				cores_info[i].last_run_delay = g_cores_info[j].run_delay;
 			}
 		}
 	}
@@ -1327,6 +1372,17 @@ get_cpu_usage_str(uint64_t busy_ticks, uint64_t total_ticks, char *cpu_str)
 			 (double)(busy_ticks) * 100 / (double)(total_ticks));
 	} else {
 		cpu_str[0] = '\0';
+	}
+}
+
+static void
+get_rdelay_pct_str(uint64_t run_delay, uint64_t total, char *run_delay_str)
+{
+	if (total > 0) {
+		snprintf(run_delay_str, MAX_FLOAT_STR_LEN, "%.2f",
+			 (double)(run_delay) * 100 / (double)(total));
+	} else {
+		run_delay_str[0] = '\0';
 	}
 }
 
@@ -1629,7 +1685,7 @@ draw_core_tab_row(uint64_t current_row, uint8_t item_index)
 	uint64_t irq_tmp, usr_tmp, sys_tmp, busy_tmp, idle_tmp;
 	int color_attr = COLOR_PAIR(6);
 	char core[MAX_CORE_STR_LEN], threads_number[MAX_THREAD_COUNT_STR_LEN], cpu_usage[MAX_FLOAT_STR_LEN],
-	     pollers_number[MAX_POLLER_COUNT_STR_LEN], idle_time[MAX_TIME_STR_LEN],
+	     rdelay[MAX_FLOAT_STR_LEN], pollers_number[MAX_POLLER_COUNT_STR_LEN], idle_time[MAX_TIME_STR_LEN],
 	     busy_time[MAX_TIME_STR_LEN], core_freq[MAX_CORE_FREQ_STR_LEN],
 	     in_interrupt[MAX_INTR_LEN], *status_str, sys_str[MAX_FLOAT_STR_LEN],
 	     irq_str[MAX_FLOAT_STR_LEN], cpu_str[MAX_FLOAT_STR_LEN];
@@ -1661,6 +1717,10 @@ draw_core_tab_row(uint64_t current_row, uint8_t item_index)
 
 	uint64_t idle_period = g_cores_info[current_row].idle - g_cores_info[current_row].last_idle;
 	uint64_t busy_period = g_cores_info[current_row].busy - g_cores_info[current_row].last_busy;
+	uint64_t runtime_period = g_cores_info[current_row].runtime -
+				  g_cores_info[current_row].last_runtime;
+	uint64_t run_delay_period = g_cores_info[current_row].run_delay -
+				    g_cores_info[current_row].last_run_delay;
 	if (!col_desc[COL_CORES_IDLE_TIME].disabled) {
 		if (g_interval_data == true) {
 			get_time_str(idle_period, idle_time);
@@ -1688,6 +1748,13 @@ draw_core_tab_row(uint64_t current_row, uint8_t item_index)
 		print_max_len(g_tabs[CORES_TAB], TABS_DATA_START_ROW + item_index, col,
 			      col_desc[COL_CORES_BUSY_PCT].max_data_string, ALIGN_RIGHT, cpu_usage);
 		col += col_desc[COL_CORES_BUSY_PCT].max_data_string + 1;
+	}
+
+	if (!col_desc[COL_CORES_RDELAY_PCT].disabled) {
+		get_rdelay_pct_str(run_delay_period, run_delay_period + runtime_period, rdelay);
+		print_max_len(g_tabs[CORES_TAB], TABS_DATA_START_ROW + item_index, col,
+			      col_desc[COL_CORES_RDELAY_PCT].max_data_string, ALIGN_RIGHT, rdelay);
+		col += col_desc[COL_CORES_RDELAY_PCT].max_data_string + 1;
 	}
 
 	if (!col_desc[COL_CORES_STATUS].disabled) {
@@ -3469,13 +3536,31 @@ rpc_decode_tick_rate(struct spdk_json_val *val, uint64_t *tick_rate)
 }
 
 static int
+rpc_decode_spdk_pid(struct spdk_json_val *val, uint64_t *out_pid)
+{
+	const struct spdk_json_object_decoder rpc_spdk_pid_decoder[] = {
+		{"pid", 0, spdk_json_decode_uint64}
+	};
+
+	int rc;
+	uint64_t pid;
+
+	rc = spdk_json_decode_object_relaxed(val, rpc_spdk_pid_decoder,
+					     SPDK_COUNTOF(rpc_spdk_pid_decoder), &pid);
+
+	*out_pid = pid;
+
+	return rc;
+}
+
+static int
 wait_init(pthread_t *data_thread)
 {
 	struct spdk_jsonrpc_client_response *json_resp = NULL;
 	char *uninit_log = "Waiting for SPDK target application to initialize...",
 	      *uninit_error = "Unable to read SPDK application state!";
 	int c, max_col, rc = 0;
-	uint64_t tick_rate;
+	uint64_t tick_rate, spdk_pid;
 
 	max_col = getmaxx(stdscr);
 	print_in_middle(stdscr, FIRST_DATA_ROW, 1, max_col, uninit_log, COLOR_PAIR(5));
@@ -3512,10 +3597,15 @@ wait_init(pthread_t *data_thread)
 		return -EINVAL;
 	}
 
+	if (rpc_decode_spdk_pid(json_resp->result, &spdk_pid)) {
+		spdk_jsonrpc_client_free_response(json_resp);
+		return -EINVAL;
+	}
+
 	spdk_jsonrpc_client_free_response(json_resp);
 
 	g_tick_rate = tick_rate;
-
+	g_spdk_pid = spdk_pid;
 	/* This is to get first batch of data for display functions.
 	 * Since data thread makes RPC calls that take more time than
 	 * startup of display functions on main thread, without these
