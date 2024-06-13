@@ -947,7 +947,7 @@ class Initiator(Server):
             ioengine={ioengine}
             {spdk_conf}
             thread=1
-            group_reporting=1
+            group_reporting={group_reporting}
             direct=1
             percentile_list=50:90:99:99.5:99.9:99.99:99.999
 
@@ -968,7 +968,7 @@ class Initiator(Server):
         fio_config = fio_conf_template.format(ioengine=self.ioengine, spdk_conf=self.spdk_conf,
                                               rw=rw, rwmixread=fio_settings["rw_mix_read"], block_size=block_size,
                                               ramp_time=fio_settings["ramp_time"], run_time=fio_settings["run_time"],
-                                              rate_iops=fio_settings["rate_iops"])
+                                              rate_iops=fio_settings["rate_iops"], group_reporting=fio_settings["group_reporting"])
 
         # TODO: hipri disabled for now, as it causes fio errors:
         # io_u error on file /dev/nvme2n1: Operation not supported
@@ -1859,7 +1859,8 @@ if __name__ == "__main__":
                 "rate_iops": data[k].get("rate_iops", 0),
                 "offset": data[k].get("offset", False),
                 "offset_inc": data[k].get("offset_inc", 0),
-                "numa_align": data[k].get("numa_align", 1)
+                "numa_align": data[k].get("numa_align", 1),
+                "group_reporting": data[k].get("group_reporting", 0)
             }
         else:
             continue
