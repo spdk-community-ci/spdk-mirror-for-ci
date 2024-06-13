@@ -24,8 +24,13 @@
  */
 #define lower_32_bits(n) ((uint32_t)((n) & 0xffffffff))
 
-#define AE4DMA_DEFAULT_ORDER	5
-#define AE4DMA_DESCRITPTORS_PER_ENGINE 32
+#define AE4DMA_DESCRITPTORS_PER_CMDQ 32
+#define AE4DMA_QUEUE_DESC_SIZE  sizeof(struct spdk_ae4dma_desc)
+#define AE4DMA_QUEUE_SIZE(n)  (AE4DMA_CMD_QUEUE_LEN * (n))
+
+/* Offset of each(i) queue */
+#define QUEUE_START_OFFSET(i) ((i + 1) * 0x20)
+
 
 struct ae4dma_descriptor {
 	uint64_t		phys_addr;
@@ -40,42 +45,30 @@ struct ae4dma_completion_event {
 
 struct ae4dma_cmd_queue {
 
-	/* Queue identifier */
-	uint32_t id;
-
-	struct	ae4dma_completion_event *cevent;
+	struct	ae4dma_completion_event *completion_event;
 
 	/* Queue base address */
-	struct spdk_ae4dma_desc *qbase;
+	struct spdk_ae4dma_desc *qbase_addr;
 
-	volatile unsigned long qidx;
-	volatile unsigned long ridx;
+	struct spdk_ae4dma_desc *desc_ring;
+	struct ae4dma_descriptor *ring;
 
-	unsigned int qsize;
+	uint64_t head;
+	uint64_t tail;
+
+	unsigned int queue_size;
 	uint64_t qbase_dma;
 	uint64_t qdma_tail;
 
 	unsigned int active;
 	unsigned int suspended;
 
-	/* Interrupt flag */
-	bool int_en;
-
 	/* Register addresses for queue */
-	void  *reg_control;
-	uint32_t  qcontrol; /* Cached control register */
-
-	/* Status values from job */
-	uint32_t  int_status;
-	uint32_t  q_status;
-	uint32_t  q_int_status;
-	uint32_t  cmd_error;
-	uint32_t dridx;
+	void  *queue_control_reg;
 
 	/* Queue Statistics */
-	unsigned long total_pt_ops;
-	uint64_t	 q_cmd_count;
-	uint32_t tail_wi;
+	uint64_t q_cmd_count;
+	uint32_t write_index;
 
 	volatile unsigned long desc_id_counter;
 
@@ -83,9 +76,9 @@ struct ae4dma_cmd_queue {
 
 struct spdk_ae4dma_chan {
 	/* Opaque handle to upper layer */
-	struct spdk_pci_device		*device;
-	uint64_t            max_xfer_size;
-	volatile struct spdk_ae4dma_registers *regs;
+	struct    spdk_pci_device *device;
+	volatile struct spdk_ae4dma_hwq_regs *regs;
+	uint64_t  max_xfer_size;
 
 	uint64_t            head;
 	uint64_t            tail;
@@ -93,13 +86,13 @@ struct spdk_ae4dma_chan {
 	uint64_t            last_seen;
 	uint64_t            ring_size_order;
 
+	uint32_t	hwq_index;
+
 	/* I/O area used for device communication */
 	void *io_regs;
 
 	unsigned int cmd_count;
-	struct ae4dma_descriptor		*ring;
-	struct spdk_ae4dma_desc			*hw_ring;
-	struct ae4dma_cmd_queue cmd_q[MAX_HW_QUEUES];
+	struct ae4dma_cmd_queue cmd_q[AE4DMA_MAX_HW_QUEUES];
 	unsigned int cmd_q_count;
 
 	uint32_t	dma_capabilities;
@@ -107,29 +100,5 @@ struct spdk_ae4dma_chan {
 	/* tailq entry for attached_chans */
 	TAILQ_ENTRY(spdk_ae4dma_chan)	tailq;
 };
-
-static inline uint32_t
-is_ae4dma_active(uint64_t status)
-{
-	return 0;
-}
-
-static inline uint32_t
-is_ae4dma_idle(uint64_t status)
-{
-	return 0;
-}
-
-static inline uint32_t
-is_ae4dma_halted(uint64_t status)
-{
-	return 0;
-}
-
-static inline uint32_t
-is_ae4dma_suspended(uint64_t status)
-{
-	return 0;
-}
 
 #endif /* __AE4DMA_INTERNAL_H__ */

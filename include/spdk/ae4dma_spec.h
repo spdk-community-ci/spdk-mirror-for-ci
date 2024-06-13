@@ -11,74 +11,60 @@
 #define SPDK_AE4DMA_SPEC_H
 
 #include "spdk/stdinc.h"
+#include "spdk/assert.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#include "spdk/assert.h"
-
-
 /*
  * AE4DMA Device Details
  */
 
-#define MAX_HW_QUEUES			16
-#define MAX_CMD_QLEN			32
-#define QINDEX				0
+#define AE4DMA_MAX_HW_QUEUES			16
+#define AE4DMA_CMD_QUEUE_LEN			32
+#define AE4DMA_QUEUE_START_INDEX		0
 
-/* Register Mappings */
-#define CMD_Q_LEN			32
-#define CMD_Q_RUN			BIT(0)
-#define CMD_Q_HALT			BIT(1)
-#define QUEUE_SIZE_VAL			((ffs(CMD_Q_LEN) - 2) & \
-								  CMD_Q_SIZE_MASK)
-#define Q_PTR_MASK			(2 << (QUEUE_SIZE_VAL + 5) - 1)
-#define Q_DESC_SIZE			sizeof(struct spdk_ae4dma_desc)
-#define Q_SIZE(n)			(CMD_Q_LEN * (n))
-
-#define INT_DESC_VALIDATED		(1 << 1)
-#define INT_DESC_PROCESSED		(1 << 2)
-#define INT_COMPLETION			(1 << 3)
-#define INT_ERROR			(1 << 4)
-
-#define SUPPORTED_INTERRUPTS		(INT_COMPLETION | INT_ERROR)
+#define Q_SIZE(n)			(AE4DMA_CMD_QUEUE_LEN * (n))
 
 /* Descriptor status */
-#define DESC_SUBMITTED 0x1
-#define DESC_VALIDATED 0x2
-#define DESC_COMPLETED 0x3
-#define DESC_ERROR     0x4
+enum spdk_ae4dma_dma_status {
+	AE4DMA_DMA_DESC_SUBMITTED = 0,
+	AE4DMA_DMA_DESC_VALIDATED = 1,
+	AE4DMA_DMA_DESC_PROCESSED = 2,
+	AE4DMA_DMA_DESC_COMPLETED = 3,
+	AE4DMA_DMA_DESC_ERROR = 4,
+};
 
-
-#define CMD_DESC_DW0_VAL		0x000002
-#define CMD_QUEUE_ENABLE	0x1
+#define AE4DMA_CMD_QUEUE_ENABLE	0x1
 
 /* Offset of each(i) queue */
 #define QUEUE_START_OFFSET(i) ((i + 1) * 0x20)
 
 /** Common to all queues */
-#define COMMON_Q_CONFIG 0x00
+#define AE4DMA_COMMON_CONFIG_OFFSET 0x00
 
-#define PCI_BAR 0
+#define AE4DMA_PCIE_BAR 0
 
 /*
  * descriptor for AE4DMA commands
  * 8 32-bit words:
- * word 0: function; engine; control bits
- * word 1: length of source data
- * word 2: low 32 bits of source pointer
- * word 3: upper 16 bits of source pointer; source memory type
- * word 4: low 32 bits of destination pointer
- * word 5: upper 16 bits of destination pointer; destination memory type
- * word 6: reserved 32 bits
- * word 7: reserved 32 bits
+ * word 0: source memory type; destination memory type ; control bits
+ * word 1: desc_id; error code; status
+ * word 2: length
+ * word 3: reserved
+ * word 4: upper 32 bits of source pointer
+ * word 5: low 32 bits of source pointer
+ * word 6: upper 32 bits of destination pointer
+ * word 7: low 32 bits of destination pointer
  */
 
+/* Controls bits: Reserved for future use */
 #define DWORD0_SOC	BIT(0)
 #define DWORD0_IOC	BIT(1)
 #define DWORD0_SOM	BIT(3)
 #define DWORD0_EOM	BIT(4)
+
 #define DWORD0_DMT	GENMASK(5, 4)
 #define DWORD0_SMT	GENMASK(7, 6)
 
@@ -88,14 +74,10 @@ extern "C" {
 #define DWORD0_SMT_IO	1<<6
 
 
-
-union dwou {
-	uint32_t dw0;
-	struct dword0 {
-		uint8_t	byte0;
-		uint8_t	byte1;
-		uint16_t	timestamp;
-	} dws;
+struct spdk_desc_dword0 {
+	uint8_t	byte0;
+	uint8_t	byte1;
+	uint16_t timestamp;
 };
 
 struct spdk_desc_dword1 {
@@ -105,10 +87,10 @@ struct spdk_desc_dword1 {
 };
 
 struct spdk_ae4dma_desc {
-	union dwou dwouv;
+	struct spdk_desc_dword0 dw0;
 	struct spdk_desc_dword1 dw1;
 	uint32_t length;
-	struct spdk_desc_dword1 uu;
+	uint32_t reserved;
 	uint32_t src_hi;
 	uint32_t src_lo;
 	uint32_t dst_hi;
