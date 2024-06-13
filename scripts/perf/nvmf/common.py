@@ -21,12 +21,27 @@ class LatencyData:
     unit: str = "us"
     unit_p99: str = "us"
 
+    def __add__(self, new_data):
+        return LatencyData(
+            avg_lat=self.avg_lat + new_data.avg_lat,
+            min_lat=self.min_lat + new_data.min_lat,
+            max_lat=self.max_lat + new_data.max_lat,
+            percentiles=[p1 + p2 for p1, p2 in zip(self.percentiles, new_data.percentiles)],
+            unit=self.unit
+        )
+
+    def average(self, count):
+        self.avg_lat /= count
+        self.min_lat /= count
+        self.max_lat /= count
+        self.percentiles = [p / count for p in self.percentiles]
+
     def convert_ns_to_us(self):
         if self.unit == "ns":
             self.avg_lat /= 1000
             self.min_lat /= 1000
             self.max_lat /= 1000
-        if self.unit_p99:
+        if self.unit_p99 == "ns":
             self.percentiles = [p / 1000 for p in self.percentiles]
 
     def get_metrics(self):
@@ -51,7 +66,6 @@ class PerformanceMetrics:
 def read_json_stats(file):
     with open(file, "r") as json_data:
         data = json.load(json_data)
-        job_data = data["jobs"][0]  # 0 because using aggregated results, fio group reporting
 
         # Check if latency is in nano or microseconds to choose correct dict key
         def get_lat_unit(key_prefix, dict_section):
@@ -90,16 +104,31 @@ def read_json_stats(file):
 
             return lat_data
 
-        read_iops = float(job_data["read"]["iops"])
-        read_bw = float(job_data["read"]["bw"])
-        read_latency = extract_latency_data(job_data, "read")
+        total_read_iops = 0
+        total_read_bw = 0
+        total_write_iops = 0
+        total_write_bw = 0
+        total_read_latency = LatencyData(0, 0, 0, [0, 0, 0, 0])
+        total_write_latency = LatencyData(0, 0, 0, [0, 0, 0, 0])
 
-        write_iops = float(job_data["write"]["iops"])
-        write_bw = float(job_data["write"]["bw"])
-        write_latency = extract_latency_data(job_data, "write")
+        fio_job_count = len(data["jobs"])
+        for fio_job in data["jobs"]:
+            fio_job_name = fio_job.get("jobname", False)
+            if not fio_job_name:
+                continue
 
-        performance_metrics = PerformanceMetrics(read_iops, read_bw, read_latency,
-                                                 write_iops, write_bw, write_latency)
+            total_read_iops += float(fio_job["read"]["iops"])
+            total_read_bw += float(fio_job["read"]["bw"])
+            total_read_latency += extract_latency_data(fio_job, "read")
+
+            total_write_iops += float(fio_job["write"]["iops"])
+            total_write_bw += float(fio_job["write"]["bw"])
+            total_write_latency += extract_latency_data(fio_job, "write")
+
+        total_read_latency.average(fio_job_count)
+        total_write_latency.average(fio_job_count)
+        performance_metrics = PerformanceMetrics(total_read_iops, total_read_bw, total_read_latency,
+                                                 total_write_iops, total_write_bw, total_write_latency)
 
     return performance_metrics.to_list()
 
