@@ -852,6 +852,9 @@ struct spdk_bdev_io {
 			/** If set, the IO doesn't include any metadata in the memory buffers */
 			bool no_metadata;
 
+			/** DIF context for this IO */
+			struct spdk_dif_ctx dif_ctx;
+
 			struct {
 				/** Whether the buffer should be populated with the real data */
 				uint8_t populate : 1;
@@ -1003,6 +1006,12 @@ struct spdk_bdev_io {
 
 		/** bdev allocated memory associated with this request */
 		void *buf;
+
+		/** buffers and memory domains used if the request is triple buffered */
+		void *buf2;
+		struct iovec  bounce_iov2;
+		struct spdk_memory_domain *memory_domain2;
+		void *memory_domain_ctx2;
 
 		/** requested size of the buffer associated with this I/O */
 		uint64_t buf_len;

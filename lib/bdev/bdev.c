@@ -923,6 +923,12 @@ spdk_bdev_next_leaf(struct spdk_bdev *prev)
 }
 
 static inline bool
+bdev_is_root(struct spdk_bdev *bdev)
+{
+	return bdev == spdk_bdev_first();
+}
+
+static inline bool
 bdev_io_use_memory_domain(struct spdk_bdev_io *bdev_io)
 {
 	return bdev_io->internal.memory_domain;
@@ -3603,17 +3609,94 @@ _bdev_io_ext_use_bounce_buffer(struct spdk_bdev_io *bdev_io)
 				       bdev_io->u.bdev.num_blocks * bdev_io->bdev->blocklen);
 }
 
+static int
+bdev_io_accel_sequence_append_dif_generate_copy(struct spdk_bdev_io *bdev_io)
+{
+	struct spdk_bdev *bdev = bdev_io->bdev;
+	struct spdk_bdev_channel *ch = bdev_io->internal.ch;
+	size_t buf_len;
+	struct spdk_dif_ctx_init_ext_opts dif_opts;
+	int rc;
+
+	/* Save the original iovs */
+	bdev_io->internal.orig_iovs = bdev_io->u.bdev.iovs;
+	bdev_io->internal.orig_iovcnt = bdev_io->u.bdev.iovcnt;
+
+	/* Save the original memory domain and ctx */
+	bdev_io->internal.memory_domain2 = bdev_io->u.bdev.memory_domain;
+	bdev_io->internal.memory_domain_ctx2 = bdev_io->u.bdev.memory_domain_ctx;
+
+	/* Use a bounce buffer */
+	bdev_io->u.bdev.iovs = &bdev_io->internal.bounce_iov2;
+	bdev_io->u.bdev.iovcnt = 1;
+
+	buf_len = bdev->blocklen * bdev_io->u.bdev.num_blocks;
+
+	rc = spdk_accel_get_buf(ch->accel_channel, buf_len, &bdev_io->u.bdev.iovs[0].iov_base,
+				&bdev_io->u.bdev.memory_domain, &bdev_io->u.bdev.memory_domain_ctx);
+	if (rc != 0) {
+		return rc;
+	}
+
+	bdev_io->internal.memory_domain = bdev_io->u.bdev.memory_domain;
+	bdev_io->internal.memory_domain_ctx = bdev_io->u.bdev.memory_domain_ctx;
+	bdev_io->u.bdev.iovs[0].iov_len = buf_len;
+
+	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
+	dif_opts.dif_pi_format = SPDK_DIF_PI_FORMAT_16;
+	rc = spdk_dif_ctx_init(&bdev_io->u.bdev.dif_ctx,
+			       bdev->blocklen, bdev->md_len, bdev->md_interleave,
+			       bdev->dif_is_head_of_md, bdev->dif_type, bdev_io->u.bdev.dif_check_flags,
+			       bdev_io->u.bdev.offset_blocks, 0, 0, 0, 0, &dif_opts);
+	if (rc != 0) {
+		spdk_accel_put_buf(ch->accel_channel, bdev_io->u.bdev.iovs[0].iov_base,
+				   bdev_io->u.bdev.memory_domain, bdev_io->u.bdev.memory_domain_ctx);
+		return rc;
+	}
+
+	rc = spdk_accel_append_dif_generate_copy(&bdev_io->u.bdev.accel_sequence,
+			ch->accel_channel, bdev_io->u.bdev.iovs, bdev_io->u.bdev.iovcnt,
+			bdev_io->u.bdev.memory_domain, bdev_io->u.bdev.memory_domain_ctx,
+			bdev_io->internal.orig_iovs, bdev_io->internal.orig_iovcnt,
+			bdev_io->internal.memory_domain2, bdev_io->internal.memory_domain_ctx2,
+			bdev_io->u.bdev.num_blocks, &bdev_io->u.bdev.dif_ctx, NULL, NULL);
+	if (rc != 0) {
+		spdk_accel_put_buf(ch->accel_channel, bdev_io->u.bdev.iovs[0].iov_base,
+				   bdev_io->u.bdev.memory_domain, bdev_io->u.bdev.memory_domain_ctx);
+		return rc;
+	}
+
+	bdev_io->internal.accel_sequence = bdev_io->u.bdev.accel_sequence;
+	bdev_io->internal.has_accel_sequence = true;
+	bdev_io->u.bdev.no_metadata = false;
+
+	return 0;
+}
+
 static inline void
 _bdev_io_submit_ext(struct spdk_bdev_desc *desc, struct spdk_bdev_io *bdev_io)
 {
 	struct spdk_bdev_channel *ch = bdev_io->internal.ch;
-	bool needs_exec = bdev_io_needs_sequence_exec(desc, bdev_io);
+	struct spdk_bdev *bdev = spdk_bdev_desc_get_bdev(desc);
+	bool needs_exec = false;
+	int rc;
 
 	if (spdk_unlikely(ch->flags & BDEV_CH_RESET_IN_PROGRESS)) {
 		bdev_io->internal.status = SPDK_BDEV_IO_STATUS_ABORTED;
 		bdev_io_complete_unsubmitted(bdev_io);
 		return;
 	}
+
+	if (spdk_unlikely(bdev_io->u.bdev.no_metadata && bdev_is_root(bdev)
+			  && bdev->md_len > 0 && bdev_io->type == SPDK_BDEV_IO_TYPE_WRITE)) {
+		rc = bdev_io_accel_sequence_append_dif_generate_copy(bdev_io);
+		if (rc != 0) {
+			bdev_io->internal.status = SPDK_BDEV_IO_STATUS_FAILED;
+			bdev_io_complete_unsubmitted(bdev_io);
+		}
+	}
+
+	needs_exec = bdev_io_needs_sequence_exec(desc, bdev_io);
 
 	/* We need to allocate bounce buffer if bdev doesn't support memory domains, or if it does
 	 * support them, but we need to execute an accel sequence and the data buffer is from accel
@@ -7400,6 +7483,11 @@ spdk_bdev_io_complete(struct spdk_bdev_io *bdev_io, enum spdk_bdev_io_status sta
 								 _bdev_io_complete_push_bounce_done);
 				/* bdev IO will be completed in the callback */
 				return;
+			}
+
+			if (spdk_unlikely(bdev_io->internal.buf2 != NULL)) {
+				spdk_accel_put_buf(bdev_ch->accel_channel, bdev_io->internal.buf2,
+						   bdev_io->internal.memory_domain2, bdev_io->internal.memory_domain_ctx2);
 			}
 		}
 
