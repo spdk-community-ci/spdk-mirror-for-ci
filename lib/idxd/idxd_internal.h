@@ -133,7 +133,7 @@ struct spdk_idxd_device {
 	uint32_t			socket_id;
 	struct spdk_bit_array		*wq_array;
 	uint32_t			total_wq_size;
-	uint32_t			chan_per_device;
+	uint32_t			descriptors_per_channel;
 	uint16_t			batch_size;
 	pthread_mutex_t			wq_array_lock;
 	bool				pasid_enabled;

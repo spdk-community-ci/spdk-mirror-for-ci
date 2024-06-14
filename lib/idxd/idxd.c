@@ -345,7 +345,7 @@ struct spdk_idxd_io_channel *
 spdk_idxd_get_channel(struct spdk_idxd_device *idxd)
 {
 	struct spdk_idxd_io_channel *chan;
-	int i, num_descriptors;
+	uint32_t i;
 
 	assert(idxd != NULL);
 
@@ -365,9 +365,7 @@ spdk_idxd_get_channel(struct spdk_idxd_device *idxd)
 	chan->portal = idxd->impl->portal_get_addr(idxd);
 
 	/* Allocate descriptors and completions */
-	num_descriptors = idxd->total_wq_size / idxd->chan_per_device;
-
-	for (i = 0; i < num_descriptors; i++) {
+	for (i = 0; i < idxd->descriptors_per_channel; i++) {
 		if (idxd_desc_alloc(chan) != 0) {
 			idxd_batches_free(chan);
 			idxd_ops_free(chan);
@@ -454,7 +452,7 @@ idxd_wq_setup(struct spdk_idxd_device *idxd)
 	 * and achieve optimal performance for common cases.
 	 */
 
-	idxd->chan_per_device = (idxd->total_wq_size >= 128) ? 8 : 4;
+	idxd->descriptors_per_channel = idxd->total_wq_size / ((idxd->total_wq_size >= 128) ? 8 : 4);
 	idxd->wq_array = spdk_bit_array_create(idxd->total_wq_size);
 	if (idxd->wq_array == NULL) {
 		SPDK_ERRLOG("Failed to bit create array for the IDXD WQ\n");
