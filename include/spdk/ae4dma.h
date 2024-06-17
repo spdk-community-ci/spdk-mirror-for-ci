@@ -4,7 +4,7 @@
  */
 
 /** file
- * AE4 DMA engine driver public interface
+ * AE4DMA engine driver public interface
  */
 
 #ifndef SPDK_AE4DMA_H
@@ -110,42 +110,25 @@ int spdk_ae4dma_build_copy(struct spdk_ae4dma_chan *chan,
 			   void *dst, const void *src, uint64_t nbytes);
 
 /**
- * Build and submit a DMA engine memory copy request.
- *
- * This function will build the descriptor in the channel's ring and then
- * immediately submit it by writing the channel's doorbell.  Calling this
- * function does not require a subsequent call to spdk_ae4dma_flush.
- *
- * \param chan AE4 channel to submit request.
- * \param cb_arg Opaque value which will be passed back as the arg parameter in
- * the completion callback.
- * \param cb_fn Callback function which will be called when the request is complete.
- * \param dst Destination virtual address.
- * \param src Source virtual address.
- * \param nbytes Number of bytes to copy.
- *
- * \return 0 on success, negative errno on failure.
- */
-int spdk_ae4dma_submit_copy(struct spdk_ae4dma_chan *chan,
-			    void *cb_arg, spdk_ae4dma_req_cb cb_fn,
-			    void *dst, const void *src, uint64_t nbytes);
-
-
-/**
  * Flush previously built descriptors.
  *
- * Descriptors are flushed by writing the channel's dmacount doorbell
- * register.  This function enables batching multiple descriptors followed by
- * a single doorbell write.
+ * Descriptors are flushed by incrementing the write_index register of the
+ * command queue.
  *
- * \param chan AE4 DMA channel to flush.
+ * This function increments the write_index register of the paticular queue
+ * and flush the descriptor to hardware for further processing.
+ *
+ * \param chan AE4DMA channel to flush.
  */
 void spdk_ae4dma_flush(struct spdk_ae4dma_chan *chan);
 
 /**
  * Check for completed requests on an AE4DMA channel.
  *
- * \param chan AE4 DMA channel to check for completions.
+ * This function checks the read_index register to check for the completed
+ * requests.
+ *
+ * \param chan AE4DMA channel to check for completions.
  *
  * \return number of events handled on success, negative errno on failure.
  */
@@ -161,7 +144,7 @@ enum spdk_ae4dma_dma_capability_flags {
 /**
  * Get the DMA engine capabilities.
  *
- * \param chan AE4 DMA channel to query.
+ * \param chan AE4DMA channel to query.
  *
  * \return a combination of flags from spdk_ae4dma_dma_capability_flags().
  */

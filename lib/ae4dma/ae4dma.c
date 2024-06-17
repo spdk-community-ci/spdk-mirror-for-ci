@@ -16,7 +16,7 @@
 #define ALIGN_4K 0x1000
 #define MAX_RETRY 10
 
-uint32_t max_hw_q = 1;
+uint32_t max_hw_q ;
 
 static int ae4dma_core_queue_full(struct spdk_ae4dma_chan *ae4dma);
 
@@ -38,14 +38,14 @@ ae4dma_map_pci_bar(struct spdk_ae4dma_chan *ae4dma)
 	void *addr;
 	uint64_t phys_addr, size;
 
-	rc = spdk_pci_device_map_bar(ae4dma->device, PCI_BAR, &addr, &phys_addr, &size);
+	rc = spdk_pci_device_map_bar(ae4dma->device, AE4DMA_PCIE_BAR, &addr, &phys_addr, &size);
 	if (rc != 0 || addr == NULL) {
 		SPDK_ERRLOG("pci_device_map_range failed with error code %d\n",
 			    rc);
 		return -1;
 	}
 
-	ae4dma->regs = (volatile struct spdk_ae4dma_registers *)addr;
+	ae4dma->io_regs = addr;
 
 	return 0;
 }
@@ -54,7 +54,7 @@ static int
 ae4dma_unmap_pci_bar(struct spdk_ae4dma_chan *ae4dma)
 {
 	int rc = 0;
-	void *addr = (void *)ae4dma->regs;
+	void *addr = (void *)ae4dma->io_regs;
 
 	if (addr) {
 		rc = spdk_pci_device_unmap_bar(ae4dma->device, 0, addr);
@@ -66,40 +66,44 @@ ae4dma_unmap_pci_bar(struct spdk_ae4dma_chan *ae4dma)
 static inline uint32_t
 ae4dma_get_active(struct spdk_ae4dma_chan *ae4dma)
 {
-	return (ae4dma->head - ae4dma->tail) & ((AE4DMA_DESCRITPTORS_PER_ENGINE) - 1);
+	uint32_t qno = ae4dma->hwq_index;
+	uint32_t head = ae4dma->cmd_q[qno].head;
+	uint32_t tail  = ae4dma->cmd_q[qno].tail;
+	return (head - tail) & ((AE4DMA_DESCRITPTORS_PER_CMDQ) - 1);
 }
 
 static inline uint32_t
 ae4dma_get_ring_space(struct spdk_ae4dma_chan *ae4dma)
 {
-	return (AE4DMA_DESCRITPTORS_PER_ENGINE) - ae4dma_get_active(ae4dma) - 1 ;
+	return (AE4DMA_DESCRITPTORS_PER_CMDQ) - ae4dma_get_active(ae4dma) - 1 ;
 }
 
 static uint32_t
 ae4dma_get_ring_index(struct spdk_ae4dma_chan *ae4dma, uint32_t index)
 {
-	return index & (AE4DMA_DESCRITPTORS_PER_ENGINE - 1);
+	return index & (AE4DMA_DESCRITPTORS_PER_CMDQ - 1);
 }
 
 static void
 ae4dma_submit_single(struct spdk_ae4dma_chan *ae4dma)
 {
-	ae4dma->head++;
+	uint32_t qno = ae4dma->hwq_index;
+	ae4dma->cmd_q[qno].head++;
 }
 
 void
 spdk_ae4dma_flush(struct spdk_ae4dma_chan *ae4dma)
 {
-	uint32_t index = ae4dma_get_ring_index(ae4dma, ae4dma->head - 1);
+	uint32_t qno = ae4dma->hwq_index;
+	uint32_t index = ae4dma_get_ring_index(ae4dma, ae4dma->cmd_q[qno].head - 1) ;
 	struct spdk_ae4dma_desc *hw_desc;
-	uint32_t tail;
-	tail = spdk_mmio_read_4(ae4dma->cmd_q[QINDEX].reg_control + AE4DMA_REG_WRITE_IDX);
-	hw_desc = &ae4dma->hw_ring[index];
+	uint32_t write_idx;
+	hw_desc = &ae4dma->cmd_q->desc_ring[index];
 
-	ae4dma->cmd_q[QINDEX].tail_wi = ((ae4dma->cmd_q[QINDEX].tail_wi) + 1) % MAX_CMD_QLEN ;
-	tail = (uint32_t)ae4dma->cmd_q[QINDEX].tail_wi;
-	hw_desc->dw1.desc_id = tail;
-	spdk_mmio_write_4(ae4dma->cmd_q[QINDEX].reg_control + AE4DMA_REG_WRITE_IDX, tail);
+	ae4dma->cmd_q[qno].write_index = ((ae4dma->cmd_q[qno].write_index) + 1) % AE4DMA_CMD_QUEUE_LEN;
+	write_idx = (uint32_t)ae4dma->cmd_q[qno].write_index;
+	hw_desc->dw1.desc_id = write_idx;
+	spdk_mmio_write_4(&ae4dma->cmd_q[qno].regs->write_idx, write_idx);
 }
 
 static struct ae4dma_descriptor *
@@ -109,19 +113,42 @@ ae4dma_prep_copy(struct spdk_ae4dma_chan *ae4dma, uint64_t dst,
 	struct ae4dma_descriptor *desc;
 	struct spdk_ae4dma_desc *hw_desc;
 	static int index = 0;
+	uint32_t hwq;
 	uint32_t i ;
 
 	assert(len <= ae4dma->max_xfer_size);
 
+	if ((index == (AE4DMA_DESCRITPTORS_PER_CMDQ - 1)) && (ae4dma->hwq_index < max_hw_q)) {
+		ae4dma->hwq_index++;
+		index = 0;
+		ae4dma->cmd_q[ae4dma->hwq_index].head = 0;
+		ae4dma->cmd_q[ae4dma->hwq_index].tail = 0;
+
+	}
+	if (ae4dma->hwq_index == max_hw_q) {
+		ae4dma->hwq_index = AE4DMA_QUEUE_START_INDEX ;
+		index = 0;
+		ae4dma->cmd_q[ae4dma->hwq_index].head = 0;
+		ae4dma->cmd_q[ae4dma->hwq_index].tail = 0;
+	}
+
+	hwq = ae4dma->hwq_index ;
+
 	if (ae4dma_get_ring_space(ae4dma) < 1) {
+		ae4dma->cmd_q[hwq].head = 0;
+		ae4dma->cmd_q[hwq].tail = 0;
 		return NULL;
 	}
 
+
 	i = index;
-	desc = &ae4dma->ring[i];
+	desc = &ae4dma->cmd_q[hwq].ring[i];
+	if (desc == NULL) {
+		printf("desc at %d Q and %d ring is NULL\n", hwq, i);
+	}
 
 	hw_desc = calloc(1, sizeof(struct spdk_ae4dma_desc));
-	hw_desc->dwouv.dws.byte0 = 0;//CMD_DESC_DW0_VAL;
+	hw_desc->dw0.byte0 = 0;
 
 	hw_desc->dw1.status = 0;
 	hw_desc->dw1.err_code = 0;
@@ -135,28 +162,12 @@ ae4dma_prep_copy(struct spdk_ae4dma_chan *ae4dma, uint64_t dst,
 	hw_desc->dst_hi = lower_32_bits(dst);
 
 	index = (index + 1) % 32 ;
-	memcpy(&ae4dma->cmd_q[QINDEX].qbase[i], hw_desc, sizeof(struct spdk_ae4dma_desc));
+	memcpy(&ae4dma->cmd_q[hwq].qbase_addr[i], hw_desc, sizeof(struct spdk_ae4dma_desc));
 
 	ae4dma_submit_single(ae4dma);
 	free(hw_desc);
 	return desc;
 
-}
-
-int
-spdk_ae4dma_submit_copy(struct spdk_ae4dma_chan *ae4dma, void *cb_arg, spdk_ae4dma_req_cb cb_fn,
-			void *dst, const void *src, uint64_t nbytes)
-{
-	int rc;
-
-	rc = spdk_ae4dma_build_copy(ae4dma, cb_arg, cb_fn, dst, src, nbytes);
-	if (rc != 0) {
-		return rc;
-	}
-
-	spdk_ae4dma_flush(ae4dma);
-
-	return 0;
 }
 
 int
@@ -167,7 +178,7 @@ spdk_ae4dma_build_copy(struct spdk_ae4dma_chan *ae4dma, void *cb_arg, spdk_ae4dm
 	uint64_t        remaining, op_size;
 	uint64_t        vdst, vsrc;
 	uint64_t        pdst_addr, psrc_addr, dst_len, src_len;
-	uint32_t        orig_head;
+	uint32_t        orig_head, hwq;
 
 	if (!ae4dma) {
 		return -EINVAL;
@@ -178,7 +189,9 @@ spdk_ae4dma_build_copy(struct spdk_ae4dma_chan *ae4dma, void *cb_arg, spdk_ae4dm
 		spdk_delay_us(1000);
 	}
 
-	orig_head = ae4dma->head;
+	hwq = ae4dma->hwq_index;
+
+	orig_head = ae4dma->cmd_q[hwq].head;
 
 	vdst = (uint64_t)dst;
 	vsrc = (uint64_t)src;
@@ -214,14 +227,14 @@ spdk_ae4dma_build_copy(struct spdk_ae4dma_chan *ae4dma, void *cb_arg, spdk_ae4dm
 	}
 
 	if (last_desc) {
-		ae4dma->cmd_q[QINDEX].cevent->callback_fn = cb_fn;
-		ae4dma->cmd_q[QINDEX].cevent->callback_arg = cb_arg;
+		ae4dma->cmd_q[hwq].completion_event->callback_fn = cb_fn;
+		ae4dma->cmd_q[hwq].completion_event->callback_arg = cb_arg;
 	} else {
 		/*
 		 * Ran out of descriptors in the ring - reset head to leave things as they were
 		 * in case we managed to fill out any descriptors.
 		 */
-		ae4dma->head = orig_head;
+		ae4dma->cmd_q[hwq].head = orig_head;
 		return -ENOMEM;
 	}
 	return 0;
@@ -233,37 +246,42 @@ ae4dma_process_channel_events(struct spdk_ae4dma_chan *ae4dma)
 	struct spdk_ae4dma_desc *hw_desc;
 	uint64_t events_count = 0;
 	static uint32_t tail = 0 ;
-	uint32_t   read_ix;
+	uint32_t   read_ix, hwqno;
+	static uint32_t hwq_list = 0;
 	uint32_t desc_status;
 	uint8_t retry_count = MAX_RETRY;
 	uint32_t errorcode;
 
-	if (ae4dma->head == ae4dma->tail) {
-		return 0;
-	}
+	hwqno = ae4dma->hwq_index;
 
-	read_ix = spdk_mmio_read_4(ae4dma->cmd_q[QINDEX].reg_control + AE4DMA_REG_READ_IDX);
+	if (hwqno != hwq_list) {
+		hwq_list = hwqno;
+		tail = 0;
+		read_ix = 0;
+	}
+	read_ix = spdk_mmio_read_4(&ae4dma->cmd_q[hwqno].regs->read_idx);
 
 	while (tail != read_ix) {      /* to process all the pending read_ix from previous run */
 		desc_status = 0;
 		retry_count = MAX_RETRY;
 		do {
 			spdk_delay_us(1);
-			hw_desc = &ae4dma->cmd_q[QINDEX].qbase[tail];
+			hw_desc = &ae4dma->cmd_q[hwqno].qbase_addr[tail];
 			desc_status = hw_desc->dw1.status;
 			if (desc_status) {
-				if (desc_status != DESC_COMPLETED) {
+				if (desc_status != AE4DMA_DMA_DESC_COMPLETED) {
 					errorcode = hw_desc->dw1.err_code;
 					SPDK_WARNLOG("Desc error code : %d\n", errorcode);
 				}
 
-				if (ae4dma->cmd_q[QINDEX].cevent->callback_fn) {
-					ae4dma->cmd_q[QINDEX].cevent->callback_fn(ae4dma->cmd_q[QINDEX].cevent->callback_arg);
+				if (ae4dma->cmd_q[hwqno].completion_event->callback_fn) {
+					ae4dma->cmd_q[hwqno].completion_event->callback_fn(
+						ae4dma->cmd_q[hwqno].completion_event->callback_arg);
 				}
 			}
 		} while (!desc_status && retry_count --);
-		tail = (tail + 1) % CMD_Q_LEN;
-		ae4dma->tail++ ;
+		tail = (tail + 1) % AE4DMA_CMD_QUEUE_LEN;
+		ae4dma->cmd_q[hwqno].tail++;
 	}
 
 	return events_count;
@@ -274,96 +292,90 @@ ae4dma_channel_destruct(struct spdk_ae4dma_chan *ae4dma)
 {
 	ae4dma_unmap_pci_bar(ae4dma);
 
-	if (ae4dma->ring) {
-		free(ae4dma->ring);
+	if (ae4dma->cmd_q->ring) {
+		free(ae4dma->cmd_q->ring);
 	}
 
-	if (ae4dma->hw_ring) {
-		spdk_free(ae4dma->hw_ring);
-	}
+	for (ae4dma->hwq_index = AE4DMA_QUEUE_START_INDEX; ae4dma->hwq_index < max_hw_q ;
+	     ae4dma->hwq_index ++) {
+		if (ae4dma->cmd_q[ae4dma->hwq_index].qbase_addr) {
+			spdk_free(ae4dma->cmd_q[ae4dma->hwq_index].qbase_addr);
+		}
 
-	if (ae4dma->cmd_q[QINDEX].qbase) {
-		spdk_free(ae4dma->cmd_q[QINDEX].qbase);
-	}
-
-	if (ae4dma->cmd_q[QINDEX].cevent) {
-		free(ae4dma->cmd_q[QINDEX].cevent);
+		if (ae4dma->cmd_q[ae4dma->hwq_index].completion_event) {
+			free(ae4dma->cmd_q[ae4dma->hwq_index].completion_event);
+		}
 	}
 }
 
 uint32_t
 spdk_ae4dma_get_max_descriptors(struct spdk_ae4dma_chan *ae4dma)
 {
-	return AE4DMA_DESCRITPTORS_PER_ENGINE;
+	return AE4DMA_DESCRITPTORS_PER_CMDQ;
 }
 
 static int
-ae4dma_channel_start(struct spdk_ae4dma_chan *ae4dma)
+ae4dma_channel_start(uint8_t hw_queues, struct spdk_ae4dma_chan *ae4dma)
 {
 	uint32_t  num_descriptors;
 	uint32_t i;
-	uint64_t phys_addr;
 
 	void *mmio_base;
 	struct ae4dma_cmd_queue *cmd_q;
 	uint32_t  dma_addr_lo, dma_addr_hi;
-	uint32_t q_per_eng = max_hw_q;
+	uint32_t q_per_eng = hw_queues;//max_hw_q;
 
 	if (ae4dma_map_pci_bar(ae4dma) != 0) {
 		SPDK_ERRLOG("ae4dma_map_pci_bar() failed\n");
 		return -1;
 	}
-	mmio_base = (uint8_t *)ae4dma->regs;
-
+	mmio_base = (uint8_t *)ae4dma->io_regs;
 	/* Always support DMA copy */
 	ae4dma->dma_capabilities = SPDK_AE4DMA_ENGINE_COPY_SUPPORTED;
 	ae4dma->max_xfer_size = 1ULL << 32;
+	ae4dma->hwq_index = 0;
+	max_hw_q = hw_queues;
 
 	/* Update the device registers with queue information. */
-	spdk_mmio_write_4((mmio_base + COMMON_Q_CONFIG), q_per_eng);
-	spdk_mmio_read_4(mmio_base + COMMON_Q_CONFIG);
-
-	ae4dma->io_regs = mmio_base;
+	spdk_mmio_write_4((mmio_base + AE4DMA_COMMON_CONFIG_OFFSET), q_per_eng);
+	q_per_eng = spdk_mmio_read_4((mmio_base + AE4DMA_COMMON_CONFIG_OFFSET));
 
 	/* Filling up cmd_q; there would be 'n' cmd_q's for 'n' q_per_eng */
 	for (i = 0; i < q_per_eng; i++) {
 
 		/* ae4dma core initialisation */
 		cmd_q = &ae4dma->cmd_q[i]; /* i th cmd_q(total 16) */
-		cmd_q->id = ae4dma->cmd_q_count;/* at start it is zero */
 		ae4dma->cmd_q_count++;
 
 		/* Preset some register values (Q size is 32byte (0x20)) */
-		cmd_q->reg_control = ae4dma->io_regs +  QUEUE_START_OFFSET(i);
+		cmd_q->regs = (volatile struct spdk_ae4dma_hwq_regs *)ae4dma->io_regs + (i + 1);
 
-		/* qsize: 32*sizeof(struct ae4dmadma_desc) */
-		cmd_q->qsize = Q_SIZE(Q_DESC_SIZE);//
+		/* queue_size: 32*sizeof(struct ae4dmadma_desc) */
+		cmd_q->queue_size = AE4DMA_QUEUE_SIZE(AE4DMA_QUEUE_DESC_SIZE);
 
-		ae4dma->cmd_q[QINDEX].cevent = (struct  ae4dma_completion_event *)calloc(1,
-					       sizeof(struct ae4dma_completion_event));
-		if (ae4dma->cmd_q[QINDEX].cevent == NULL) {
-			SPDK_ERRLOG("Failed to allocate cevent memory\n");
+		ae4dma->cmd_q[i].completion_event = (struct  ae4dma_completion_event *)calloc(1,
+						    sizeof(struct ae4dma_completion_event));
+		if (ae4dma->cmd_q[i].completion_event == NULL) {
+			SPDK_ERRLOG("Failed to allocate completion_event memory\n");
 			return -1;
 		}
 
 		/* dma'ble desc address - for each cmd_q  */
-		cmd_q->qbase = spdk_zmalloc(CMD_Q_LEN * sizeof(struct spdk_ae4dma_desc), 64, NULL,
-					    SPDK_ENV_LCORE_ID_ANY,
-					    SPDK_MALLOC_DMA);
-		cmd_q->qbase_dma = spdk_vtophys(cmd_q->qbase, NULL);
+		cmd_q->qbase_addr = spdk_zmalloc(AE4DMA_CMD_QUEUE_LEN * sizeof(struct spdk_ae4dma_desc), 64, NULL,
+						 SPDK_ENV_LCORE_ID_ANY,
+						 SPDK_MALLOC_DMA);
+		cmd_q->qbase_dma = spdk_vtophys(cmd_q->qbase_addr, NULL);
 
 		if (cmd_q->qbase_dma == SPDK_VTOPHYS_ERROR) {
 			SPDK_ERRLOG("Failed to translate descriptor %u to physical address\n", i);
 			return -1;
 		}
 
-		cmd_q->qidx = 0;
 		cmd_q->q_cmd_count = 0;
-		cmd_q->dridx = 0;
 
-		spdk_mmio_write_4(cmd_q->reg_control + AE4DMA_REG_READ_IDX, 0);
-		spdk_mmio_write_4(cmd_q->reg_control + AE4DMA_REG_WRITE_IDX, 0);
-		cmd_q->tail_wi = spdk_mmio_read_4(cmd_q->reg_control + AE4DMA_REG_WRITE_IDX);
+		spdk_mmio_write_4(&cmd_q->regs->read_idx, 0);
+		spdk_mmio_write_4(&cmd_q->regs->write_idx, 0);
+		cmd_q->write_index = spdk_mmio_read_4(&cmd_q->regs->write_idx);
 	}
 
 	if (ae4dma->cmd_q_count == 0) {
@@ -377,59 +389,49 @@ ae4dma_channel_start(struct spdk_ae4dma_chan *ae4dma)
 
 		cmd_q = &ae4dma->cmd_q[i];
 
-		cmd_q->qcontrol = 0; /* Start with nothing */
+		cmd_q->head = 0;
+		cmd_q->tail = 0;
 
 		/* Update the device registers with queue information. */
 		/* Max Index (cmd queue length) */
-		spdk_mmio_write_4(cmd_q->reg_control + AE4DMA_REG_MAX_IDX, CMD_Q_LEN);
+		spdk_mmio_write_4(&cmd_q->regs->max_idx, AE4DMA_CMD_QUEUE_LEN);
 
 		cmd_q->qdma_tail = cmd_q->qbase_dma;
 
 		dma_addr_lo = lower_32_bits(cmd_q->qdma_tail);
-		spdk_mmio_write_4(cmd_q->reg_control + AE4DMA_REG_QBASE_LO, (uint32_t)dma_addr_lo);
-		dma_addr_lo = spdk_mmio_read_4(cmd_q->reg_control + AE4DMA_REG_QBASE_LO);
+		spdk_mmio_write_4(&cmd_q->regs->qbase_lo, (uint32_t)dma_addr_lo);
+		dma_addr_lo = spdk_mmio_read_4(&cmd_q->regs->qbase_lo);
 
 		dma_addr_hi = upper_32_bits(cmd_q->qdma_tail);
-		spdk_mmio_write_4(cmd_q->reg_control + AE4DMA_REG_QBASE_HI, (uint32_t)dma_addr_hi);
-		dma_addr_hi = spdk_mmio_read_4(cmd_q->reg_control + AE4DMA_REG_QBASE_HI);
+		spdk_mmio_write_4(&cmd_q->regs->qbase_hi, (uint32_t)dma_addr_hi);
+		dma_addr_lo = spdk_mmio_read_4(&cmd_q->regs->qbase_hi);
 
-		spdk_mmio_write_4(cmd_q->reg_control, CMD_QUEUE_ENABLE);   /* Queue enable */
-		spdk_mmio_write_4(cmd_q->reg_control + AE4DMA_REG_INTR_STATUS,
-				  0x1); /* Disabling interrupt_status for polling */
+		spdk_mmio_write_4(&cmd_q->regs->control_reg.control_raw, AE4DMA_CMD_QUEUE_ENABLE);
+		spdk_mmio_write_4(&cmd_q->regs->intr_status_reg.intr_status_raw, 0x1);
 
-	}
+		num_descriptors = AE4DMA_DESCRITPTORS_PER_CMDQ;
 
-	num_descriptors = AE4DMA_DESCRITPTORS_PER_ENGINE;
-	ae4dma->ring = calloc(num_descriptors, sizeof(struct ae4dma_descriptor));
-	if (!ae4dma->ring) {
-		return -1;
-	}
-
-	ae4dma->hw_ring = spdk_zmalloc(num_descriptors * sizeof(struct spdk_ae4dma_desc), 64,
-				       NULL, SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
-	if (!ae4dma->hw_ring) {
-		return -1;
-	}
-
-	for (i = 0; i < num_descriptors; i++) {
-		phys_addr = spdk_vtophys(&ae4dma->hw_ring[i], NULL);
-		if (phys_addr == SPDK_VTOPHYS_ERROR) {
-			SPDK_ERRLOG("Failed to translate descriptor %u to physical address\n", i);
+		cmd_q->ring = calloc(num_descriptors, sizeof(struct ae4dma_descriptor));
+		if (!cmd_q->ring) {
+			printf("error1\n");
 			return -1;
 		}
 
-		ae4dma->ring[i].phys_addr = phys_addr;
+		cmd_q->desc_ring = spdk_zmalloc(num_descriptors * sizeof(struct spdk_ae4dma_desc), 64,
+						NULL, SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
+		if (!cmd_q->desc_ring) {
+			printf("error2\n");
+			return -1;
+		}
 	}
 
-	ae4dma->head = 0;
-	ae4dma->tail = 0;
 	ae4dma->last_seen = 0;
 
 	return 0;
 }
 
 static struct spdk_ae4dma_chan *
-ae4dma_attach(struct spdk_pci_device *device)
+ae4dma_attach(uint8_t hw_queues, struct spdk_pci_device *device)
 {
 	struct spdk_ae4dma_chan *ae4dma;
 	uint32_t cmd_reg;
@@ -446,7 +448,7 @@ ae4dma_attach(struct spdk_pci_device *device)
 
 	ae4dma->device = device;
 
-	if (ae4dma_channel_start(ae4dma) != 0) {
+	if (ae4dma_channel_start(hw_queues, ae4dma) != 0) {
 		ae4dma_channel_destruct(ae4dma);
 		free(ae4dma);
 		return NULL;
@@ -458,6 +460,7 @@ ae4dma_attach(struct spdk_pci_device *device)
 struct ae4dma_enum_ctx {
 	spdk_ae4dma_probe_cb probe_cb;
 	spdk_ae4dma_attach_cb attach_cb;
+	uint8_t hw_queues;
 	void *cb_ctx;
 };
 
@@ -484,7 +487,7 @@ ae4dma_enum_cb(void *ctx, struct spdk_pci_device *pci_dev)
 		 *  If this turns out to be a bottleneck later, this can be changed to work like
 		 *  NVMe with a list of devices to initialize in parallel.
 		 */
-		ae4dma = ae4dma_attach(pci_dev);
+		ae4dma = ae4dma_attach(enum_ctx->hw_queues, pci_dev);
 		if (ae4dma == NULL) {
 			SPDK_ERRLOG("ae4dma_attach() failed\n");
 			return -1;
@@ -508,6 +511,7 @@ spdk_ae4dma_probe(void *cb_ctx, spdk_ae4dma_probe_cb probe_cb, spdk_ae4dma_attac
 
 	enum_ctx.probe_cb = probe_cb;
 	enum_ctx.attach_cb = attach_cb;
+	enum_ctx.hw_queues = *(uint8_t *)cb_ctx;
 	enum_ctx.cb_ctx = cb_ctx;
 
 	rc = spdk_pci_enumerate(spdk_pci_ae4dma_get_driver(), ae4dma_enum_cb, &enum_ctx);
@@ -538,14 +542,18 @@ ae4dma_core_queue_full(struct spdk_ae4dma_chan *ae4dma)
 {
 
 	uint32_t read_index, write_index, queue_status;
+	uint32_t hwq;
 
-	queue_status = spdk_mmio_read_4(ae4dma->cmd_q[QINDEX].reg_control + AE4DMA_REG_STATUS) & 0x0E ;
-	read_index  = spdk_mmio_read_4(ae4dma->cmd_q[QINDEX].reg_control + AE4DMA_REG_READ_IDX);
-	write_index  = spdk_mmio_read_4(ae4dma->cmd_q[QINDEX].reg_control + AE4DMA_REG_WRITE_IDX);
+	hwq = ae4dma->hwq_index;
+
+	queue_status = spdk_mmio_read_4(&ae4dma->cmd_q[hwq].regs->status_reg.status_raw) & 0x0E ;
+	read_index  = spdk_mmio_read_4(&ae4dma->cmd_q[hwq].regs->read_idx);
+	write_index  = spdk_mmio_read_4(&ae4dma->cmd_q[hwq].regs->write_idx);
 
 	queue_status >>= 3;
 
-	if (((CMD_Q_LEN + write_index - read_index) % CMD_Q_LEN)  >= (CMD_Q_LEN - 1)) {
+	if (((AE4DMA_CMD_QUEUE_LEN + write_index - read_index) % AE4DMA_CMD_QUEUE_LEN)  >=
+	    (AE4DMA_CMD_QUEUE_LEN - 1)) {
 		return 1;
 	}
 

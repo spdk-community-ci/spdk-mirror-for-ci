@@ -441,8 +441,9 @@ map_supported_devices() {
 	ids+="PCI_DEVICE_ID_INTEL_IOAT" dev_types+="IOAT"
 	ids+="|PCI_DEVICE_ID_INTEL_DSA" dev_types+="|DSA"
 	ids+="|PCI_DEVICE_ID_INTEL_IAA" dev_types+="|IAA"
-	ids+="|PCI_DEVICE_ID_AMD_AE4DMA" dev_types+="|AE4DMA"
 	ids+="|PCI_DEVICE_ID_VIRTIO" dev_types+="|VIRTIO"
+	ids+="|PCIE_DEVICE_ID_AMD_AE4DMA_EPYC9XX4" dev_types+="|AE4DMA"
+	ids+="|PCIE_DEVICE_ID_AMD_AE4DMA_EPYC8XX4" dev_types+="|AE4DMA"
 	ids+="|PCI_DEVICE_ID_INTEL_VMD" dev_types+="|VMD"
 	ids+="|SPDK_PCI_CLASS_NVME" dev_types+="|NVME"
 

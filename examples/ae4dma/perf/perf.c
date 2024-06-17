@@ -12,6 +12,7 @@
 
 #define ALIGN_4K 0x1000
 #define DATA_PATTERN 0x5a
+#define AE4DMA_MAX_HWQUEUES_PERDEVICE 16
 
 struct user_config {
 	int xfer_size_bytes;
@@ -20,6 +21,7 @@ struct user_config {
 	bool verify;
 	char *core_mask;
 	int ae4dma_chan_num;
+	int ae4dma_hw_queues;
 };
 
 struct ae4dma_device {
@@ -71,6 +73,7 @@ construct_user_config(struct user_config *self)
 {
 	self->xfer_size_bytes = 4096;
 	self->ae4dma_chan_num = 1;
+	self->ae4dma_hw_queues = 1;
 	self->queue_depth = 32;
 	self->time_in_sec = 1;
 	self->verify = false;
@@ -82,6 +85,7 @@ dump_user_config(struct user_config *self)
 {
 	printf("User configuration:\n");
 	printf("Number of channels:    %u\n", self->ae4dma_chan_num);
+	printf("Number of hw queues per device:    %u\n", self->ae4dma_hw_queues);
 	printf("Transfer size:  %u bytes\n", self->xfer_size_bytes);
 	printf("Queue depth:    %u\n", self->queue_depth);
 	printf("Run time:       %u seconds\n", self->time_in_sec);
@@ -199,7 +203,7 @@ attach_cb(void *cb_ctx, struct spdk_pci_device *pci_dev, struct spdk_ae4dma_chan
 static int
 ae4dma_init(void)
 {
-	if (spdk_ae4dma_probe(NULL, probe_cb, attach_cb) != 0) {
+	if (spdk_ae4dma_probe(&g_user_config.ae4dma_hw_queues, probe_cb, attach_cb) != 0) {
 		fprintf(stderr, "ae4dma_probe() failed\n");
 		return 1;
 	}
@@ -215,6 +219,7 @@ usage(char *program_name)
 	printf("\t[-c core mask for distributing I/O submission/completion work]\n");
 	printf("\t[-q queue depth]\n");
 	printf("\t[-n number of channels]\n");
+	printf("\t[-m number of hw queues per device ( <= 16 )]\n");
 	printf("\t[-o transfer size in bytes]\n");
 	printf("\t[-t time in seconds]\n");
 	printf("\t[-v verify copy result if this switch is on]\n");
@@ -226,13 +231,16 @@ parse_args(int argc, char **argv)
 	int op;
 
 	construct_user_config(&g_user_config);
-	while ((op = getopt(argc, argv, "c:hn:o:q:t:v")) != -1) {
+	while ((op = getopt(argc, argv, "c:hn:m:o:q:t:v")) != -1) {
 		switch (op) {
 		case 'o':
 			g_user_config.xfer_size_bytes = spdk_strtol(optarg, 10);
 			break;
 		case 'n':
 			g_user_config.ae4dma_chan_num = spdk_strtol(optarg, 10);
+			break;
+		case 'm':
+			g_user_config.ae4dma_hw_queues = spdk_strtol(optarg, 10);
 			break;
 		case 'q':
 			g_user_config.queue_depth = spdk_strtol(optarg, 10);
@@ -256,7 +264,8 @@ parse_args(int argc, char **argv)
 	}
 	if (g_user_config.xfer_size_bytes <= 0 || g_user_config.queue_depth <= 0 ||
 	    g_user_config.time_in_sec <= 0 || !g_user_config.core_mask ||
-	    g_user_config.ae4dma_chan_num <= 0) {
+	    g_user_config.ae4dma_chan_num <= 0 ||
+	    g_user_config.ae4dma_hw_queues > AE4DMA_MAX_HWQUEUES_PERDEVICE) {
 		usage(argv[0]);
 		return 1;
 	}
