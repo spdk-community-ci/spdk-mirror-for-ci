@@ -116,7 +116,11 @@ int spdk_ae4dma_build_copy(struct spdk_ae4dma_chan *chan,
  * command queue.
  *
  * This function increments the write_index register of the paticular queue
- * and flush the descriptor to hardware for further processing
+<<<<<<< HEAD
+=======
+ * and flush the descriptor to hardware for further processing.
+ *
+>>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
  * \param chan AE4DMA channel to flush.
  */
 void spdk_ae4dma_flush(struct spdk_ae4dma_chan *chan);
