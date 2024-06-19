@@ -41,6 +41,24 @@ accel_scan_iaa_modules
 nvmf_digest_dsa_initiator
 nvmf_digest_dsa_target
 
+accel_dsa_kernel_copy
+accel_dsa_kernel_copy
+accel_dsa_kernel_fill
+accel_dsa_kernel_copy_crc32c
+accel_dsa_kernel_copy_crc32c_C2
+accel_dsa_kernel_dualcast
+accel_dsa_kernel_compare
+accel_dsa_kernel_dif_verify
+accel_dsa_kernel_dif_generate_copy
+accel_dsa_user_copy
+accel_dsa_user_fill
+accel_dsa_user_dualcast
+accel_dsa_user_compare
+accel_dsa_user_copy_crc32c
+accel_dsa_user_copy_crc32c_C2
+accel_dsa_user_dif_verify
+accel_dsa_user_dif_generate_copy
+
 # nightly tests
 bdev_reset
 build_native_dpdk

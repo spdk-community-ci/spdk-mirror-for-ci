@@ -29,8 +29,17 @@ accel_test() {
 
 build_accel_config() {
 	accel_json_cfg=()
-	[[ $SPDK_TEST_ACCEL_DSA -gt 0 ]] && accel_json_cfg+=('{"method": "dsa_scan_accel_module"}')
-	[[ $SPDK_TEST_ACCEL_IAA -gt 0 ]] && accel_json_cfg+=('{"method": "iaa_scan_accel_module"}')
+	if [[ $SPDK_TEST_ACCEL_DSA -gt 0 ]]; then
+		if [[ $IDXD_DRIVER == "kernel" ]]; then
+			accel_json_cfg+=('{"method": "dsa_scan_accel_module", "params": {"config_kernel_mode": true}}')
+		else
+			accel_json_cfg+=('{"method": "dsa_scan_accel_module", "params": {"config_kernel_mode": false}}')
+		fi
+	fi
+	# IAA does not support IDXD_DRIVER in kernel-mode
+	if [[ $IDXD_DRIVER != "kernel" ]]; then
+		[[ $SPDK_TEST_ACCEL_IAA -gt 0 ]] && accel_json_cfg+=('{"method": "iaa_scan_accel_module"}')
+	fi
 	[[ $SPDK_TEST_IOAT -gt 0 ]] && accel_json_cfg+=('{"method": "ioat_scan_accel_module"}')
 
 	if [[ $COMPRESSDEV ]]; then
@@ -63,7 +72,12 @@ function get_expected_opcs() {
 	waitforlisten $spdk_tgt_pid
 
 	[[ $SPDK_TEST_ACCEL_DSA -gt 0 ]] && check_save_config "dsa_scan_accel_module"
-	[[ $SPDK_TEST_ACCEL_IAA -gt 0 ]] && check_save_config "iaa_scan_accel_module"
+
+	# IAA does not support IDXD_DRIVER in kernel-mode
+	if [[ $IDXD_DRIVER != "kernel" ]]; then
+		[[ $SPDK_TEST_ACCEL_IAA -gt 0 ]] && check_save_config "iaa_scan_accel_module"
+	fi
+
 	[[ $SPDK_TEST_IOAT -gt 0 ]] && check_save_config "ioat_scan_accel_module"
 	[[ $COMPRESSDEV ]] && check_save_config "compressdev_scan_accel_module"
 
@@ -132,6 +146,32 @@ if [[ $CONFIG_DPDK_COMPRESSDEV == y ]]; then
 	run_test "accel_cdev_decomp_mthread" accel_test -t 1 -w decompress -l $testdir/bib -y -T 2
 	run_test "accel_cdev_decomp_full_mthread" accel_test -t 1 -w decompress -l $testdir/bib -y -o 0 -T 2
 	unset COMPRESSDEV
+fi
+if [[ $SPDK_TEST_ACCEL_DSA == 1 ]]; then
+	manage_idxd_environment setup
+	IDXD_DRIVER="kernel"
+	get_expected_opcs
+	run_test "accel_dsa_kernel_copy" accel_test -t 1 -w copy -y
+	run_test "accel_dsa_kernel_fill" accel_test -t 1 -w fill -f 128 -q 64 -a 64 -y
+	run_test "accel_dsa_kernel_copy_crc32c" accel_test -t 1 -w copy_crc32c -y
+	run_test "accel_dsa_kernel_copy_crc32c_C2" accel_test -t 1 -w copy_crc32c -y -C 2
+	run_test "accel_dsa_kernel_dualcast" accel_test -t 1 -w dualcast -y
+	run_test "accel_dsa_kernel_compare" accel_test -t 1 -w compare -y
+	run_test "accel_dsa_kernel_dif_verify" accel_test -t 1 -w dif_verify
+	run_test "accel_dsa_kernel_dif_generate_copy" accel_test -t 1 -w dif_generate_copy
+	manage_idxd_environment clean
+
+	IDXD_DRIVER="user"
+	get_expected_opcs
+	run_test "accel_dsa_user_copy" accel_test -t 1 -w copy -y
+	run_test "accel_dsa_user_fill" accel_test -t 1 -w fill -f 128 -q 64 -a 64 -y
+	run_test "accel_dsa_user_dualcast" accel_test -t 1 -w dualcast -y
+	run_test "accel_dsa_user_compare" accel_test -t 1 -w compare -y
+	run_test "accel_dsa_user_copy_crc32c" accel_test -t 1 -w copy_crc32c -y
+	run_test "accel_dsa_user_copy_crc32c_C2" accel_test -t 1 -w copy_crc32c -y -C 2
+	run_test "accel_dsa_user_dif_verify" accel_test -t 1 -w dif_verify
+	run_test "accel_dsa_user_dif_generate_copy" accel_test -t 1 -w dif_generate_copy
+	unset IDXD_DRIVER
 fi
 
 run_test "accel_dif_functional_tests" "$testdir/dif/dif" -c <(build_accel_config)
