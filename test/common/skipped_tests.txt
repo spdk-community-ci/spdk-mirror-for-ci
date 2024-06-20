@@ -38,8 +38,6 @@ vmd_perf
 # Waiting for CI tests on the platform equipped DSA and IAA accelerators
 accel_scan_dsa_modules
 accel_scan_iaa_modules
-nvmf_digest_dsa_initiator
-nvmf_digest_dsa_target
 
 accel_dsa_kernel_copy
 accel_dsa_kernel_copy
@@ -58,6 +56,10 @@ accel_dsa_user_copy_crc32c
 accel_dsa_user_copy_crc32c_C2
 accel_dsa_user_dif_verify
 accel_dsa_user_dif_generate_copy
+nvmf_digest_dsa_kernel_initiator
+nvmf_digest_dsa_kernel_target
+nvmf_digest_dsa_user_initiator
+nvmf_digest_dsa_user_target
 
 # nightly tests
 bdev_reset

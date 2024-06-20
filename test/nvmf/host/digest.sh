@@ -117,12 +117,19 @@ run_digest_error() {
 }
 
 run_digest() {
-	local dsa_initiator
+	local dsa_initiator mode
 	[[ "$1" == "dsa_initiator" ]] && dsa_initiator=true || dsa_initiator=false
 
 	tgt_params=("--wait-for-rpc")
 	nvmfappstart "${tgt_params[@]}"
-	[[ "$1" == "dsa_target" ]] && rpc_cmd dsa_scan_accel_module
+
+	if [[ "$1" == "dsa_target" ]]; then
+		if [[ $IDXD_DRIVER == "kernel" ]]; then
+			manage_idxd_environment setup
+			mode="--config-kernel-mode"
+		fi
+		rpc_cmd dsa_scan_accel_module $mode
+	fi
 	common_target_config
 
 	run_bperf randread 4096 128 $dsa_initiator
@@ -139,8 +146,15 @@ nvmftestinit
 
 trap cleanup SIGINT SIGTERM EXIT
 if [[ $SPDK_TEST_ACCEL_DSA -eq 1 ]]; then
-	run_test "nvmf_digest_dsa_initiator" run_digest dsa_initiator
-	run_test "nvmf_digest_dsa_target" run_digest dsa_target
+	IDXD_DRIVER="kernel"
+	run_test "nvmf_digest_dsa_kernel_initiator" run_digest dsa_initiator
+	run_test "nvmf_digest_dsa_kernel_target" run_digest dsa_target
+	manage_idxd_environment clean
+
+	IDXD_DRIVER="user"
+	run_test "nvmf_digest_dsa_user_initiator" run_digest dsa_initiator
+	run_test "nvmf_digest_dsa_user_target" run_digest dsa_target
+	unset IDXD_DRIVER
 else
 	run_test "nvmf_digest_clean" run_digest
 fi
