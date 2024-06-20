@@ -6082,6 +6082,15 @@ spdk_blob_get_id(struct spdk_blob *blob)
 	return blob->id;
 }
 
+struct spdk_blob_store *
+spdk_blob_get_bs(struct spdk_blob *blob)
+{
+	assert(blob != NULL);
+	assert(blob->bs != NULL);
+
+	return blob->bs;
+}
+
 uint64_t
 spdk_blob_get_num_pages(struct spdk_blob *blob)
 {

@@ -485,6 +485,15 @@ uint64_t spdk_bs_total_data_cluster_count(struct spdk_blob_store *bs);
 spdk_blob_id spdk_blob_get_id(struct spdk_blob *blob);
 
 /**
+ * Get the blobstore pointer.
+ *
+ * \param blob Blob struct to query.
+ *
+ * \return blobstore pointer.
+ */
+struct spdk_blob_store *spdk_blob_get_bs(struct spdk_blob *blob);
+
+/**
  * Get the number of pages allocated to the blob.
  *
  * \param blob Blob struct to query.
