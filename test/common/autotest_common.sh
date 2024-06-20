@@ -1667,6 +1667,25 @@ function get_zoned_devs() {
 	done
 }
 
+function manage_dsa_accel_environment() {
+	source "$rootdir/test/setup/dsa_setup.sh"
+
+	case $1 in
+		setup)
+			manage_pci_dsa_devices reset
+			setup_dsa_devices
+			;;
+		clean)
+			disable_all_dsa_engines
+			manage_pci_dsa_devices
+			;;
+		*)
+			echo "Incorrect action: $1"
+			return 1
+			;;
+	esac
+}
+
 # Define temp storage for all the tests. Look for 2GB at minimum
 set_test_storage "${TEST_MIN_STORAGE_SIZE:-$((1 << 31))}"
 
