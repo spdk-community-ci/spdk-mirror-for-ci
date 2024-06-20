@@ -3103,7 +3103,7 @@ _bdev_rw_split(void *_bdev_io)
 	uint32_t parent_iov_offset, parent_iovcnt, parent_iovpos, child_iovcnt;
 	uint32_t to_next_boundary, to_next_boundary_bytes, to_last_block_bytes;
 	uint32_t iovcnt, iov_len, child_iovsize;
-	uint32_t blocklen = bdev->blocklen;
+	uint32_t blocklen = spdk_bdev_io_get_blocklen(bdev_io);
 	uint32_t io_boundary;
 	uint32_t max_segment_size = bdev->max_segment_size;
 	uint32_t max_child_iovcnt = bdev->max_num_segments;
