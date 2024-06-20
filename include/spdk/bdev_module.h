@@ -1201,6 +1201,21 @@ void spdk_bdev_alias_del_all(struct spdk_bdev *bdev);
 const struct spdk_bdev_aliases_list *spdk_bdev_get_aliases(const struct spdk_bdev *bdev);
 
 /**
+ * Get the block size of the I/O buffers. In some cases it will
+ * be different from the bdev block size (it may contain data blocks
+ * only).
+ *
+ * \param bdev_io IO to query
+ * \return Block size
+ */
+static inline uint32_t
+spdk_bdev_io_get_blocklen(struct spdk_bdev_io *bdev_io)
+{
+	struct spdk_bdev *bdev = bdev_io->bdev;
+	return bdev_io->u.bdev.no_metadata ? spdk_bdev_get_data_block_size(bdev) : bdev->blocklen;
+}
+
+/**
  * Allocate a buffer for given bdev_io.  Allocation will happen
  * only if the bdev_io has no assigned SGL yet or SGL is not
  * aligned to \c bdev->required_alignment.  If SGL is not aligned,
