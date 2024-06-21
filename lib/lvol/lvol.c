@@ -413,6 +413,48 @@ lvs_load_cb(void *cb_arg, struct spdk_blob_store *bs, int lvolerrno)
 }
 
 static void
+lvs_load_lvol_open(void *cb_arg, struct spdk_blob *blob, int lvolerrno)
+{
+	struct spdk_lvs_with_handle_req *req = cb_arg;
+
+	SPDK_DEBUGLOG(lvol, "lvs %p: found blob with id 0x%"PRIx64"\n",
+		      req->lvol_store, spdk_blob_get_id(blob));
+}
+
+static void
+lvs_load_super_read_xattr(struct spdk_blob *blob, struct spdk_lvs_with_handle_req *req)
+{
+	SPDK_DEBUGLOG(lvol, "lvs %p: found super blob with id 0x%"PRIx64"\n",
+		      req->lvol_store, spdk_blob_get_id(blob));
+}
+
+static void
+lvs_load_blob_get_super(void *cb_arg, spdk_blob_id blob_id, int rc)
+{
+	spdk_blob_id *super_blob_id = cb_arg;
+
+	*super_blob_id = blob_id;
+}
+
+static void
+lvs_load_blob_iter(void *ctx, struct spdk_blob *blob, int rc)
+{
+	struct spdk_blob_store *bs = spdk_blob_get_bs(blob);
+	spdk_blob_id blob_id = spdk_blob_get_id(blob);
+	spdk_blob_id super_blob_id = SPDK_BLOBID_INVALID;
+
+	/* Getting super blob id always finishes immediately. */
+	spdk_bs_get_super(bs, lvs_load_blob_get_super, &super_blob_id);
+	assert(super_blob_id != SPDK_BLOBID_INVALID);
+	if (super_blob_id == blob_id) {
+		lvs_load_super_read_xattr(blob, ctx);
+		return;
+	}
+
+	lvs_load_lvol_open(ctx, blob, rc);
+}
+
+static void
 lvs_bs_opts_init(struct spdk_bs_opts *opts)
 {
 	spdk_bs_opts_init(opts, sizeof(*opts));
@@ -464,6 +506,9 @@ lvs_load(struct spdk_bs_dev *bs_dev, const struct spdk_lvs_opts *_lvs_opts,
 
 	lvs_bs_opts_init(&bs_opts);
 	snprintf(bs_opts.bstype.bstype, sizeof(bs_opts.bstype.bstype), "LVOLSTORE");
+
+	bs_opts.iter_cb_fn = lvs_load_blob_iter;
+	bs_opts.iter_cb_arg = req;
 
 	if (lvs_opts.esnap_bs_dev_create != NULL) {
 		req->lvol_store->esnap_bs_dev_create = lvs_opts.esnap_bs_dev_create;

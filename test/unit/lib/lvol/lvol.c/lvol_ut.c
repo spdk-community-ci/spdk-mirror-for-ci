@@ -407,6 +407,12 @@ spdk_blob_get_id(struct spdk_blob *blob)
 	return blob->id;
 }
 
+struct spdk_blob_store *
+spdk_blob_get_bs(struct spdk_blob *blob)
+{
+	return blob->bs;
+}
+
 void
 spdk_bs_opts_init(struct spdk_bs_opts *opts, size_t opts_size)
 {
