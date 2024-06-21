@@ -188,16 +188,27 @@ spdk_lvol_open(struct spdk_lvol *lvol, spdk_lvol_op_with_handle_complete cb_fn, 
 }
 
 static void
-bs_unload_with_error_cb(void *cb_arg, int lvolerrno)
+lvs_load_cb(void *cb_arg, struct spdk_blob_store *bs, int lvolerrno)
 {
 	struct spdk_lvs_with_handle_req *req = (struct spdk_lvs_with_handle_req *)cb_arg;
+	struct spdk_lvol_store *lvs = req->lvol_store;
 
-	req->cb_fn(req->cb_arg, NULL, req->lvserrno);
+	if (lvolerrno != 0) {
+		req->cb_fn(req->cb_arg, NULL, lvolerrno);
+		lvs_free(lvs);
+		free(req);
+		return;
+	}
+
+	lvs->blobstore = bs;
+	lvs->bs_dev = req->bs_dev;
+	lvs->load_esnaps = true;
+	req->cb_fn(req->cb_arg, lvs, req->lvserrno);
 	free(req);
 }
 
 static void
-load_next_lvol(void *cb_arg, struct spdk_blob *blob, int lvolerrno)
+lvs_load_lvol_open(void *cb_arg, struct spdk_blob *blob, int lvolerrno)
 {
 	struct spdk_lvs_with_handle_req *req = cb_arg;
 	struct spdk_lvol_store *lvs = req->lvol_store;
@@ -208,34 +219,13 @@ load_next_lvol(void *cb_arg, struct spdk_blob *blob, int lvolerrno)
 	size_t value_len;
 	int rc;
 
-	if (lvolerrno == -ENOENT) {
-		/* Finished iterating */
-		if (req->lvserrno == 0) {
-			lvs->load_esnaps = true;
-			req->cb_fn(req->cb_arg, lvs, req->lvserrno);
-			free(req);
-		} else {
-			TAILQ_FOREACH_SAFE(lvol, &lvs->lvols, link, tmp) {
-				TAILQ_REMOVE(&lvs->lvols, lvol, link);
-				lvol_free(lvol);
-			}
-			lvs_free(lvs);
-			spdk_bs_unload(bs, bs_unload_with_error_cb, req);
-		}
-		return;
-	} else if (lvolerrno < 0) {
-		SPDK_ERRLOG("Failed to fetch blobs list\n");
-		req->lvserrno = lvolerrno;
-		goto invalid;
-	}
+	SPDK_DEBUGLOG(lvol, "lvs %p: found blob with id 0x%"PRIx64"\n",
+		      lvs, spdk_blob_get_id(blob));
+
+	/* Blob was already opened, this shall never be false. */
+	assert(lvolerrno == 0);
 
 	blob_id = spdk_blob_get_id(blob);
-
-	if (blob_id == lvs->super_blob_id) {
-		SPDK_INFOLOG(lvol, "found superblob %"PRIu64"\n", (uint64_t)blob_id);
-		spdk_bs_iter_next(bs, blob, load_next_lvol, req);
-		return;
-	}
 
 	lvol = calloc(1, sizeof(*lvol));
 	if (!lvol) {
@@ -273,7 +263,7 @@ load_next_lvol(void *cb_arg, struct spdk_blob *blob, int lvolerrno)
 		SPDK_ERRLOG("Cannot assign lvol name\n");
 		lvol_free(lvol);
 		req->lvserrno = -EINVAL;
-		goto invalid;
+		return;
 	}
 
 	snprintf(lvol->name, sizeof(lvol->name), "%s", attr);
@@ -283,38 +273,6 @@ load_next_lvol(void *cb_arg, struct spdk_blob *blob, int lvolerrno)
 	lvs->lvol_count++;
 
 	SPDK_INFOLOG(lvol, "added lvol %s (%s)\n", lvol->unique_id, lvol->uuid_str);
-
-invalid:
-	spdk_bs_iter_next(bs, blob, load_next_lvol, req);
-}
-
-static void
-lvs_load_cb(void *cb_arg, struct spdk_blob_store *bs, int lvolerrno)
-{
-	struct spdk_lvs_with_handle_req *req = (struct spdk_lvs_with_handle_req *)cb_arg;
-	struct spdk_lvol_store *lvs = req->lvol_store;
-
-	if (lvolerrno != 0) {
-		req->cb_fn(req->cb_arg, NULL, lvolerrno);
-		lvs_free(lvs);
-		free(req);
-		return;
-	}
-
-	lvs->blobstore = bs;
-	lvs->bs_dev = req->bs_dev;
-
-	/* Start loading lvols */
-	spdk_bs_iter_first(bs, load_next_lvol, req);
-}
-
-static void
-lvs_load_lvol_open(void *cb_arg, struct spdk_blob *blob, int lvolerrno)
-{
-	struct spdk_lvs_with_handle_req *req = cb_arg;
-
-	SPDK_DEBUGLOG(lvol, "lvs %p: found blob with id 0x%"PRIx64"\n",
-		      req->lvol_store, spdk_blob_get_id(blob));
 }
 
 static void
@@ -383,7 +341,7 @@ lvs_load_blob_iter(void *ctx, struct spdk_blob *blob, int rc)
 		return;
 	}
 
-	lvs_load_lvol_open(ctx, blob, rc);
+	spdk_bs_open_blob(bs, blobid, lvs_load_lvol_open, ctx);
 }
 
 static void
