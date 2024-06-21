@@ -289,111 +289,6 @@ invalid:
 }
 
 static void
-close_super_cb(void *cb_arg, int lvolerrno)
-{
-	struct spdk_lvs_with_handle_req *req = (struct spdk_lvs_with_handle_req *)cb_arg;
-	struct spdk_lvol_store *lvs = req->lvol_store;
-	struct spdk_blob_store *bs = lvs->blobstore;
-
-	if (lvolerrno != 0) {
-		SPDK_INFOLOG(lvol, "Could not close super blob\n");
-		lvs_free(lvs);
-		req->lvserrno = -ENODEV;
-		spdk_bs_unload(bs, bs_unload_with_error_cb, req);
-		return;
-	}
-
-	/* Start loading lvols */
-	spdk_bs_iter_first(lvs->blobstore, load_next_lvol, req);
-}
-
-static void
-close_super_blob_with_error_cb(void *cb_arg, int lvolerrno)
-{
-	struct spdk_lvs_with_handle_req *req = (struct spdk_lvs_with_handle_req *)cb_arg;
-	struct spdk_lvol_store *lvs = req->lvol_store;
-	struct spdk_blob_store *bs = lvs->blobstore;
-
-	lvs_free(lvs);
-
-	spdk_bs_unload(bs, bs_unload_with_error_cb, req);
-}
-
-static void
-lvs_read_uuid(void *cb_arg, struct spdk_blob *blob, int lvolerrno)
-{
-	struct spdk_lvs_with_handle_req *req = (struct spdk_lvs_with_handle_req *)cb_arg;
-	struct spdk_lvol_store *lvs = req->lvol_store;
-	struct spdk_blob_store *bs = lvs->blobstore;
-	const char *attr;
-	size_t value_len;
-	int rc;
-
-	if (lvolerrno != 0) {
-		SPDK_INFOLOG(lvol, "Could not open super blob\n");
-		lvs_free(lvs);
-		req->lvserrno = -ENODEV;
-		spdk_bs_unload(bs, bs_unload_with_error_cb, req);
-		return;
-	}
-
-	rc = spdk_blob_get_xattr_value(blob, "uuid", (const void **)&attr, &value_len);
-	if (rc != 0 || value_len != SPDK_UUID_STRING_LEN || attr[SPDK_UUID_STRING_LEN - 1] != '\0') {
-		SPDK_INFOLOG(lvol, "degraded_set or incorrect UUID\n");
-		req->lvserrno = -EINVAL;
-		spdk_blob_close(blob, close_super_blob_with_error_cb, req);
-		return;
-	}
-
-	if (spdk_uuid_parse(&lvs->uuid, attr)) {
-		SPDK_INFOLOG(lvol, "incorrect UUID '%s'\n", attr);
-		req->lvserrno = -EINVAL;
-		spdk_blob_close(blob, close_super_blob_with_error_cb, req);
-		return;
-	}
-
-	rc = spdk_blob_get_xattr_value(blob, "name", (const void **)&attr, &value_len);
-	if (rc != 0 || value_len > SPDK_LVS_NAME_MAX) {
-		SPDK_INFOLOG(lvol, "degraded_set or invalid name\n");
-		req->lvserrno = -EINVAL;
-		spdk_blob_close(blob, close_super_blob_with_error_cb, req);
-		return;
-	}
-
-	snprintf(lvs->name, sizeof(lvs->name), "%s", attr);
-
-	rc = add_lvs_to_list(lvs);
-	if (rc) {
-		SPDK_INFOLOG(lvol, "lvolstore with name %s already exists\n", lvs->name);
-		req->lvserrno = -EEXIST;
-		spdk_blob_close(blob, close_super_blob_with_error_cb, req);
-		return;
-	}
-
-	lvs->super_blob_id = spdk_blob_get_id(blob);
-
-	spdk_blob_close(blob, close_super_cb, req);
-}
-
-static void
-lvs_open_super(void *cb_arg, spdk_blob_id blobid, int lvolerrno)
-{
-	struct spdk_lvs_with_handle_req *req = (struct spdk_lvs_with_handle_req *)cb_arg;
-	struct spdk_lvol_store *lvs = req->lvol_store;
-	struct spdk_blob_store *bs = lvs->blobstore;
-
-	if (lvolerrno != 0) {
-		SPDK_INFOLOG(lvol, "Super blob not found\n");
-		lvs_free(lvs);
-		req->lvserrno = -ENODEV;
-		spdk_bs_unload(bs, bs_unload_with_error_cb, req);
-		return;
-	}
-
-	spdk_bs_open_blob(bs, blobid, lvs_read_uuid, req);
-}
-
-static void
 lvs_load_cb(void *cb_arg, struct spdk_blob_store *bs, int lvolerrno)
 {
 	struct spdk_lvs_with_handle_req *req = (struct spdk_lvs_with_handle_req *)cb_arg;
@@ -409,7 +304,8 @@ lvs_load_cb(void *cb_arg, struct spdk_blob_store *bs, int lvolerrno)
 	lvs->blobstore = bs;
 	lvs->bs_dev = req->bs_dev;
 
-	spdk_bs_get_super(bs, lvs_open_super, req);
+	/* Start loading lvols */
+	spdk_bs_iter_first(bs, load_next_lvol, req);
 }
 
 static void
@@ -424,8 +320,44 @@ lvs_load_lvol_open(void *cb_arg, struct spdk_blob *blob, int lvolerrno)
 static void
 lvs_load_super_read_xattr(struct spdk_blob *blob, struct spdk_lvs_with_handle_req *req)
 {
+	struct spdk_lvol_store *lvs = req->lvol_store;
+	const char *attr;
+	size_t value_len;
+	int rc;
+
 	SPDK_DEBUGLOG(lvol, "lvs %p: found super blob with id 0x%"PRIx64"\n",
-		      req->lvol_store, spdk_blob_get_id(blob));
+		      lvs, spdk_blob_get_id(blob));
+
+	rc = spdk_blob_get_xattr_value(blob, "uuid", (const void **)&attr, &value_len);
+	if (rc != 0 || value_len != SPDK_UUID_STRING_LEN || attr[SPDK_UUID_STRING_LEN - 1] != '\0') {
+		SPDK_INFOLOG(lvol, "degraded_set or incorrect UUID\n");
+		req->lvserrno = -EINVAL;
+		return;
+	}
+
+	if (spdk_uuid_parse(&lvs->uuid, attr)) {
+		SPDK_INFOLOG(lvol, "incorrect UUID '%s'\n", attr);
+		req->lvserrno = -EINVAL;
+		return;
+	}
+
+	rc = spdk_blob_get_xattr_value(blob, "name", (const void **)&attr, &value_len);
+	if (rc != 0 || value_len > SPDK_LVS_NAME_MAX) {
+		SPDK_INFOLOG(lvol, "degraded_set or invalid name\n");
+		req->lvserrno = -EINVAL;
+		return;
+	}
+
+	snprintf(lvs->name, sizeof(lvs->name), "%s", attr);
+
+	rc = add_lvs_to_list(lvs);
+	if (rc) {
+		SPDK_INFOLOG(lvol, "lvolstore with name %s already exists\n", lvs->name);
+		req->lvserrno = -EEXIST;
+		return;
+	}
+
+	lvs->super_blob_id = spdk_blob_get_id(blob);
 }
 
 static void
