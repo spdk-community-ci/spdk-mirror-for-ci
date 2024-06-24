@@ -1149,32 +1149,37 @@ bdev_nvme_retry_ios(void *arg)
 }
 
 static void
-bdev_nvme_queue_retry_io(struct nvme_bdev_channel *nbdev_ch,
-			 struct nvme_bdev_io *bio, uint64_t delay_ms)
+bdev_nvme_queue_retry_io(struct nvme_bdev_channel *nbdev_ch __attribute__((unused)),
+			 struct nvme_bdev_io *bio __attribute__((unused)),
+			 uint64_t delay_ms __attribute__((unused)))
 {
-	struct spdk_bdev_io *bdev_io = spdk_bdev_io_from_ctx(bio);
-	struct spdk_bdev_io *tmp_bdev_io;
-	struct nvme_bdev_io *tmp_bio;
+	/*
+		struct spdk_bdev_io *bdev_io = spdk_bdev_io_from_ctx(bio);
+		struct spdk_bdev_io *tmp_bdev_io;
+		struct nvme_bdev_io *tmp_bio;
 
-	bio->retry_ticks = spdk_get_ticks() + delay_ms * spdk_get_ticks_hz() / 1000ULL;
 
-	TAILQ_FOREACH_REVERSE(tmp_bdev_io, &nbdev_ch->retry_io_list, retry_io_head, module_link) {
-		tmp_bio = (struct nvme_bdev_io *)tmp_bdev_io->driver_ctx;
+		bio->retry_ticks = spdk_get_ticks() + delay_ms * spdk_get_ticks_hz() / 1000ULL;
 
-		if (tmp_bio->retry_ticks <= bio->retry_ticks) {
-			TAILQ_INSERT_AFTER(&nbdev_ch->retry_io_list, tmp_bdev_io, bdev_io,
-					   module_link);
-			return;
+		TAILQ_FOREACH_REVERSE(tmp_bdev_io, &nbdev_ch->retry_io_list, retry_io_head, module_link) {
+			tmp_bio = (struct nvme_bdev_io *)tmp_bdev_io->driver_ctx;
+
+			if (tmp_bio->retry_ticks <= bio->retry_ticks) {
+				TAILQ_INSERT_AFTER(&nbdev_ch->retry_io_list, tmp_bdev_io, bdev_io,
+						   module_link);
+				return;
+			}
 		}
-	}
 
-	/* No earlier I/Os were found. This I/O must be the new head. */
-	TAILQ_INSERT_HEAD(&nbdev_ch->retry_io_list, bdev_io, module_link);
+		No earlier I/Os were found. This I/O must be the new head.
+		TAILQ_INSERT_HEAD(&nbdev_ch->retry_io_list, bdev_io, module_link);
 
-	spdk_poller_unregister(&nbdev_ch->retry_io_poller);
+		spdk_poller_unregister(&nbdev_ch->retry_io_poller);
 
-	nbdev_ch->retry_io_poller = SPDK_POLLER_REGISTER(bdev_nvme_retry_ios, nbdev_ch,
-				    delay_ms * 1000ULL);
+		nbdev_ch->retry_io_poller = SPDK_POLLER_REGISTER(bdev_nvme_retry_ios, nbdev_ch,
+					    delay_ms * 1000ULL);
+
+	*/
 }
 
 static void
