@@ -1506,17 +1506,21 @@ struct spdk_nvmf_reservation_info {
 
 struct spdk_nvmf_ns_reservation_ops {
 	/* Checks if the namespace supports the Persist Through Power Loss capability. */
-	bool (*is_ptpl_capable)(const struct spdk_nvmf_ns *ns);
+	bool (*is_ptpl_capable)(const struct spdk_nvmf_ns *ns, void *ctx);
 
 	/* Called when namespace reservation information needs to be updated.
 	 * The new reservation information is provided via the info parameter.
 	 * Returns 0 on success, negated errno on failure. */
-	int (*update)(const struct spdk_nvmf_ns *ns, const struct spdk_nvmf_reservation_info *info);
+	int (*update)(const struct spdk_nvmf_ns *ns, const struct spdk_nvmf_reservation_info *info,
+		      void *ctx);
 
 	/* Called when restoring the namespace reservation information.
 	 * The new reservation information is returned via the info parameter.
 	 * Returns 0 on success, negated errno on failure. */
-	int (*load)(const struct spdk_nvmf_ns *ns, struct spdk_nvmf_reservation_info *info);
+	int (*load)(const struct spdk_nvmf_ns *ns, struct spdk_nvmf_reservation_info *info, void *ctx);
+
+	/* Context pointer. Will be used as parameter to the custom handlers listed above. */
+	void *ctx;
 };
 
 /**

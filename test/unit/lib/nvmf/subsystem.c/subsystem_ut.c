@@ -2102,7 +2102,7 @@ test_nvmf_subsystem_state_change(void)
 }
 
 static bool
-ut_is_ptpl_capable(const struct spdk_nvmf_ns *ns)
+ut_is_ptpl_capable(const struct spdk_nvmf_ns *ns, void *ctx)
 {
 	return true;
 }
@@ -2110,7 +2110,8 @@ ut_is_ptpl_capable(const struct spdk_nvmf_ns *ns)
 static struct spdk_nvmf_reservation_info g_resv_info;
 
 static int
-ut_update_reservation(const struct spdk_nvmf_ns *ns, const struct spdk_nvmf_reservation_info *info)
+ut_update_reservation(const struct spdk_nvmf_ns *ns, const struct spdk_nvmf_reservation_info *info,
+		      void *ctx)
 {
 	g_resv_info = *info;
 
@@ -2118,7 +2119,8 @@ ut_update_reservation(const struct spdk_nvmf_ns *ns, const struct spdk_nvmf_rese
 }
 
 static int
-ut_load_reservation(const struct spdk_nvmf_ns *ns, struct spdk_nvmf_reservation_info *info)
+ut_load_reservation(const struct spdk_nvmf_ns *ns, struct spdk_nvmf_reservation_info *info,
+		    void *ctx)
 {
 	*info = g_resv_info;
 
@@ -2132,6 +2134,7 @@ test_nvmf_reservation_custom_ops(void)
 		.is_ptpl_capable = ut_is_ptpl_capable,
 		.update = ut_update_reservation,
 		.load = ut_load_reservation,
+		.ctx = NULL,
 	};
 	struct spdk_nvmf_request *req;
 	struct spdk_nvme_cpl *rsp;
