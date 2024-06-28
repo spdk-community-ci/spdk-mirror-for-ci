@@ -214,8 +214,14 @@ class Server(ABC):
             return self.RDMA_PROTOCOL_UNKNOWN
 
     def load_drivers(self):
+        nvme_drivers = [f"nvme_{self.transport}", f"nvmet_{self.transport}"]
+
         self.log.info("Loading drivers")
-        self.exec_cmd(["sudo", "modprobe", "-a", f"nvme-{self.transport}", f"nvmet-{self.transport}"])
+        self.exec_cmd(["sudo", "modprobe", "-a", *nvme_drivers])
+
+        loaded_drivers = self.exec_cmd(['lsmod']).strip()
+        if not any(driver in loaded_drivers for driver in nvme_drivers):
+            raise Exception(f"Drivers not loaded: {nvme_drivers}")
 
         if self.transport != "rdma":
             return
@@ -225,21 +231,35 @@ class Server(ABC):
             self.log.error("ERROR: failed to check RDMA protocol mode")
             return
 
+        roce_ena = 0
         if self.irdma_roce_enable:
+            roce_ena = 1
             if current_mode == self.RDMA_PROTOCOL_IWARP:
-                self.reload_driver("irdma", "roce_ena=1")
+                self.reload_driver("irdma", f"roce_ena={roce_ena}")
                 self.log.info("Loaded irdma driver with RoCE enabled")
             else:
                 self.log.info("Leaving irdma driver with RoCE enabled")
         else:
-            self.reload_driver("irdma", "roce_ena=0")
+            self.reload_driver("irdma", f"roce_ena={roce_ena}")
             self.log.info("Loaded irdma driver with iWARP enabled")
+
+        roce_ena_set = int(self.exec_cmd(["cat", "/sys/module/irdma/parameters/roce_ena"]))
+        if roce_ena != roce_ena_set:
+            raise Exception(f"irdma driver roce_ena set to {roce_ena_set}, expected {roce_ena}")
 
     def set_pause_frames(self, pf_state):
         for nic_ip in self.nic_ips:
             nic_name = self.get_nic_name_by_ip(nic_ip)
             self.log.info(f"Turning {pf_state} pause frames for {nic_name}")
             self.exec_cmd(["sudo", "ethtool", "-A", nic_name, "rx", pf_state, "tx", pf_state])
+
+            nic_pause_info = json.loads(self.exec_cmd(["sudo", "ethtool", "--json", "-a", nic_name]).strip())
+            nic_pause_info = nic_pause_info[0]  # This is always a single element list.
+            # Ethtool takes on/off keywords to set pause frames, but presents them as true/false in JSON output.
+            truth_map = {"on": True, "off": False}
+            self.log.info(nic_pause_info)
+            if truth_map[pf_state] != nic_pause_info["rx"] or truth_map[pf_state] != nic_pause_info["tx"]:
+                raise Exception(f"Pause frames settings for {nic_name} did not apply as expected")
 
     def configure_pause_frames(self):
         if self.pause_frames is None:
@@ -376,8 +396,6 @@ class Server(ABC):
 
     def configure_services(self):
         self.log.info("Configuring active services...")
-        svc_config = configparser.ConfigParser(strict=False)
-
         # Below list is valid only for RHEL / Fedora systems and might not
         # contain valid names for other distributions.
         svc_target_state = {
@@ -387,20 +405,33 @@ class Server(ABC):
             "lldpad.socket": "inactive"
         }
 
-        for service in svc_target_state:
+        def get_service_state(service):
+            svc_config = configparser.ConfigParser(strict=False)
             out = self.exec_cmd(["sudo", "systemctl", "show", "--no-page", service])
             out = "\n".join(["[%s]" % service, out])
             svc_config.read_string(out)
 
             if "LoadError" in svc_config[service] and "not found" in svc_config[service]["LoadError"]:
+                raise ValueError(f"Service {service} not found")
+
+            return svc_config[service]["ActiveState"]
+
+        for service, target_state in svc_target_state.items():
+
+            try:
+                service_state = get_service_state(service)
+            except ValueError:
                 continue
 
-            service_state = svc_config[service]["ActiveState"]
             self.log.info("Current state of %s service is %s" % (service, service_state))
             self.svc_restore_dict.update({service: service_state})
             if service_state != "inactive":
                 self.log.info("Disabling %s. It will be restored after the test has finished." % service)
                 self.exec_cmd(["sudo", "systemctl", "stop", service])
+
+            service_state = get_service_state(service)
+            if service_state != "inactive":
+                raise Exception(f"Service {service} in {service_state}. Expected: {target_state}")
 
     def configure_sysctl(self):
         self.log.info("Tuning sysctl settings...")
@@ -437,6 +468,17 @@ class Server(ABC):
             self.sysctl_restore_dict.update({opt: self.exec_cmd(["sysctl", "-n", opt]).strip()})
             self.log.info(self.exec_cmd(["sudo", "sysctl", "-w", "%s=%s" % (opt, value)]).strip())
 
+        _current_opts = self.exec_cmd(["sudo", "sysctl", "-a"]).strip().replace(" ", "").split("\n")
+        current_opts = {k: v for (k, v) in [opt.split("=") for opt in _current_opts]}
+        for opt, opt_val in sysctl_opts.items():
+            if opt == "net.ipv4.route.flush":
+                # This sysctl param is not saved, only called once.
+                continue
+            current_val = re.sub(r'\W+', " ", current_opts.get(opt))
+            if str(opt_val) != str(current_val):
+                self.log.error("Expected %s for %s, found %s" % (opt_val, opt, current_val))
+                raise Exception("Sysctl settings not set properly!")
+
     def configure_tuned(self):
         if not self.tuned_profile:
             self.log.warning("WARNING: Tuned profile not set in configuration file. Skipping configuration.")
@@ -471,6 +513,11 @@ class Server(ABC):
         # This assumes that there is the same CPU scaling governor on each CPU
         self.governor_restore = self.exec_cmd(["cat", "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"]).strip()
         self.exec_cmd(["sudo", "cpupower", "frequency-set", "-g", "performance"])
+
+        # We set performance governor system-wide so confirming it with first available CPU should be enough.
+        governor_set = self.exec_cmd(["cat", "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"]).strip()
+        if governor_set != "performance":
+            raise Exception(f"CPU performance governor set to {governor_set}, expected: performance")
 
     def configure_irq_affinity(self, mode="default", cpulist=None, exclude_cpulist=False):
         self.log.info("Setting NIC irq affinity for NICs. Using %s mode" % mode)
@@ -1386,6 +1433,16 @@ class SPDKTarget(Target):
 
         rpc.app.framework_set_scheduler(self.client, name=self.scheduler_name, core_limit=self.scheduler_core_limit)
         rpc.framework_start_init(self.client)
+
+        _scheduler_info = rpc.app.framework_get_scheduler(self.client)
+        if _scheduler_info["scheduler_name"] != self.scheduler_name:
+            self.log.error("SPDK scheduler settings not set properly!")
+            self.log.error("Expected %s mode, found %s" % (self.scheduler_name, _scheduler_info["scheduler_name"]))
+            raise Exception("Scheduler mode not set properly)")
+        if _scheduler_info.get("core_limit", None) != self.scheduler_core_limit:
+            self.log.error("SPDK scheduler settings not set properly!")
+            self.log.error("Expected %s core limit, found %s" % (self.scheduler_core_limit, _scheduler_info["core_limit"]))
+            raise Exception("Scheduler core limit not set properly)")
 
         if self.bpf_scripts:
             self.bpf_start()
