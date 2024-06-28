@@ -608,8 +608,6 @@ class Target(Server):
         self.read_config(config_fields, target_config)
 
         self.null_block = target_config.get('null_block_devices', 0)
-        self.scheduler_name = target_config.get('scheduler_settings', 'static')
-        self.enable_zcopy = target_config.get('zcopy_settings', False)
         self.enable_bw = target_config.get('enable_bandwidth', True)
         self.nvme_blocklist = target_config.get('blocklist', [])
         self.nvme_allowlist = target_config.get('allowlist', [])
@@ -1171,6 +1169,9 @@ class SPDKTarget(Target):
             ConfigField(name='num_cqe', default=4096),
             ConfigField(name='sock_impl', default='posix')
         ]
+
+        self.enable_zcopy = target_config.get('zcopy_settings', True)
+        self.scheduler_name = target_config.get('scheduler_settings', 'static')
 
         self.read_config(config_fields, target_config)
 
