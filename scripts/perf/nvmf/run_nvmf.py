@@ -90,6 +90,21 @@ class Server(ABC):
             self.log.info("Please use a name which contains only letters, numbers or dashes")
             sys.exit(1)
 
+    def print_sys_info(self):
+        self.log.info("====Kernel release:====")
+        self.log.info(self.exec_cmd(["uname", "-r"]))
+
+        self.log.info("====Kernel command line:====")
+        cmdline = self.exec_cmd(["cat", "/proc/cmdline"])
+        self.log.info('\n'.join(self.get_uncommented_lines(cmdline.splitlines())))
+
+        self.log.info("====sysctl conf:====")
+        sysctl = self.exec_cmd(["sudo", "cat", "/etc/sysctl.conf"])
+        self.log.info('\n'.join(self.get_uncommented_lines(sysctl.splitlines())))
+
+        self.log.info("====Cpu power info:====")
+        self.log.info(self.exec_cmd(["cpupower", "frequency-info"]))
+
     def read_config(self, config_fields, config):
         for config_field in config_fields:
             value = config.get(config_field.name, config_field.default)
@@ -616,7 +631,6 @@ class Target(Server):
         if self.enable_adq:
             self.configure_adq()
             self.configure_irq_affinity()
-        self.sys_config()
 
     def set_local_nic_info_helper(self):
         return json.loads(self.exec_cmd(["lshw", "-json"]))
@@ -736,24 +750,6 @@ class Target(Server):
         tmp_dump_file = rpc.env_dpdk.env_dpdk_get_mem_stats(self.client)["filename"]
         os.rename(tmp_dump_file, "%s/%s" % (results_dir, dump_file_name))
 
-    def sys_config(self):
-        self.log.info("====Kernel release:====")
-        self.log.info(os.uname().release)
-        self.log.info("====Kernel command line:====")
-        with open('/proc/cmdline') as f:
-            cmdline = f.readlines()
-            self.log.info('\n'.join(self.get_uncommented_lines(cmdline)))
-        self.log.info("====sysctl conf:====")
-        with open('/etc/sysctl.conf') as f:
-            sysctl = f.readlines()
-            self.log.info('\n'.join(self.get_uncommented_lines(sysctl)))
-        self.log.info("====Cpu power info:====")
-        self.log.info(self.exec_cmd(["cpupower", "frequency-info"]))
-        self.log.info("====zcopy settings:====")
-        self.log.info("zcopy enabled: %s" % (self.enable_zcopy))
-        self.log.info("====Scheduler settings:====")
-        self.log.info("SPDK scheduler: %s" % (self.scheduler_name))
-
 
 class Initiator(Server):
     def __init__(self, name, general_config, initiator_config):
@@ -796,7 +792,7 @@ class Initiator(Server):
         self.configure_system()
         if self.enable_adq:
             self.configure_adq()
-        self.sys_config()
+        self.print_sys_info()
 
     def set_num_cores(self):
         if self.cpus_allowed:
@@ -1026,24 +1022,13 @@ class Initiator(Server):
             self.log.error("ERROR: Fio process failed!")
             self.log.error(e.stdout)
 
-    def sys_config(self):
-        self.log.info("====Kernel release:====")
-        self.log.info(self.exec_cmd(["uname", "-r"]))
-        self.log.info("====Kernel command line:====")
-        cmdline = self.exec_cmd(["cat", "/proc/cmdline"])
-        self.log.info('\n'.join(self.get_uncommented_lines(cmdline.splitlines())))
-        self.log.info("====sysctl conf:====")
-        sysctl = self.exec_cmd(["sudo", "cat", "/etc/sysctl.conf"])
-        self.log.info('\n'.join(self.get_uncommented_lines(sysctl.splitlines())))
-        self.log.info("====Cpu power info:====")
-        self.log.info(self.exec_cmd(["cpupower", "frequency-info"]))
-
 
 class KernelTarget(Target):
     def __init__(self, name, general_config, target_config):
         super().__init__(name, general_config, target_config)
         # Defaults
         self.nvmet_bin = target_config.get('nvmet_bin', 'nvmetcli')
+        self.print_sys_info()
 
     def load_drivers(self):
         self.log.info("Loading drivers")
@@ -1192,6 +1177,14 @@ class SPDKTarget(Target):
         self.bpf_proc = None
         self.enable_dsa = False
 
+        self.print_sys_info()
+
+    def print_sys_info(self):
+        super().print_sys_info()
+        self.log.info("====zcopy settings:====")
+        self.log.info("zcopy enabled: %s" % (self.enable_zcopy))
+        self.log.info("====Scheduler settings:====")
+        self.log.info("SPDK scheduler: %s" % (self.scheduler_name))
         self.log.info("====DSA settings:====")
         self.log.info("DSA enabled: %s" % (self.enable_dsa))
 
