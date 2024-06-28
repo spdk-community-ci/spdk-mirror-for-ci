@@ -12,6 +12,7 @@
 #include "spdk/queue.h"
 #include "spdk/mmio.h"
 #include "spdk/bit_array.h"
+#include "spdk/util.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -39,6 +40,50 @@ enum dsa_opcode {
 	IDXD_OPCODE_DECOMPRESS	= 66,
 	IDXD_OPCODE_COMPRESS	= 67,
 };
+
+/**
+ * Initialize and move to the first common segment of the two given
+ * iovecs. This function will take into account the block size
+ * of each iovec and will return common segments having the same
+ * number of blocks.
+ *
+ * All iovec sizes in every array must be a multiple of a given block size,
+ * except the last array element, which can be larger. The remaining bytes
+ * will be ignored.
+ *
+ * \param iter iovec iterator
+ * \param siov source I/O vector array
+ * \param siovcnt size of the source array
+ * \param diov destination I/O vector array
+ * \param diovcnt size of the destination array
+ * \param sblocksize block size of the source array
+ * \param dblocksize block size of the destination array
+ * \param src returned pointer to the beginning of the segment in the source array buffers
+ * \param dst returned pointer to the beginning of the segment in the destination array buffers
+ *
+ * \return number of blocks in the common segments
+ */
+size_t spdk_idxd_bioviter_first(struct spdk_ioviter *iter,
+				struct iovec *siov, size_t siovcnt,
+				struct iovec *diov, size_t diovcnt,
+				uint32_t sblocksize, uint32_t dblocksize,
+				void **src, void **dst);
+
+
+/**
+ * Move to the next segment in the iterator.
+ *
+ * This will iterate through the segments of the iovecs in the iterator
+ * and return the individual segments, one by one. Selected segments
+ * will consist of the same number of blocks.
+ *
+ * \param iter iovec iterator
+ * \param src returned pointer to the next common segment in the source I/O vector array
+ * \param dst returned pointer to the next common segment in the destination I/O vector array
+ *
+ * \return number of blocks in the common segments
+ */
+uint64_t spdk_idxd_bioviter_next(struct spdk_ioviter *iter, void **src, void **dst);
 
 #ifdef __cplusplus
 }

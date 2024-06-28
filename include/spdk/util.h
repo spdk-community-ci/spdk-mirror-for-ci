@@ -142,6 +142,7 @@ struct spdk_single_ioviter {
 	size_t		idx;
 	size_t		iov_len;
 	uint8_t		*iov_base;
+	uint32_t	block_size;
 };
 
 /**
