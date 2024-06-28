@@ -327,6 +327,119 @@ test_iov_xfer(void)
 	}
 }
 
+static void
+test_ioviter_block_2_iovs(void)
+{
+	struct iovec iov1[3], iov2[1];
+	size_t iovcnt1 = 3, iovcnt2 = 1;
+	uint8_t iov_buffer1[4 * 512 + 123];
+	uint8_t iov_buffer2[4 * 520];
+	uint32_t block_size1 = 512;
+	uint32_t block_size2 = 520;
+	uint64_t num_blocks;
+	void *out1, *out2;
+	struct spdk_ioviter iter;
+
+	iov1[0].iov_base = iov_buffer1;
+	iov1[0].iov_len = 512;
+	iov1[1].iov_base = iov1[0].iov_base + iov1[0].iov_len;
+	iov1[1].iov_len = 512;
+	iov1[2].iov_base = iov1[1].iov_base + iov1[1].iov_len;
+	iov1[2].iov_len = 2 * 512 + 123;
+
+	iov2[0].iov_base = iov_buffer2;
+	iov2[0].iov_len = 4 * 520;
+
+	num_blocks = spdk_bioviter_first(&iter, iov1, iovcnt1, iov2, iovcnt2,
+					 block_size1, block_size2, &out1, &out2);
+	CU_ASSERT(num_blocks == 1);
+	CU_ASSERT(out1 == iov1[0].iov_base);
+	CU_ASSERT(out2 == iov2[0].iov_base);
+
+	num_blocks = spdk_ioviter_next(&iter, &out1, &out2);
+	CU_ASSERT(num_blocks == 1);
+	CU_ASSERT(out1 == iov1[1].iov_base);
+	CU_ASSERT(out2 == iov2[0].iov_base + block_size2);
+
+	num_blocks = spdk_ioviter_next(&iter, &out1, &out2);
+	CU_ASSERT(num_blocks == 2);
+	CU_ASSERT(out1 == iov1[2].iov_base);
+	CU_ASSERT(out2 == iov2[0].iov_base + block_size2 * 2);
+
+	num_blocks = spdk_ioviter_next(&iter, &out1, &out2);
+	CU_ASSERT(num_blocks == 0);
+}
+
+static void
+test_ioviter_block_3_iovs(void)
+{
+	struct iovec iov1[3], iov2[1], iov3[2];
+	struct iovec *iovs[3];
+	size_t iovcnt1 = 3, iovcnt2 = 1, iovcnt3 = 2;
+	size_t iovcnts[3];
+	uint8_t iov_buffer1[4 * 512 + 123];
+	uint8_t iov_buffer2[4 * 520 + 234];
+	uint8_t iov_buffer3[5 * 528];
+	uint32_t block_size1 = 512;
+	uint32_t block_size2 = 520;
+	uint32_t block_size3 = 528;
+	uint32_t block_sizes[3];
+	uint64_t num_blocks;
+	void *outs[3];
+	struct spdk_ioviter *iter = malloc(SPDK_IOVITER_SIZE(3));
+
+	iov1[0].iov_base = iov_buffer1;
+	iov1[0].iov_len = 512;
+	iov1[1].iov_base = iov1[0].iov_base + iov1[0].iov_len;
+	iov1[1].iov_len = 512;
+	iov1[2].iov_base = iov1[1].iov_base + iov1[1].iov_len;
+	iov1[2].iov_len = 2 * 512 + 123;
+
+	iov2[0].iov_base = iov_buffer2;
+	iov2[0].iov_len = 4 * 520 + 234;
+
+	iov3[0].iov_base = iov_buffer3;
+	iov3[0].iov_len = 2 * 528;
+	iov3[1].iov_base = iov3[0].iov_base + iov3[0].iov_len;
+	iov3[1].iov_len = 3 * 528;
+
+	iovs[0] = iov1;
+	iovs[1] = iov2;
+	iovs[2] = iov3;
+
+	iovcnts[0] = iovcnt1;
+	iovcnts[1] = iovcnt2;
+	iovcnts[2] = iovcnt3;
+
+	block_sizes[0] = block_size1;
+	block_sizes[1] = block_size2;
+	block_sizes[2] = block_size3;
+
+	num_blocks = spdk_bioviter_firstv(iter, 3, iovs, iovcnts,
+					  block_sizes, outs);
+	CU_ASSERT(num_blocks == 1);
+	CU_ASSERT(outs[0] == iov1[0].iov_base);
+	CU_ASSERT(outs[1] == iov2[0].iov_base);
+	CU_ASSERT(outs[2] == iov3[0].iov_base);
+
+	num_blocks = spdk_ioviter_nextv(iter, outs);
+	CU_ASSERT(num_blocks == 1);
+	CU_ASSERT(outs[0] == iov1[1].iov_base);
+	CU_ASSERT(outs[1] == iov2[0].iov_base + block_size2);
+	CU_ASSERT(outs[2] == iov3[0].iov_base + block_size3);
+
+	num_blocks = spdk_ioviter_nextv(iter, outs);
+	CU_ASSERT(num_blocks == 2);
+	CU_ASSERT(outs[0] == iov1[2].iov_base);
+	CU_ASSERT(outs[1] == iov2[0].iov_base + block_size2 * 2);
+	CU_ASSERT(outs[2] == iov3[1].iov_base);
+
+	num_blocks = spdk_ioviter_nextv(iter, outs);
+	CU_ASSERT(num_blocks == 0);
+
+	free(iter);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -345,6 +458,8 @@ main(int argc, char **argv)
 	CU_ADD_TEST(suite, test_memset);
 	CU_ADD_TEST(suite, test_iov_one);
 	CU_ADD_TEST(suite, test_iov_xfer);
+	CU_ADD_TEST(suite, test_ioviter_block_2_iovs);
+	CU_ADD_TEST(suite, test_ioviter_block_3_iovs);
 
 
 	num_failures = spdk_ut_run_tests(argc, argv, NULL);

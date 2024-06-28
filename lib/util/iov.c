@@ -25,25 +25,38 @@ spdk_ioviter_first(struct spdk_ioviter *iter,
 		   struct iovec *diov, size_t diovcnt,
 		   void **src, void **dst)
 {
+	return spdk_bioviter_first(iter, siov, siovcnt, diov, diovcnt, 1, 1, src, dst);
+}
+
+size_t
+spdk_bioviter_first(struct spdk_ioviter *iter,
+		    struct iovec *siov, size_t siovcnt,
+		    struct iovec *diov, size_t diovcnt,
+		    uint32_t sblocksize, uint32_t dblocksize,
+		    void **src, void **dst)
+{
 	struct iovec *iovs[2];
 	size_t iovcnts[2];
+	uint32_t blocksize[2];
 	void *out[2];
-	size_t len;
+	size_t num_blocks;
 
 	iovs[0] = siov;
 	iovcnts[0] = siovcnt;
+	blocksize[0] = sblocksize;
 
 	iovs[1] = diov;
 	iovcnts[1] = diovcnt;
+	blocksize[1] = dblocksize;
 
-	len = spdk_ioviter_firstv(iter, 2, iovs, iovcnts, out);
+	num_blocks = spdk_bioviter_firstv(iter, 2, iovs, iovcnts, blocksize, out);
 
-	if (len > 0) {
+	if (num_blocks > 0) {
 		*src = out[0];
 		*dst = out[1];
 	}
 
-	return len;
+	return num_blocks;
 }
 
 size_t
@@ -52,6 +65,17 @@ spdk_ioviter_firstv(struct spdk_ioviter *iter,
 		    struct iovec **iov,
 		    size_t *iovcnt,
 		    void **out)
+{
+	return spdk_bioviter_firstv(iter, count, iov, iovcnt, NULL, out);
+}
+
+size_t
+spdk_bioviter_firstv(struct spdk_ioviter *iter,
+		     uint32_t count,
+		     struct iovec **iov,
+		     size_t *iovcnt,
+		     uint32_t *blocksize,
+		     void **out)
 {
 	struct spdk_single_ioviter *it;
 	uint32_t i;
@@ -64,6 +88,7 @@ spdk_ioviter_firstv(struct spdk_ioviter *iter,
 		it->iovcnt = iovcnt[i];
 		it->idx = 0;
 		it->iov_len = iov[i][0].iov_len;
+		it->block_size = (blocksize == NULL) ? 1 : blocksize[i];
 		it->iov_base = iov[i][0].iov_base;
 	}
 
@@ -74,16 +99,16 @@ size_t
 spdk_ioviter_next(struct spdk_ioviter *iter, void **src, void **dst)
 {
 	void *out[2];
-	size_t len;
+	uint64_t num_blocks;
 
-	len = spdk_ioviter_nextv(iter, out);
+	num_blocks = spdk_ioviter_nextv(iter, out);
 
-	if (len > 0) {
+	if (num_blocks > 0) {
 		*src = out[0];
 		*dst = out[1];
 	}
 
-	return len;
+	return num_blocks;
 }
 
 size_t
@@ -91,18 +116,20 @@ spdk_ioviter_nextv(struct spdk_ioviter *iter, void **out)
 {
 	struct spdk_single_ioviter *it;
 	size_t len;
+	uint64_t num_blocks, num_blocks_iter;
 	uint32_t i;
 
-	/* Figure out the minimum size of each iovec's next segment */
-	len = UINT32_MAX;
+	/* Figure out the minimum num blocks of each iovec's next segment */
+	num_blocks = UINT64_MAX;
 	for (i = 0; i < iter->count; i++) {
 		it = &iter->iters[i];
-		if (it->idx == it->iovcnt || it->iov_len == 0) {
-			/* This element has 0 bytes remaining, so we're done. */
+		num_blocks_iter = it->iov_len / it->block_size;
+		if (it->idx == it->iovcnt || num_blocks_iter == 0) {
+			/* This element has 0 blocks remaining, so we're done. */
 			return 0;
 		}
 
-		len = spdk_min(len, it->iov_len);
+		num_blocks = spdk_min(num_blocks, num_blocks_iter);
 	}
 
 	for (i = 0; i < iter->count; i++) {
@@ -110,7 +137,7 @@ spdk_ioviter_nextv(struct spdk_ioviter *iter, void **out)
 
 		out[i] = it->iov_base;
 
-		if (it->iov_len == len) {
+		if ((it->iov_len / it->block_size) == num_blocks) {
 			/* Advance to next element */
 			it->idx++;
 			if (it->idx != it->iovcnt) {
@@ -120,12 +147,13 @@ spdk_ioviter_nextv(struct spdk_ioviter *iter, void **out)
 			}
 		} else {
 			/* Partial buffer */
+			len = num_blocks * it->block_size;
 			it->iov_base += len;
 			it->iov_len -= len;
 		}
 	}
 
-	return len;
+	return num_blocks;
 }
 
 size_t

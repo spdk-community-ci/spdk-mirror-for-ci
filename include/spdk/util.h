@@ -131,6 +131,7 @@ struct spdk_single_ioviter {
 	size_t		iovcnt;
 	size_t		idx;
 	size_t		iov_len;
+	uint32_t	block_size;
 	uint8_t		*iov_base;
 };
 
@@ -153,7 +154,17 @@ struct spdk_ioviter {
 
 /**
  * Initialize and move to the first common segment of the two given
- * iovecs. See spdk_ioviter_next().
+ * iovecs.
+ *
+ * \param iter iovec iterator
+ * \param siov source I/O vector array
+ * \param siovcnt size of the source array
+ * \param diov destination I/O vector array
+ * \param diovcnt size of the destination array
+ * \param src returned pointer to the beginning of the segment in the source array buffers
+ * \param dst returned pointer to the beginning of the segment in the destination array buffers
+ *
+ * \return number of bytes in the common segments
  */
 size_t spdk_ioviter_first(struct spdk_ioviter *iter,
 			  struct iovec *siov, size_t siovcnt,
@@ -161,8 +172,44 @@ size_t spdk_ioviter_first(struct spdk_ioviter *iter,
 			  void **src, void **dst);
 
 /**
+ * Initialize and move to the first common segment of the two given
+ * iovecs. This function will take into account the block size
+ * of each iovec and will return common segments having the same
+ * number of blocks.
+ *
+ * All iovec sizes in every array must be a multiple of a given block size,
+ * except the last array element, which can be larger. The remaining bytes
+ * will be ignored.
+ *
+ * \param iter iovec iterator
+ * \param siov source I/O vector array
+ * \param siovcnt size of the source array
+ * \param diov destination I/O vector array
+ * \param diovcnt size of the destination array
+ * \param sblocksize block size of the source array
+ * \param dblocksize block size of the destination array
+ * \param src returned pointer to the beginning of the segment in the source array buffers
+ * \param dst returned pointer to the beginning of the segment in the destination array buffers
+ *
+ * \return number of blocks in the common segments
+ */
+size_t spdk_bioviter_first(struct spdk_ioviter *iter,
+			   struct iovec *siov, size_t siovcnt,
+			   struct iovec *diov, size_t diovcnt,
+			   uint32_t sblocksize, uint32_t dblocksize,
+			   void **src, void **dst);
+
+/**
  * Initialize and move to the first common segment of the N given
- * iovecs. See spdk_ioviter_nextv().
+ * iovecs.
+ *
+ * \param iter iovec iterator
+ * \param count number of I/O vector arrays (N)
+ * \param iov array of I/O vector arrays
+ * \param iovcnt array of sizes of the I/O vector arrays
+ * \param out returned array of pointers to the beginning of each segment in the I/O vector arrays
+ *
+ * \return number of bytes in the common segments
  */
 size_t spdk_ioviter_firstv(struct spdk_ioviter *iter,
 			   uint32_t count,
@@ -171,14 +218,50 @@ size_t spdk_ioviter_firstv(struct spdk_ioviter *iter,
 			   void **out);
 
 /**
+ * Initialize and move to the first common segment of the N given
+ * iovecs. This function will take into account the block size
+ * of each iovec and will return common segments having the same
+ * number of blocks.
+ *
+ * All iovec sizes in every array must be a multiple of a given block size,
+ * except the last array element, which can be larger. The remaining bytes
+ * will be ignored.
+ *
+ * \param iter iovec iterator
+ * \param count number of I/O vector arrays (N)
+ * \param iov array of I/O vector arrays
+ * \param iovcnt array of sizes of the I/O vector arrays
+ * \param blocksize array of block sizes of the I/O vector arrays (if NULL, block size of 1 is assumed)
+ * \param out returned array of pointers to the beginning of each segment in the I/O vector arrays
+ *
+ * \return number of blocks in the common segments
+ */
+size_t spdk_bioviter_firstv(struct spdk_ioviter *iter,
+			    uint32_t count,
+			    struct iovec **iov,
+			    size_t *iovcnt,
+			    uint32_t *blocksize,
+			    void **out);
+
+/**
  * Move to the next segment in the iterator.
  *
- * This will iterate through the segments of the source and destination
- * and return the individual segments, one by one. For example, if the
- * source consists of one element of length 4k and the destination
- * consists of 4 elements each of length 1k, this function will return
- * 4 1k src+dst pairs of buffers, and then return 0 bytes to indicate
+ * This will iterate through the segments of the iovecs in the iterator
+ * and return the individual segments, one by one. Selected segments
+ * will consist of the same number of blocks or bytes, depending on the initialization
+ * function used.
+ *
+ * For example, if the source consists of one element of length
+ * 4k and the destination consists of 4 elements each of length 1k, this function
+ * will return 4 1k src+dst pairs of buffers, and then return 0 bytes to indicate
  * the iteration is complete on the fifth call.
+ *
+ * \param iter iovec iterator
+ * \param src returned pointer to the next common segment in the source I/O vector array
+ * \param dst returned pointer to the next common segment in the destination I/O vector array
+ *
+ * \return number of blocks or bytes in the common segments, depending on the initialization
+ * function used
  */
 size_t spdk_ioviter_next(struct spdk_ioviter *iter, void **src, void **dst);
 
@@ -186,11 +269,20 @@ size_t spdk_ioviter_next(struct spdk_ioviter *iter, void **src, void **dst);
  * Move to the next segment in the iterator.
  *
  * This will iterate through the segments of the iovecs in the iterator
- * and return the individual segments, one by one. For example, if the
- * set consists one iovec of one element of length 4k and another iovec
- * of 4 elements each of length 1k, this function will return
+ * and return the individual segments, one by one. Selected segments
+ * will consist of the same number of blocks or bytes, depending on the initialization
+ * function used.
+ *
+ * For example, if the set consists one iovec of one element of length
+ * 4k and another iovec of 4 elements each of length 1k, this function will return
  * 4 1k pairs of buffers, and then return 0 bytes to indicate
  * the iteration is complete on the fifth call.
+ *
+ * \param iter iovec iterator
+ * \param out returned array of pointers to the beginning of each segment in the I/O vector arrays
+ *
+ * \return number of blocks or bytes in the common segments, depending on the initialization
+ * function used
  */
 size_t spdk_ioviter_nextv(struct spdk_ioviter *iter, void **out);
 
