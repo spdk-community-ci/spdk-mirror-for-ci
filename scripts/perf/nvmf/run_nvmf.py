@@ -1235,6 +1235,15 @@ class SPDKTarget(Target):
                 bdev_bdfs.append(bdev_traddr)
         return bdev_bdfs
 
+    def get_bdev_configuration(self):
+        self.log.info("SPDK Target Bdevs configuration:")
+        bdevs = rpc.bdev.bdev_get_bdevs(self.client)
+        for bdev in bdevs:
+            del bdev["supported_io_types"]
+            del bdev["driver_specific"]
+            del bdev["zoned"]
+        rpc_client.print_dict(bdevs)
+
     def spdk_tgt_configure(self):
         self.log.info("Configuring SPDK NVMeOF target via RPC")
 
@@ -1279,8 +1288,7 @@ class SPDKTarget(Target):
             self.log.info("Setting bdev protection to :%s" % self.null_block_dif_type)
             rpc.bdev.bdev_null_create(self.client, 102400, block_size, "Nvme{}n1".format(i),
                                       dif_type=self.null_block_dif_type, md_size=md_size)
-        self.log.info("SPDK Bdevs configuration:")
-        rpc_client.print_dict(rpc.bdev.bdev_get_bdevs(self.client))
+        self.get_bdev_configuration()
 
     def spdk_tgt_add_nvme_conf(self, req_num_disks=None):
         self.log.info("Adding NVMe bdevs to config via RPC")
@@ -1298,8 +1306,7 @@ class SPDKTarget(Target):
         for i, bdf in enumerate(bdfs):
             rpc.bdev.bdev_nvme_attach_controller(self.client, name="Nvme%s" % i, trtype="PCIe", traddr=bdf)
 
-        self.log.info("SPDK Bdevs configuration:")
-        rpc_client.print_dict(rpc.bdev.bdev_get_bdevs(self.client))
+        self.get_bdev_configuration()
 
     def spdk_tgt_add_subsystem_conf(self, ips=None, req_num_disks=None):
         self.log.info("Adding subsystems to config")
