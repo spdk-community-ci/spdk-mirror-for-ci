@@ -2209,6 +2209,124 @@ spdk_idxd_process_events(struct spdk_idxd_io_channel *chan)
 	return rc;
 }
 
+static uint64_t
+idxd_bioviter_nextv(struct spdk_ioviter *iter, void **out)
+{
+	struct spdk_single_ioviter *it;
+	size_t len;
+	uint64_t num_blocks, num_blocks_iter;
+	uint32_t i;
+
+	/* Figure out the minimum num blocks of each iovec's next segment */
+	num_blocks = UINT64_MAX;
+	for (i = 0; i < iter->count; i++) {
+		it = &iter->iters[i];
+		num_blocks_iter = it->iov_len / it->block_size;
+		if (it->idx == it->iovcnt || num_blocks_iter == 0) {
+			/* This element has 0 blocks remaining, so we're done. */
+			return 0;
+		}
+
+		num_blocks = spdk_min(num_blocks, num_blocks_iter);
+	}
+
+	for (i = 0; i < iter->count; i++) {
+		it = &iter->iters[i];
+
+		out[i] = it->iov_base;
+
+		if ((it->iov_len / it->block_size) == num_blocks) {
+			/* Advance to next element */
+			it->idx++;
+			if (it->idx != it->iovcnt) {
+				/* Set up for next element */
+				it->iov_len = it->iov[it->idx].iov_len;
+				it->iov_base = it->iov[it->idx].iov_base;
+			}
+		} else {
+			/* Partial buffer */
+			len = num_blocks * it->block_size;
+			it->iov_base += len;
+			it->iov_len -= len;
+		}
+	}
+
+	return num_blocks;
+}
+
+static uint64_t
+idxd_bioviter_firstv(struct spdk_ioviter *iter,
+		     uint32_t count,
+		     struct iovec **iov,
+		     size_t *iovcnt,
+		     uint32_t *blocksize,
+		     void **out)
+{
+	struct spdk_single_ioviter *it;
+	uint32_t i;
+
+	iter->count = count;
+
+	for (i = 0; i < count; i++) {
+		it = &iter->iters[i];
+		it->iov = iov[i];
+		it->iovcnt = iovcnt[i];
+		it->idx = 0;
+		it->iov_len = iov[i][0].iov_len;
+		it->block_size = blocksize[i];
+		it->iov_base = iov[i][0].iov_base;
+	}
+
+	return idxd_bioviter_nextv(iter, out);
+}
+
+uint64_t
+spdk_idxd_bioviter_first(struct spdk_ioviter *iter,
+			 struct iovec *siov, size_t siovcnt,
+			 struct iovec *diov, size_t diovcnt,
+			 uint32_t sblocksize, uint32_t dblocksize,
+			 void **src, void **dst)
+{
+	struct iovec *iovs[2];
+	size_t iovcnts[2];
+	uint32_t blocksize[2];
+	void *out[2];
+	size_t num_blocks;
+
+	iovs[0] = siov;
+	iovcnts[0] = siovcnt;
+	blocksize[0] = sblocksize;
+
+	iovs[1] = diov;
+	iovcnts[1] = diovcnt;
+	blocksize[1] = dblocksize;
+
+	num_blocks = idxd_bioviter_firstv(iter, 2, iovs, iovcnts, blocksize, out);
+
+	if (num_blocks > 0) {
+		*src = out[0];
+		*dst = out[1];
+	}
+
+	return num_blocks;
+}
+
+uint64_t
+spdk_idxd_bioviter_next(struct spdk_ioviter *iter, void **src, void **dst)
+{
+	void *out[2];
+	uint64_t num_blocks;
+
+	num_blocks = idxd_bioviter_nextv(iter, out);
+
+	if (num_blocks > 0) {
+		*src = out[0];
+		*dst = out[1];
+	}
+
+	return num_blocks;
+}
+
 void
 idxd_impl_register(struct spdk_idxd_impl *impl)
 {

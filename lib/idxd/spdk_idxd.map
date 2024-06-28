@@ -25,6 +25,8 @@
 	spdk_idxd_process_events;
 	spdk_idxd_get_channel;
 	spdk_idxd_put_channel;
+	spdk_idxd_bioviter_first;
+	spdk_idxd_bioviter_next;
 
 	local: *;
 };
