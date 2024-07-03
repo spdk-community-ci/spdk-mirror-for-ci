@@ -1697,32 +1697,6 @@ error:
 	return rc;
 }
 
-static inline int
-idxd_validate_dif_strip_buf_align(const struct spdk_dif_ctx *ctx,
-				  const uint64_t src_len, const uint64_t dst_len)
-{
-	uint32_t data_block_size = ctx->block_size - ctx->md_size;
-
-	/* DSA can only process contiguous memory buffers, multiple of the block size. */
-	if (src_len % ctx->block_size != 0) {
-		SPDK_ERRLOG("The src buffer length (%ld) is not a multiple of block size (%d).\n",
-			    src_len, ctx->block_size);
-		return -EINVAL;
-	}
-	if (dst_len % data_block_size != 0) {
-		SPDK_ERRLOG("The dst buffer length (%ld) is not a multiple of block size without metadata (%d).\n",
-			    dst_len, data_block_size);
-		return -EINVAL;
-	}
-	/* The memory source and destination must hold the same number of blocks. */
-	if (src_len / ctx->block_size != dst_len / data_block_size) {
-		SPDK_ERRLOG("The memory source (%ld) and destination (%ld) must hold the same number of blocks.\n",
-			    src_len / data_block_size, dst_len / ctx->block_size);
-		return -EINVAL;
-	}
-	return 0;
-}
-
 int
 spdk_idxd_submit_dif_strip(struct spdk_idxd_io_channel *chan,
 			   struct iovec *diov, size_t diovcnt,
@@ -1732,13 +1706,13 @@ spdk_idxd_submit_dif_strip(struct spdk_idxd_io_channel *chan,
 {
 	struct idxd_hw_desc *desc;
 	struct idxd_ops *first_op = NULL, *op = NULL;
-	uint64_t src_seg_addr, src_seg_len;
-	uint64_t dst_seg_addr, dst_seg_len;
+	uint64_t src_seg_addr, src_seg_len, dst_seg_addr, num_blocks_seg;
+	void *src, *dst;
 	uint32_t num_blocks_done = 0;
 	uint8_t dif_flags = 0, src_dif_flags = 0;
 	uint16_t app_tag_mask = 0;
 	int rc, count = 0;
-	size_t i;
+	struct spdk_ioviter iter;
 
 	rc = idxd_validate_dif_common_params(ctx);
 	if (rc) {
@@ -1765,26 +1739,13 @@ spdk_idxd_submit_dif_strip(struct spdk_idxd_io_channel *chan,
 		return rc;
 	}
 
-	if (diovcnt != siovcnt) {
-		SPDK_ERRLOG("Mismatched iovcnts: src=%ld, dst=%ld\n",
-			    siovcnt, diovcnt);
-		return -EINVAL;
-	}
-
-	for (i = 0; i < siovcnt; i++) {
-		src_seg_addr = (uint64_t)siov[i].iov_base;
-		src_seg_len = siov[i].iov_len;
-		dst_seg_addr = (uint64_t)diov[i].iov_base;
-		dst_seg_len = diov[i].iov_len;
-
-		/* DSA processes the iovec buffers independently, so the buffers cannot
-		 * be split (must be multiple of the block size). The source memory
-		 * size needs to be same as the destination memory size + metadata size */
-
-		rc = idxd_validate_dif_strip_buf_align(ctx, src_seg_len, dst_seg_len);
-		if (rc) {
-			goto error;
-		}
+	for (num_blocks_seg = spdk_idxd_bioviter_first(&iter, siov, siovcnt, diov, diovcnt,
+			      ctx->block_size, ctx->block_size - ctx->md_size, &src, &dst);
+	     num_blocks_seg > 0;
+	     num_blocks_seg = spdk_idxd_bioviter_next(&iter, &src, &dst)) {
+		src_seg_addr = (uint64_t)src;
+		src_seg_len = num_blocks_seg * ctx->block_size;
+		dst_seg_addr = (uint64_t)dst;
 
 		if (first_op == NULL) {
 			rc = _idxd_prep_batch_cmd(chan, cb_fn, cb_arg, flags, &desc, &op);
@@ -1815,7 +1776,7 @@ spdk_idxd_submit_dif_strip(struct spdk_idxd_io_channel *chan,
 		desc->dif_strip.app_tag_mask = app_tag_mask;
 		desc->dif_strip.ref_tag_seed = (uint32_t)ctx->init_ref_tag + num_blocks_done;
 
-		num_blocks_done += src_seg_len / ctx->block_size;
+		num_blocks_done += num_blocks_seg;
 	}
 
 	return _idxd_flush_batch(chan);
