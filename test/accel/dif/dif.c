@@ -1527,14 +1527,15 @@ accel_dix_verify_op_reftag_init_incorrect_reftag_check(void)
 }
 
 static void
-accel_dif_verify_copy_op_dif_generated_do_check(uint32_t dif_flags)
+accel_dif_verify_copy_op_dif_generated_do_check(uint32_t dif_flags, uint32_t chained_count_source,
+		uint32_t chained_count_destination)
 {
 	struct spdk_dif_ctx_init_ext_opts dif_opts;
 	struct accel_dif_request req;
 	struct dif_task *task = &g_dif_task;
 	int rc;
 
-	rc = alloc_dif_verify_copy_bufs(task, 1, 1);
+	rc = alloc_dif_verify_copy_bufs(task, chained_count_source, chained_count_destination);
 	SPDK_CU_ASSERT_FATAL(rc == 0);
 
 	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
@@ -1581,19 +1582,40 @@ accel_dif_verify_copy_op_dif_generated_do_check(uint32_t dif_flags)
 static void
 accel_dif_verify_copy_op_dif_generated_guard_check(void)
 {
-	accel_dif_verify_copy_op_dif_generated_do_check(SPDK_DIF_FLAGS_GUARD_CHECK);
+	accel_dif_verify_copy_op_dif_generated_do_check(SPDK_DIF_FLAGS_GUARD_CHECK, 1, 1);
 }
 
 static void
 accel_dif_verify_copy_op_dif_generated_apptag_check(void)
 {
-	accel_dif_verify_copy_op_dif_generated_do_check(SPDK_DIF_FLAGS_APPTAG_CHECK);
+	accel_dif_verify_copy_op_dif_generated_do_check(SPDK_DIF_FLAGS_APPTAG_CHECK, 1, 1);
 }
 
 static void
 accel_dif_verify_copy_op_dif_generated_reftag_check(void)
 {
-	accel_dif_verify_copy_op_dif_generated_do_check(SPDK_DIF_FLAGS_REFTAG_CHECK);
+	accel_dif_verify_copy_op_dif_generated_do_check(SPDK_DIF_FLAGS_REFTAG_CHECK, 1, 1);
+}
+
+static void
+accel_dif_verify_copy_op_dif_generated_different_iovecs_2_4(void)
+{
+	accel_dif_verify_copy_op_dif_generated_do_check(SPDK_DIF_FLAGS_GUARD_CHECK
+			| SPDK_DIF_FLAGS_APPTAG_CHECK | SPDK_DIF_FLAGS_REFTAG_CHECK, 2, 4);
+}
+
+static void
+accel_dif_verify_copy_op_dif_generated_different_iovecs_1_8(void)
+{
+	accel_dif_verify_copy_op_dif_generated_do_check(SPDK_DIF_FLAGS_GUARD_CHECK
+			| SPDK_DIF_FLAGS_APPTAG_CHECK | SPDK_DIF_FLAGS_REFTAG_CHECK, 1, 8);
+}
+
+static void
+accel_dif_verify_copy_op_dif_generated_different_iovecs_8_1(void)
+{
+	accel_dif_verify_copy_op_dif_generated_do_check(SPDK_DIF_FLAGS_GUARD_CHECK
+			| SPDK_DIF_FLAGS_APPTAG_CHECK | SPDK_DIF_FLAGS_REFTAG_CHECK, 8, 1);
 }
 
 static void
@@ -2262,6 +2284,13 @@ setup_accel_tests(void)
 			accel_dif_verify_copy_op_dif_generated_apptag_check) == NULL ||
 	    CU_add_test(suite, "verify copy: DIF generated, REFTAG check",
 			accel_dif_verify_copy_op_dif_generated_reftag_check) == NULL ||
+
+	    CU_add_test(suite, "verify copy: DIF generated, different iovecs 2 4",
+			accel_dif_verify_copy_op_dif_generated_different_iovecs_2_4) == NULL ||
+	    CU_add_test(suite, "verify copy: DIF generated, different iovecs 1 8",
+			accel_dif_verify_copy_op_dif_generated_different_iovecs_1_8) == NULL ||
+	    CU_add_test(suite, "verify copy: DIF generated, different iovecs 8 1",
+			accel_dif_verify_copy_op_dif_generated_different_iovecs_8_1) == NULL ||
 
 	    CU_add_test(suite, "verify copy: DIF not generated, GUARD check",
 			accel_dif_verify_copy_op_dif_not_generated_guard_check) == NULL ||
