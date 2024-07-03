@@ -1655,7 +1655,8 @@ accel_dif_verify_copy_op_dif_not_generated_reftag_check(void)
 }
 
 static void
-accel_dif_generate_copy_op_dif_generated_do_check(uint32_t dif_flags)
+accel_dif_generate_copy_op_dif_generated_do_check(uint32_t dif_flags, uint32_t chained_count_source,
+		uint32_t chained_count_destination)
 {
 	struct spdk_dif_ctx_init_ext_opts dif_opts;
 	struct accel_dif_request req;
@@ -1663,7 +1664,7 @@ accel_dif_generate_copy_op_dif_generated_do_check(uint32_t dif_flags)
 	struct spdk_dif_error err_blk;
 	int rc;
 
-	rc = alloc_dif_generate_copy_bufs(task, 1, 1);
+	rc = alloc_dif_generate_copy_bufs(task, chained_count_source, chained_count_destination);
 	SPDK_CU_ASSERT_FATAL(rc == 0);
 
 	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
@@ -1764,7 +1765,7 @@ accel_dix_generate_op_dix_generated_do_check(uint32_t dif_flags)
 static void
 accel_dif_generate_copy_op_dif_generated_guard_check(void)
 {
-	accel_dif_generate_copy_op_dif_generated_do_check(SPDK_DIF_FLAGS_GUARD_CHECK);
+	accel_dif_generate_copy_op_dif_generated_do_check(SPDK_DIF_FLAGS_GUARD_CHECK, 1, 1);
 }
 
 static void
@@ -1776,7 +1777,7 @@ accel_dix_generate_op_dix_generated_guard_check(void)
 static void
 accel_dif_generate_copy_op_dif_generated_apptag_check(void)
 {
-	accel_dif_generate_copy_op_dif_generated_do_check(SPDK_DIF_FLAGS_APPTAG_CHECK);
+	accel_dif_generate_copy_op_dif_generated_do_check(SPDK_DIF_FLAGS_APPTAG_CHECK, 1, 1);
 }
 
 static void
@@ -1788,7 +1789,28 @@ accel_dix_generate_op_dix_generated_apptag_check(void)
 static void
 accel_dif_generate_copy_op_dif_generated_reftag_check(void)
 {
-	accel_dif_generate_copy_op_dif_generated_do_check(SPDK_DIF_FLAGS_REFTAG_CHECK);
+	accel_dif_generate_copy_op_dif_generated_do_check(SPDK_DIF_FLAGS_REFTAG_CHECK, 1, 1);
+}
+
+static void
+accel_dif_generate_copy_op_dif_generated_different_iovecs_2_4(void)
+{
+	accel_dif_generate_copy_op_dif_generated_do_check(SPDK_DIF_FLAGS_GUARD_CHECK
+			| SPDK_DIF_FLAGS_APPTAG_CHECK | SPDK_DIF_FLAGS_REFTAG_CHECK, 2, 4);
+}
+
+static void
+accel_dif_generate_copy_op_dif_generated_different_iovecs_1_8(void)
+{
+	accel_dif_generate_copy_op_dif_generated_do_check(SPDK_DIF_FLAGS_GUARD_CHECK
+			| SPDK_DIF_FLAGS_APPTAG_CHECK | SPDK_DIF_FLAGS_REFTAG_CHECK, 1, 8);
+}
+
+static void
+accel_dif_generate_copy_op_dif_generated_different_iovecs_8_1(void)
+{
+	accel_dif_generate_copy_op_dif_generated_do_check(SPDK_DIF_FLAGS_GUARD_CHECK
+			| SPDK_DIF_FLAGS_APPTAG_CHECK | SPDK_DIF_FLAGS_REFTAG_CHECK, 8, 1);
 }
 
 static void
@@ -1954,49 +1976,6 @@ accel_dif_generate_copy_op_dif_generated_no_reftag_check_flag_set(void)
 }
 
 static void
-accel_dif_generate_copy_op_iovecs_len_validate(void)
-{
-	struct spdk_dif_ctx_init_ext_opts dif_opts;
-	struct accel_dif_request req;
-	struct dif_task *task = &g_dif_task;
-	int rc;
-
-	rc = alloc_dif_generate_copy_bufs(task, 1, 1);
-	SPDK_CU_ASSERT_FATAL(rc == 0);
-
-	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
-	dif_opts.dif_pi_format = SPDK_DIF_PI_FORMAT_16;
-
-	rc = spdk_dif_ctx_init(&task->dif_ctx,
-			       g_block_size_bytes + g_md_size_bytes,
-			       g_md_size_bytes, true, true,
-			       SPDK_DIF_TYPE1,
-			       SPDK_DIF_FLAGS_GUARD_CHECK |
-			       SPDK_DIF_FLAGS_APPTAG_CHECK |
-			       SPDK_DIF_FLAGS_REFTAG_CHECK,
-			       16, 0xFFFF, 10, 0, 0, &dif_opts);
-	SPDK_CU_ASSERT_FATAL(rc == 0);
-
-	req.channel = g_channel;
-	req.dst_iovs = task->dst_iovs;
-	/* Make iov_len param incorrect */
-	req.dst_iovs->iov_len -= 16;
-	req.dst_iovcnt = task->dst_iovcnt;
-	req.src_iovs = task->src_iovs;
-	req.src_iovcnt = task->src_iovcnt;
-	req.num_blocks = task->num_blocks;
-	req.ctx = &task->dif_ctx;
-	req.err = &task->dif_err;
-	req.cb_fn = accel_dif_oper_done;
-	req.cb_arg = task;
-
-	execute_spdk_function(accel_dif_generate_copy_test, &req);
-	CU_ASSERT_EQUAL(g_completion_success, false);
-
-	free_dif_generate_copy_bufs(task);
-}
-
-static void
 accel_dif_generate_copy_op_buf_align_validate(void)
 {
 	struct spdk_dif_ctx_init_ext_opts dif_opts;
@@ -2119,7 +2098,7 @@ accel_dif_verify_copy_sequence_dif_generated_do_check(uint32_t dif_flags)
 	struct dif_task *task = &g_dif_task;
 	int rc;
 
-	rc = alloc_dif_verify_copy_bufs(task, 1);
+	rc = alloc_dif_verify_copy_bufs(task, 1, 1);
 	SPDK_CU_ASSERT_FATAL(rc == 0);
 
 	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
@@ -2305,6 +2284,13 @@ setup_accel_tests(void)
 	    CU_add_test(suite, "generate: DIX generated, REFTAG check",
 			accel_dix_generate_op_dix_generated_reftag_check) == NULL ||
 
+	    CU_add_test(suite, "generate copy: DIF generated, different iovecs 2 4",
+			accel_dif_generate_copy_op_dif_generated_different_iovecs_2_4) == NULL ||
+	    CU_add_test(suite, "generate copy: DIF generated, different iovecs 1 8",
+			accel_dif_generate_copy_op_dif_generated_different_iovecs_1_8) == NULL ||
+	    CU_add_test(suite, "generate copy: DIF generated, different iovecs 8 1",
+			accel_dif_generate_copy_op_dif_generated_different_iovecs_8_1) == NULL ||
+
 	    CU_add_test(suite, "generate copy: DIF generated, no GUARD check flag set",
 			accel_dif_generate_copy_op_dif_generated_no_guard_check_flag_set) == NULL ||
 	    CU_add_test(suite, "generate copy: DIF generated, no APPTAG check flag set",
@@ -2312,8 +2298,6 @@ setup_accel_tests(void)
 	    CU_add_test(suite, "generate copy: DIF generated, no REFTAG check flag set",
 			accel_dif_generate_copy_op_dif_generated_no_reftag_check_flag_set) == NULL ||
 
-	    CU_add_test(suite, "generate copy: DIF iovecs-len validate",
-			accel_dif_generate_copy_op_iovecs_len_validate) == NULL ||
 	    CU_add_test(suite, "generate copy: DIF buffer alignment validate",
 			accel_dif_generate_copy_op_buf_align_validate) == NULL ||
 
@@ -2329,6 +2313,7 @@ setup_accel_tests(void)
 			accel_dif_verify_copy_sequence_dif_generated_apptag_check) == NULL ||
 	    CU_add_test(suite, "verify copy sequence: DIF generated, REFTAG check",
 			accel_dif_verify_copy_sequence_dif_generated_reftag_check) == NULL) {
+
 		CU_cleanup_registry();
 		rc = CU_get_error();
 		return -rc;
