@@ -1732,6 +1732,7 @@ spdk_idxd_submit_dif_strip(struct spdk_idxd_io_channel *chan,
 	struct idxd_ops *first_op = NULL, *op = NULL;
 	uint64_t src_seg_addr, src_seg_len;
 	uint64_t dst_seg_addr, dst_seg_len;
+	uint32_t num_blocks_done = 0;
 	uint8_t dif_flags = 0, src_dif_flags = 0;
 	uint16_t app_tag_mask = 0;
 	int rc, count = 0;
@@ -1810,7 +1811,9 @@ spdk_idxd_submit_dif_strip(struct spdk_idxd_io_channel *chan,
 		desc->dif_strip.src_flags = src_dif_flags;
 		desc->dif_strip.app_tag_seed = ctx->app_tag;
 		desc->dif_strip.app_tag_mask = app_tag_mask;
-		desc->dif_strip.ref_tag_seed = (uint32_t)ctx->init_ref_tag;
+		desc->dif_strip.ref_tag_seed = (uint32_t)ctx->init_ref_tag + num_blocks_done;
+
+		num_blocks_done += src_seg_len / ctx->block_size;
 	}
 
 	return _idxd_flush_batch(chan);
