@@ -156,14 +156,17 @@ free_dif_verify_bufs(struct dif_task *task)
 }
 
 static int
-alloc_dif_verify_copy_bufs(struct dif_task *task, uint32_t chained_count)
+alloc_dif_verify_copy_bufs(struct dif_task *task, uint32_t chained_count_source,
+			   uint32_t chained_count_destination)
 {
-	int dst_buff_len = g_xfer_size_bytes;
-	uint32_t data_size_with_md;
-	uint32_t i = 0;
+	int dst_buff_len;
+	uint32_t data_size_with_md_segment;
+	uint32_t i = 0, num_blocks_segment;
 
-	assert(chained_count > 0);
-	task->src_iovcnt = chained_count;
+	SPDK_CU_ASSERT_FATAL(chained_count_source > 0);
+	SPDK_CU_ASSERT_FATAL(chained_count_destination > 0);
+
+	task->src_iovcnt = chained_count_source;
 	task->src_iovs = calloc(task->src_iovcnt, sizeof(struct iovec));
 	if (spdk_unlikely(task->src_iovs == NULL)) {
 		return -ENOMEM;
@@ -171,20 +174,29 @@ alloc_dif_verify_copy_bufs(struct dif_task *task, uint32_t chained_count)
 
 	task->num_blocks = g_xfer_size_bytes / g_block_size_bytes;
 
+	/* Only allow even number of blocks per segment */
+	SPDK_CU_ASSERT_FATAL(task->num_blocks % chained_count_source == 0);
+	SPDK_CU_ASSERT_FATAL(task->num_blocks % chained_count_destination == 0);
+
+	num_blocks_segment = task->num_blocks / chained_count_source;
+
 	/* Add bytes for each block for metadata */
-	data_size_with_md = g_xfer_size_bytes + (task->num_blocks * g_md_size_bytes);
+	data_size_with_md_segment = num_blocks_segment * (g_block_size_bytes + g_md_size_bytes);
 
 	for (i = 0; i < task->src_iovcnt; i++) {
-		task->src_iovs[i].iov_base = spdk_dma_zmalloc(data_size_with_md, 0, NULL);
+		task->src_iovs[i].iov_base = spdk_dma_zmalloc(data_size_with_md_segment, 0, NULL);
 		if (spdk_unlikely(task->src_iovs[i].iov_base == NULL)) {
 			return -ENOMEM;
 		}
 
-		memset(task->src_iovs[i].iov_base, DATA_PATTERN, data_size_with_md);
-		task->src_iovs[i].iov_len = data_size_with_md;
+		memset(task->src_iovs[i].iov_base, DATA_PATTERN, data_size_with_md_segment);
+		task->src_iovs[i].iov_len = data_size_with_md_segment;
 	}
 
-	task->dst_iovcnt = chained_count;
+	num_blocks_segment = task->num_blocks / chained_count_destination;
+	dst_buff_len = num_blocks_segment * g_block_size_bytes;
+
+	task->dst_iovcnt = chained_count_destination;
 	task->dst_iovs = calloc(task->dst_iovcnt, sizeof(struct iovec));
 	if (spdk_unlikely(task->dst_iovs == NULL)) {
 		return -ENOMEM;
@@ -228,14 +240,17 @@ free_dif_verify_copy_bufs(struct dif_task *task)
 }
 
 static int
-alloc_dif_generate_copy_bufs(struct dif_task *task, uint32_t chained_count)
+alloc_dif_generate_copy_bufs(struct dif_task *task, uint32_t chained_count_source,
+			     uint32_t chained_count_destination)
 {
-	int src_buff_len = g_xfer_size_bytes;
-	uint32_t transfer_size_with_md;
-	uint32_t i = 0;
+	int src_buff_len;
+	uint32_t data_size_with_md_segment;
+	uint32_t i = 0, num_blocks_segment;
 
-	assert(chained_count > 0);
-	task->dst_iovcnt = chained_count;
+	SPDK_CU_ASSERT_FATAL(chained_count_source > 0);
+	SPDK_CU_ASSERT_FATAL(chained_count_destination > 0);
+
+	task->dst_iovcnt = chained_count_destination;
 	task->dst_iovs = calloc(task->dst_iovcnt, sizeof(struct iovec));
 	if (spdk_unlikely(task->dst_iovs == NULL)) {
 		return -ENOMEM;
@@ -243,20 +258,29 @@ alloc_dif_generate_copy_bufs(struct dif_task *task, uint32_t chained_count)
 
 	task->num_blocks = g_xfer_size_bytes / g_block_size_bytes;
 
+	/* Only allow even number of blocks per segment */
+	SPDK_CU_ASSERT_FATAL(task->num_blocks % chained_count_source == 0);
+	SPDK_CU_ASSERT_FATAL(task->num_blocks % chained_count_destination == 0);
+
+	num_blocks_segment = task->num_blocks / chained_count_destination;
+
 	/* Add bytes for each block for metadata */
-	transfer_size_with_md = g_xfer_size_bytes + (task->num_blocks * g_md_size_bytes);
+	data_size_with_md_segment = num_blocks_segment * (g_block_size_bytes + g_md_size_bytes);
 
 	for (i = 0; i < task->dst_iovcnt; i++) {
-		task->dst_iovs[i].iov_base = spdk_dma_zmalloc(transfer_size_with_md, 0, NULL);
+		task->dst_iovs[i].iov_base = spdk_dma_zmalloc(data_size_with_md_segment, 0, NULL);
 		if (spdk_unlikely(task->dst_iovs[i].iov_base == NULL)) {
 			return -ENOMEM;
 		}
 
-		memset(task->dst_iovs[i].iov_base, 0, transfer_size_with_md);
-		task->dst_iovs[i].iov_len = transfer_size_with_md;
+		memset(task->dst_iovs[i].iov_base, 0, data_size_with_md_segment);
+		task->dst_iovs[i].iov_len = data_size_with_md_segment;
 	}
 
-	task->src_iovcnt = chained_count;
+	num_blocks_segment = task->num_blocks / chained_count_source;
+	src_buff_len = num_blocks_segment * g_block_size_bytes;
+
+	task->src_iovcnt = chained_count_source;
 	task->src_iovs = calloc(task->src_iovcnt, sizeof(struct iovec));
 	if (spdk_unlikely(task->src_iovs == NULL)) {
 		return -ENOMEM;
@@ -719,7 +743,7 @@ accel_dif_verify_copy_op_dif_generated_do_check(uint32_t dif_flags)
 	struct dif_task *task = &g_dif_task;
 	int rc;
 
-	rc = alloc_dif_verify_copy_bufs(task, 1);
+	rc = alloc_dif_verify_copy_bufs(task, 1, 1);
 	SPDK_CU_ASSERT_FATAL(rc == 0);
 
 	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
@@ -789,7 +813,7 @@ accel_dif_verify_copy_op_dif_not_generated_do_check(uint32_t dif_flags)
 	struct dif_task *task = &g_dif_task;
 	int rc;
 
-	rc = alloc_dif_verify_copy_bufs(task, 1);
+	rc = alloc_dif_verify_copy_bufs(task, 1, 1);
 	SPDK_CU_ASSERT_FATAL(rc == 0);
 
 	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
@@ -848,7 +872,7 @@ accel_dif_generate_copy_op_dif_generated_do_check(uint32_t dif_flags)
 	struct spdk_dif_error err_blk;
 	int rc;
 
-	rc = alloc_dif_generate_copy_bufs(task, 1);
+	rc = alloc_dif_generate_copy_bufs(task, 1, 1);
 	SPDK_CU_ASSERT_FATAL(rc == 0);
 
 	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
@@ -923,7 +947,7 @@ accel_dif_generate_copy_op_dif_generated_no_guard_check_flag_set(void)
 	rc = spdk_accel_get_opc_module_name(SPDK_ACCEL_OPC_DIF_GENERATE_COPY, &module_name);
 	SPDK_CU_ASSERT_FATAL(rc == 0);
 
-	rc = alloc_dif_generate_copy_bufs(task, 1);
+	rc = alloc_dif_generate_copy_bufs(task, 1, 1);
 	SPDK_CU_ASSERT_FATAL(rc == 0);
 
 	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
@@ -975,7 +999,7 @@ accel_dif_generate_copy_op_dif_generated_no_apptag_check_flag_set(void)
 	rc = spdk_accel_get_opc_module_name(SPDK_ACCEL_OPC_DIF_GENERATE_COPY, &module_name);
 	SPDK_CU_ASSERT_FATAL(rc == 0);
 
-	rc = alloc_dif_generate_copy_bufs(task, 1);
+	rc = alloc_dif_generate_copy_bufs(task, 1, 1);
 	SPDK_CU_ASSERT_FATAL(rc == 0);
 
 	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
@@ -1027,7 +1051,7 @@ accel_dif_generate_copy_op_dif_generated_no_reftag_check_flag_set(void)
 	rc = spdk_accel_get_opc_module_name(SPDK_ACCEL_OPC_DIF_GENERATE_COPY, &module_name);
 	SPDK_CU_ASSERT_FATAL(rc == 0);
 
-	rc = alloc_dif_generate_copy_bufs(task, 1);
+	rc = alloc_dif_generate_copy_bufs(task, 1, 1);
 	SPDK_CU_ASSERT_FATAL(rc == 0);
 
 	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
@@ -1075,7 +1099,7 @@ accel_dif_generate_copy_op_iovecs_len_validate(void)
 	struct dif_task *task = &g_dif_task;
 	int rc;
 
-	rc = alloc_dif_generate_copy_bufs(task, 1);
+	rc = alloc_dif_generate_copy_bufs(task, 1, 1);
 	SPDK_CU_ASSERT_FATAL(rc == 0);
 
 	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
@@ -1118,7 +1142,7 @@ accel_dif_generate_copy_op_buf_align_validate(void)
 	struct dif_task *task = &g_dif_task;
 	int rc;
 
-	rc = alloc_dif_generate_copy_bufs(task, 1);
+	rc = alloc_dif_generate_copy_bufs(task, 1, 1);
 	SPDK_CU_ASSERT_FATAL(rc == 0);
 
 	dif_opts.size = SPDK_SIZEOF(&dif_opts, dif_pi_format);
