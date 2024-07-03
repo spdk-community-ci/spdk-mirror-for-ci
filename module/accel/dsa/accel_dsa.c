@@ -163,25 +163,21 @@ check_dsa_dif_strip_overlap_bufs(struct spdk_accel_task *task)
 {
 	uint64_t src_seg_addr_end_ext;
 	uint64_t dst_seg_addr_end_ext;
-	size_t i;
+	uint64_t num_blocks_seg;
+	void *src, *dst;
+	struct spdk_ioviter iter;
+	uint32_t data_block_size = task->dif.ctx->block_size - task->dif.ctx->md_size;
+	uint32_t block_size = task->dif.ctx->block_size;
 
-	/* The number of source and destination iovecs must be the same.
-	 * If so, one of them can be used to iterate over both vectors
-	 * later in the loop. */
-	if (task->d.iovcnt != task->s.iovcnt) {
-		SPDK_ERRLOG("Mismatched iovcnts: src=%d, dst=%d\n",
-			    task->s.iovcnt, task->d.iovcnt);
-		return -EINVAL;
-	}
+	for (num_blocks_seg = spdk_bioviter_first(&iter, task->s.iovs, task->s.iovcnt,
+			      task->d.iovs, task->d.iovcnt, block_size, data_block_size, &src, &dst);
+	     num_blocks_seg > 0;
+	     num_blocks_seg = spdk_ioviter_next(&iter, &src, &dst)) {
 
-	for (i = 0; i < task->s.iovcnt; i++) {
-		src_seg_addr_end_ext = (uint64_t)task->s.iovs[i].iov_base +
-				       task->s.iovs[i].iov_len;
+		src_seg_addr_end_ext = (uint64_t)src + (num_blocks_seg * block_size);
+		dst_seg_addr_end_ext = (uint64_t)dst + (num_blocks_seg * block_size);
 
-		dst_seg_addr_end_ext = (uint64_t)task->d.iovs[i].iov_base +
-				       task->s.iovs[i].iov_len;
-
-		if ((dst_seg_addr_end_ext >= (uint64_t)task->s.iovs[i].iov_base) &&
+		if ((dst_seg_addr_end_ext >= (uint64_t)src) &&
 		    (dst_seg_addr_end_ext <= src_seg_addr_end_ext)) {
 			return -EFAULT;
 		}
