@@ -285,10 +285,8 @@ if [ $SPDK_RUN_FUNCTIONAL_TEST -eq 1 ]; then
 			run_test "spdkcli_nvmf_rdma" $rootdir/test/spdkcli/nvmf.sh --transport=$SPDK_TEST_NVMF_TRANSPORT
 		elif [ "$SPDK_TEST_NVMF_TRANSPORT" = "tcp" ]; then
 			run_test "nvmf_tcp" $rootdir/test/nvmf/nvmf.sh --transport=$SPDK_TEST_NVMF_TRANSPORT
-			if [[ $SPDK_TEST_URING -eq 0 ]]; then
-				run_test "spdkcli_nvmf_tcp" $rootdir/test/spdkcli/nvmf.sh --transport=$SPDK_TEST_NVMF_TRANSPORT
-				run_test "nvmf_identify_passthru" $rootdir/test/nvmf/target/identify_passthru.sh --transport=$SPDK_TEST_NVMF_TRANSPORT
-			fi
+			run_test "spdkcli_nvmf_tcp" $rootdir/test/spdkcli/nvmf.sh --transport=$SPDK_TEST_NVMF_TRANSPORT
+			run_test "nvmf_identify_passthru" $rootdir/test/nvmf/target/identify_passthru.sh --transport=$SPDK_TEST_NVMF_TRANSPORT
 			run_test "nvmf_dif" $rootdir/test/nvmf/target/dif.sh
 			run_test "nvmf_abort_qd_sizes" $rootdir/test/nvmf/target/abort_qd_sizes.sh
 			# The keyring tests utilize NVMe/TLS

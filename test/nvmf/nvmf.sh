@@ -19,29 +19,27 @@ TEST_ARGS=("$@")
 
 timing_enter target
 
-if [[ $SPDK_TEST_URING -eq 0 ]]; then
-	run_test "nvmf_example" $rootdir/test/nvmf/target/nvmf_example.sh "${TEST_ARGS[@]}"
-	run_test "nvmf_filesystem" $rootdir/test/nvmf/target/filesystem.sh "${TEST_ARGS[@]}"
-	run_test "nvmf_target_discovery" $rootdir/test/nvmf/target/discovery.sh "${TEST_ARGS[@]}"
-	run_test "nvmf_referrals" $rootdir/test/nvmf/target/referrals.sh "${TEST_ARGS[@]}"
-	run_test "nvmf_connect_disconnect" $rootdir/test/nvmf/target/connect_disconnect.sh "${TEST_ARGS[@]}"
-	run_test "nvmf_multitarget" $rootdir/test/nvmf/target/multitarget.sh "${TEST_ARGS[@]}"
-	run_test "nvmf_rpc" $rootdir/test/nvmf/target/rpc.sh "${TEST_ARGS[@]}"
-	run_test "nvmf_invalid" $rootdir/test/nvmf/target/invalid.sh "${TEST_ARGS[@]}"
-	run_test "nvmf_abort" $rootdir/test/nvmf/target/abort.sh "${TEST_ARGS[@]}"
-	run_test "nvmf_ns_hotplug_stress" $rootdir/test/nvmf/target/ns_hotplug_stress.sh "${TEST_ARGS[@]}"
-	run_test "nvmf_connect_stress" $rootdir/test/nvmf/target/connect_stress.sh "${TEST_ARGS[@]}"
-	run_test "nvmf_fused_ordering" $rootdir/test/nvmf/target/fused_ordering.sh "${TEST_ARGS[@]}"
-	run_test "nvmf_delete_subsystem" $rootdir/test/nvmf/target/delete_subsystem.sh "${TEST_ARGS[@]}"
-	run_test "nvmf_ns_masking" test/nvmf/target/ns_masking.sh "${TEST_ARGS[@]}"
-	if [[ $SPDK_TEST_NVME_CLI -eq 1 ]]; then
-		run_test "nvmf_nvme_cli" $rootdir/test/nvmf/target/nvme_cli.sh "${TEST_ARGS[@]}"
-	fi
-	if [[ $SPDK_TEST_VFIOUSER -eq 1 ]]; then
-		run_test "nvmf_vfio_user" $rootdir/test/nvmf/target/nvmf_vfio_user.sh "${TEST_ARGS[@]}"
-		run_test "nvmf_vfio_user_nvme_compliance" $rootdir/test/nvme/compliance/compliance.sh "${TEST_ARGS[@]}"
-		run_test "nvmf_vfio_user_fuzz" $rootdir/test/nvmf/target/vfio_user_fuzz.sh "${TEST_ARGS[@]}"
-	fi
+run_test "nvmf_example" $rootdir/test/nvmf/target/nvmf_example.sh "${TEST_ARGS[@]}"
+run_test "nvmf_filesystem" $rootdir/test/nvmf/target/filesystem.sh "${TEST_ARGS[@]}"
+run_test "nvmf_target_discovery" $rootdir/test/nvmf/target/discovery.sh "${TEST_ARGS[@]}"
+run_test "nvmf_referrals" $rootdir/test/nvmf/target/referrals.sh "${TEST_ARGS[@]}"
+run_test "nvmf_connect_disconnect" $rootdir/test/nvmf/target/connect_disconnect.sh "${TEST_ARGS[@]}"
+run_test "nvmf_multitarget" $rootdir/test/nvmf/target/multitarget.sh "${TEST_ARGS[@]}"
+run_test "nvmf_rpc" $rootdir/test/nvmf/target/rpc.sh "${TEST_ARGS[@]}"
+run_test "nvmf_invalid" $rootdir/test/nvmf/target/invalid.sh "${TEST_ARGS[@]}"
+run_test "nvmf_abort" $rootdir/test/nvmf/target/abort.sh "${TEST_ARGS[@]}"
+run_test "nvmf_ns_hotplug_stress" $rootdir/test/nvmf/target/ns_hotplug_stress.sh "${TEST_ARGS[@]}"
+run_test "nvmf_connect_stress" $rootdir/test/nvmf/target/connect_stress.sh "${TEST_ARGS[@]}"
+run_test "nvmf_fused_ordering" $rootdir/test/nvmf/target/fused_ordering.sh "${TEST_ARGS[@]}"
+run_test "nvmf_delete_subsystem" $rootdir/test/nvmf/target/delete_subsystem.sh "${TEST_ARGS[@]}"
+run_test "nvmf_ns_masking" test/nvmf/target/ns_masking.sh "${TEST_ARGS[@]}"
+if [[ $SPDK_TEST_NVME_CLI -eq 1 ]]; then
+	run_test "nvmf_nvme_cli" $rootdir/test/nvmf/target/nvme_cli.sh "${TEST_ARGS[@]}"
+fi
+if [[ $SPDK_TEST_VFIOUSER -eq 1 ]]; then
+	run_test "nvmf_vfio_user" $rootdir/test/nvmf/target/nvmf_vfio_user.sh "${TEST_ARGS[@]}"
+	run_test "nvmf_vfio_user_nvme_compliance" $rootdir/test/nvme/compliance/compliance.sh "${TEST_ARGS[@]}"
+	run_test "nvmf_vfio_user_fuzz" $rootdir/test/nvmf/target/vfio_user_fuzz.sh "${TEST_ARGS[@]}"
 fi
 
 run_test "nvmf_host_management" $rootdir/test/nvmf/target/host_management.sh "${TEST_ARGS[@]}"
@@ -87,12 +85,10 @@ timing_exit target
 
 timing_enter host
 
-if [[ $SPDK_TEST_URING -eq 0 ]]; then
-	run_test "nvmf_multicontroller" $rootdir/test/nvmf/host/multicontroller.sh "${TEST_ARGS[@]}"
-	run_test "nvmf_aer" $rootdir/test/nvmf/host/aer.sh "${TEST_ARGS[@]}"
-	run_test "nvmf_async_init" $rootdir/test/nvmf/host/async_init.sh "${TEST_ARGS[@]}"
-	run_test "dma" $rootdir/test/nvmf/host/dma.sh "${TEST_ARGS[@]}"
-fi
+run_test "nvmf_multicontroller" $rootdir/test/nvmf/host/multicontroller.sh "${TEST_ARGS[@]}"
+run_test "nvmf_aer" $rootdir/test/nvmf/host/aer.sh "${TEST_ARGS[@]}"
+run_test "nvmf_async_init" $rootdir/test/nvmf/host/async_init.sh "${TEST_ARGS[@]}"
+run_test "dma" $rootdir/test/nvmf/host/dma.sh "${TEST_ARGS[@]}"
 
 run_test "nvmf_identify" $rootdir/test/nvmf/host/identify.sh "${TEST_ARGS[@]}"
 run_test "nvmf_perf" $rootdir/test/nvmf/host/perf.sh "${TEST_ARGS[@]}"
