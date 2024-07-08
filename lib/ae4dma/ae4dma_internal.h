@@ -52,9 +52,10 @@ struct ae4dma_cmd_queue {
 
 	uint64_t head;
 	uint64_t tail;
+	uint32_t desc_index;
 
 	unsigned int queue_size;
-	uint64_t qbase_dma;
+	uint64_t qring_buffer_pa;
 	uint64_t qdma_tail;
 
 	unsigned int active;
@@ -72,9 +73,6 @@ struct spdk_ae4dma_chan {
 	/* Opaque handle to upper layer */
 	struct    spdk_pci_device *device;
 	uint64_t  max_xfer_size;
-
-	uint64_t            head;
-	uint64_t            tail;
 
 	uint64_t            last_seen;
 	uint64_t            ring_size_order;
