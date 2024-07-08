@@ -74,12 +74,18 @@ enum spdk_ae4dma_hwqueue_status {
 
 /* AE4DMA Descriptor - DWORD0 - Controls bits: Reserved for future use */
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> a09489954 (AE4DMA : Integrated with accel framework)
 #define AE4DMA_DWORD0_STOP_ON_COMPLETION	BIT(0)
 #define AE4DMA_DWORD0_INTERRUPT_ON_COMPLETION	BIT(1)
 #define AE4DMA_DWORD0_START_OF_MESSAGE		BIT(3)
 #define AE4DMA_DWORD0_END_OF_MESSAGE		BIT(4)
 #define AE4DMA_DWORD0_DESTINATION_MEMORY_TYPE	GENMASK(5, 4)
 #define AE4DMA_DWORD0_SOURCE_MEMEORY_TYPE	GENMASK(7, 6)
+<<<<<<< HEAD
+=======
+>>>>>>> a09489954 (AE4DMA : Integrated with accel framework)
 
 #define AE4DMA_DWORD0_DESTINATION_MEMORY_TYPE_MEMORY	0x0
 #define AE4DMA_DWORD0_DESTINATION_MEMORY_TYPE_IOMEMORY	1<<4

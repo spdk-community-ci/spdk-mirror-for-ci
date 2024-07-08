@@ -49,6 +49,9 @@ struct ae4dma_cmd_queue {
 	uint64_t head;
 	uint64_t tail;
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> a09489954 (AE4DMA : Integrated with accel framework)
 	uint32_t desc_index;
 
 	unsigned int queue_size;
@@ -71,10 +74,11 @@ struct spdk_ae4dma_chan {
 	struct    spdk_pci_device *device;
 	uint64_t  max_xfer_size;
 
+<<<<<<< HEAD
 	uint32_t	hwq_index;
 	uint32_t        cp_hwq_index;
-
-	uint32_t	hwq_index;
+=======
+>>>>>>> a09489954 (AE4DMA : Integrated with accel framework)
 
 	/* I/O area used for device communication */
 	void *io_regs;

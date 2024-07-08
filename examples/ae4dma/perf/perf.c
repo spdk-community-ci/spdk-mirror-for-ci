@@ -64,16 +64,16 @@ static struct worker_thread *g_workers = NULL;
 static int g_num_workers = 0;
 static int g_ae4dma_chan_num = 0;
 
-static void submit_single_xfer(struct ae4dma_chan_entry *ae4dma_chan_entry,
-			       struct ae4dma_task *ae4dma_task,
-			       void *dst, void *src);
+static int submit_single_xfer(struct ae4dma_chan_entry *ae4dma_chan_entry,
+			      struct ae4dma_task *ae4dma_task,
+			      void *dst, void *src);
 
 static void
 construct_user_config(struct user_config *self)
 {
 	self->xfer_size_bytes = 4096;
 	self->ae4dma_chan_num = 1;
-	self->ae4dma_hw_queues = 1;
+	self->ae4dma_hw_queues = 16;
 	self->queue_depth = 32;
 	self->time_in_sec = 1;
 	self->verify = false;
@@ -273,7 +273,7 @@ parse_args(int argc, char **argv)
 	return 0;
 }
 
-static void
+static int
 submit_single_xfer(struct ae4dma_chan_entry *ae4dma_chan_entry, struct ae4dma_task *ae4dma_task,
 		   void *dst,
 		   void *src)
@@ -282,12 +282,14 @@ submit_single_xfer(struct ae4dma_chan_entry *ae4dma_chan_entry, struct ae4dma_ta
 	ae4dma_task->src = src;
 	ae4dma_task->dst = dst;
 
-	spdk_ae4dma_build_copy(ae4dma_chan_entry->chan, ae4dma_task, ae4dma_done, dst, src,
-			       g_user_config.xfer_size_bytes);
-	/* Flushing the copy request */
-	spdk_ae4dma_flush(ae4dma_chan_entry->chan);
+	if (spdk_ae4dma_build_copy(ae4dma_chan_entry->chan, ae4dma_task, ae4dma_done, dst, src,
+				   g_user_config.xfer_size_bytes)) {
+		return 1 ;
+	}
 
 	ae4dma_chan_entry->current_queue_depth++;
+
+	return 0;
 }
 
 static int
@@ -297,10 +299,12 @@ submit_xfers(struct ae4dma_chan_entry *ae4dma_chan_entry, uint64_t queue_depth)
 		void *src = NULL, *dst = NULL;
 		struct ae4dma_task *ae4dma_task = NULL;
 
-		src = spdk_dma_zmalloc(g_user_config.xfer_size_bytes, ALIGN_4K, NULL);
-		dst = spdk_dma_zmalloc(g_user_config.xfer_size_bytes, ALIGN_4K, NULL);
+		src = spdk_dma_zmalloc((g_user_config.xfer_size_bytes * (g_user_config.ae4dma_hw_queues)), ALIGN_4K,
+				       NULL);
+		dst = spdk_dma_zmalloc((g_user_config.xfer_size_bytes * (g_user_config.ae4dma_hw_queues)), ALIGN_4K,
+				       NULL);
 
-		ae4dma_task = calloc(1, sizeof(struct ae4dma_task));
+		ae4dma_task = calloc((g_user_config.ae4dma_hw_queues), sizeof(struct ae4dma_task));
 		if (!ae4dma_task) {
 			fprintf(stderr, "Unable to get ae4dma_task\n");
 			return 1;
@@ -310,6 +314,10 @@ submit_xfers(struct ae4dma_chan_entry *ae4dma_chan_entry, uint64_t queue_depth)
 		/* memset(src, DATA_PATTERN, g_user_config.xfer_size_bytes); */
 
 		submit_single_xfer(ae4dma_chan_entry, ae4dma_task, dst, src);
+
+		/* Flushing the copy request */
+		spdk_ae4dma_flush(ae4dma_chan_entry->chan);
+
 		spdk_ae4dma_process_events(ae4dma_chan_entry->chan);
 
 		spdk_dma_free(src);

@@ -536,7 +536,7 @@ _get_task_data_bufs(struct ap_task *task)
 			memset(task->sources[i], DATA_PATTERN, g_xfer_size_bytes);
 		}
 	} else {
-		task->src = spdk_dma_zmalloc(g_xfer_size_bytes, 0, NULL);
+		task->src = spdk_dma_zmalloc(g_xfer_size_bytes, ALIGN_4K, NULL);
 		if (task->src == NULL) {
 			fprintf(stderr, "Unable to alloc src buffer\n");
 			return -ENOMEM;
@@ -555,7 +555,7 @@ _get_task_data_bufs(struct ap_task *task)
 	    g_workload_selection != SPDK_ACCEL_OPC_DIF_GENERATE &&
 	    g_workload_selection != SPDK_ACCEL_OPC_DIF_GENERATE_COPY &&
 	    g_workload_selection != SPDK_ACCEL_OPC_DIF_VERIFY_COPY) {
-		task->dst = spdk_dma_zmalloc(dst_buff_len, align, NULL);
+		task->dst = spdk_dma_zmalloc(dst_buff_len, ALIGN_4K, NULL);
 		if (task->dst == NULL) {
 			fprintf(stderr, "Unable to alloc dst buffer\n");
 			return -ENOMEM;
@@ -712,7 +712,6 @@ _submit_single(struct worker_thread *worker, struct ap_task *task)
 		break;
 
 	}
-
 	worker->current_queue_depth++;
 	if (rc) {
 		accel_done(task, rc);
@@ -800,10 +799,8 @@ accel_done(void *arg1, int status)
 	struct worker_thread *worker = task->worker;
 	uint32_t sw_crc32c;
 	struct spdk_dif_error err_blk;
-
 	assert(worker);
 	assert(worker->current_queue_depth > 0);
-
 	if (g_verify && status == 0) {
 		switch (worker->workload) {
 		case SPDK_ACCEL_OPC_COPY_CRC32C:
@@ -913,7 +910,9 @@ accel_done(void *arg1, int status)
 		worker->xfer_failed++;
 	}
 
-	worker->current_queue_depth--;
+	if (worker->current_queue_depth) {
+		worker->current_queue_depth--;
+	}
 
 	if (!worker->is_draining && status == 0) {
 		TAILQ_INSERT_TAIL(&worker->tasks_pool, task, link);
@@ -985,9 +984,9 @@ _check_draining(void *arg)
 	struct worker_thread *worker = arg;
 
 	assert(worker);
-
-	if (worker->current_queue_depth == 0) {
-		_free_task_buffers_in_pool(worker);
+	if (worker->current_queue_depth <= (uint64_t) g_queue_depth) {
+		/* temp check for occasional EAL invalid memory error
+		_free_task_buffers_in_pool(worker); */
 		spdk_poller_unregister(&worker->is_draining_poller);
 		unregister_worker(worker);
 	}
