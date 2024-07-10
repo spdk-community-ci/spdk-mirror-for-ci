@@ -299,6 +299,8 @@ ut_esnap_translate_lba(struct spdk_bs_dev *dev, uint64_t lba, uint64_t *base_lba
 	return true;
 }
 
+static struct spdk_bs_dev *ut_esnap_clone(struct spdk_bs_dev *bs_dev);
+
 static struct spdk_bs_dev *
 ut_esnap_dev_alloc(const struct ut_esnap_opts *opts)
 {
@@ -327,11 +329,19 @@ ut_esnap_dev_alloc(const struct ut_esnap_opts *opts)
 	bs_dev->is_zeroes = ut_esnap_is_zeroes;
 	bs_dev->is_range_valid = ut_esnap_is_range_valid;
 	bs_dev->translate_lba = ut_esnap_translate_lba;
+	bs_dev->clone = ut_esnap_clone;
 
 	spdk_io_device_register(ut_dev, ut_esnap_io_channel_create, ut_esnap_io_channel_destroy,
 				sizeof(struct ut_esnap_channel), opts->name);
 
 	return bs_dev;
+}
+
+static struct spdk_bs_dev *
+ut_esnap_clone(struct spdk_bs_dev *bs_dev)
+{
+	struct ut_esnap_dev	*ut_dev = (struct ut_esnap_dev *)bs_dev;
+	return ut_esnap_dev_alloc(&ut_dev->ut_opts);
 }
 
 static int

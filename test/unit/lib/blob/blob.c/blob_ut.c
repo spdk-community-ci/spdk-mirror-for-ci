@@ -8829,6 +8829,10 @@ blob_esnap_clone_snapshot(void)
 	struct spdk_blob	*blob, *snap_blob;
 	spdk_blob_id		blobid, snap_blobid;
 	bool			destroyed = false;
+	struct spdk_io_channel *channel;
+
+	channel = spdk_bs_alloc_io_channel(bs);
+	SPDK_CU_ASSERT_FATAL(channel != NULL);
 
 	/* Create the esnap clone */
 	ut_esnap_opts_init(blocklen, 2048, __func__, &destroyed, &esnap_opts);
@@ -8875,6 +8879,29 @@ blob_esnap_clone_snapshot(void)
 	snap_blob = NULL;
 	snap_blobid = SPDK_BLOBID_INVALID;
 	UT_ASSERT_IS_ESNAP_CLONE(blob, &esnap_opts, sizeof(esnap_opts));
+
+	/*
+	 * Create the snapshot again, then decouple parent the original blob. The
+	 * original blob should become and esnap clone.
+	 */
+	spdk_bs_create_snapshot(bs, blobid, NULL, blob_op_with_id_complete, NULL);
+	poll_threads();
+	CU_ASSERT(g_bserrno == 0);
+	CU_ASSERT(g_blobid != SPDK_BLOBID_INVALID);
+	snap_blobid = g_blobid;
+	snap_blob = g_blob;
+
+	UT_ASSERT_IS_NOT_ESNAP_CLONE(blob);
+
+	spdk_bs_blob_decouple_parent(bs, channel, blobid, blob_op_complete, NULL);
+	poll_threads();
+	CU_ASSERT(g_bserrno == 0);
+
+	UT_ASSERT_IS_ESNAP_CLONE(blob, &esnap_opts, sizeof(esnap_opts));
+
+	spdk_bs_delete_blob(bs, snap_blobid, blob_op_complete, NULL);
+	poll_threads();
+	CU_ASSERT(g_bserrno == 0);
 
 	/*
 	 * Create the snapshot again, then delete the original blob.  The
@@ -8930,6 +8957,9 @@ blob_esnap_clone_snapshot(void)
 	 * Clean up
 	 */
 	ut_blob_close_and_delete(bs, blob);
+
+	spdk_bs_free_io_channel(channel);
+	poll_threads();
 }
 
 static uint64_t

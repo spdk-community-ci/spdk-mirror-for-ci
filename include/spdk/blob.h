@@ -258,6 +258,8 @@ struct spdk_bs_dev {
 
 	bool (*is_degraded)(struct spdk_bs_dev *dev);
 
+	struct spdk_bs_dev *(*clone)(struct spdk_bs_dev *dev);
+
 	uint64_t	blockcnt;
 	uint32_t	blocklen; /* In bytes */
 };

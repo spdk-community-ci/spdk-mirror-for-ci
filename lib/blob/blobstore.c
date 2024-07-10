@@ -6975,6 +6975,43 @@ bs_inflate_blob_set_parent_cpl(void *cb_arg, struct spdk_blob *_parent, int bser
 }
 
 static void
+bs_inflate_blob_set_esnap_refs(struct spdk_clone_snapshot_ctx *ctx)
+{
+	struct spdk_blob *_blob = ctx->original.blob;
+	struct spdk_blob *_parent = ((struct spdk_blob_bs_dev *)(_blob->back_bs_dev))->blob;
+	int bserrno;
+
+	assert(_parent != NULL);
+	assert(_parent->parent_id == SPDK_BLOBID_EXTERNAL_SNAPSHOT);
+
+	if (_parent->back_bs_dev->clone == NULL) {
+		SPDK_ERRLOG("Back device does not support cloning\n");
+		bs_clone_snapshot_origblob_cleanup(ctx, -ENOTSUP);
+		return;
+	}
+
+	/* Temporarily override md_ro flag for MD modification */
+	_blob->md_ro = false;
+
+	blob_remove_xattr(_blob, BLOB_SNAPSHOT, true);
+	bserrno = bs_snapshot_copy_xattr(_blob, _parent, BLOB_EXTERNAL_SNAPSHOT_ID);
+	if (bserrno != 0) {
+		bs_clone_snapshot_origblob_cleanup(ctx, bserrno);
+		return;
+	}
+
+	bs_blob_list_remove(_blob);
+
+	_blob->invalid_flags |= SPDK_BLOB_EXTERNAL_SNAPSHOT;
+	_blob->parent_id = SPDK_BLOBID_EXTERNAL_SNAPSHOT;
+
+	blob_back_bs_destroy(_blob);
+	_blob->back_bs_dev = _parent->back_bs_dev->clone(_parent->back_bs_dev);
+
+	spdk_blob_sync_md(_blob, bs_clone_snapshot_origblob_cleanup, ctx);
+}
+
+static void
 bs_inflate_blob_done(struct spdk_clone_snapshot_ctx *ctx)
 {
 	struct spdk_blob *_blob = ctx->original.blob;
@@ -6997,17 +7034,22 @@ bs_inflate_blob_done(struct spdk_clone_snapshot_ctx *ctx)
 		assert(!blob_is_esnap_clone(_blob));
 
 		_parent = ((struct spdk_blob_bs_dev *)(_blob->back_bs_dev))->blob;
-		if (_parent->parent_id != SPDK_BLOBID_INVALID) {
+		switch (_parent->parent_id) {
+		case SPDK_BLOBID_INVALID:
+			bs_blob_list_remove(_blob);
+			_blob->parent_id = SPDK_BLOBID_INVALID;
+			blob_back_bs_destroy(_blob);
+			_blob->back_bs_dev = bs_create_zeroes_dev();
+			break;
+		case SPDK_BLOBID_EXTERNAL_SNAPSHOT:
+			bs_inflate_blob_set_esnap_refs(ctx);
+			return;
+		default:
 			/* We must change the parent of the inflated blob */
 			spdk_bs_open_blob(_blob->bs, _parent->parent_id,
 					  bs_inflate_blob_set_parent_cpl, ctx);
 			return;
 		}
-
-		bs_blob_list_remove(_blob);
-		_blob->parent_id = SPDK_BLOBID_INVALID;
-		blob_back_bs_destroy(_blob);
-		_blob->back_bs_dev = bs_create_zeroes_dev();
 	}
 
 	/* Temporarily override md_ro flag for MD modification */
