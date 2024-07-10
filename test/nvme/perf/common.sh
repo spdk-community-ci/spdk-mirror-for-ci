@@ -47,6 +47,7 @@ function create_spdk_bdev_conf() {
 	local bdev_io_pool_size=$2
 	local want_dif_vbdev=$3
 	local bdev_json_cfg=()
+	local accel_json_cfg=()
 	local dev_opts=()
 	local i
 
@@ -415,6 +416,17 @@ function run_bdevperf() {
 
 	if [[ -n $MAIN_CORE ]]; then
 		main_core_param="-p ${MAIN_CORE}"
+	fi
+
+	if $USE_DSA_ACCEL; then
+		# Has to be done here, because bdev_svc app doesn't know how to enable accel module
+		# and gets stuck. Patch is [RFC] anyway at the moment, so might as well fix this later.
+		if ! grep dsa_scan_accel_module $testdir/bdev.conf; then
+			echo "INFO: Appending accel DSA config to $testdir/bdev.conf"
+			jq '.subsystems +=[{"subsystem": "accel", "config":[{"method": "dsa_scan_accel_module"}]}]' $testdir/bdev.conf > $testdir/bdev.conf.temp
+			mv $testdir/bdev.conf.temp $testdir/bdev.conf
+			cat $testdir/bdev.conf
+		fi
 	fi
 
 	echo "** Running bdevperf test, this can take a while, depending on the run-time setting."

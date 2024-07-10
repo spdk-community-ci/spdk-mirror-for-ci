@@ -43,6 +43,7 @@ PLUGIN="nvme"
 DISKCFG=""
 USE_LVOL_BDEVS=false
 USE_DIF_VBDEVS=false
+USE_DSA_ACCEL=false
 BDEV_CACHE=""
 BDEV_POOL=""
 DISKNO="ALL"
@@ -108,6 +109,8 @@ function usage() {
 	echo "                            To be used only with spdk-*-bdev driver options."
 	echo "    --use-dif-vbdevs        Create DIF VBdev on top of each NVMe drive"
 	echo "                            To be used only with spdk-*-bdev driver options."
+	echo "    --use-dsa-accel         Enable DSA acceleration when running tests."
+	echo "                            To be used only with spdk-* driver options and on DSA-capable system platforms."
 	echo "    --bdev-io-cache-size    Set IO cache size for for SPDK bdev subsystem."
 	echo "    --bdev-io-pool-size     Set IO pool size for for SPDK bdev subsystem."
 	echo "    --max-disk=INT,ALL      Number of disks to test on, this will run multiple workloads with increasing number of disk each run."
@@ -167,6 +170,7 @@ while getopts 'h-:' optchar; do
 					;;
 				use-lvol-bdevs) USE_LVOL_BDEVS=true ;;
 				use-dif-vbdevs) USE_DIF_VBDEVS=true ;;
+				use-dsa-accel) USE_DSA_ACCEL=true ;;
 				bdev-io-cache-size=*) BDEV_CACHE="${OPTARG#*=}" ;;
 				bdev-io-pool-size=*) BDEV_POOL="${OPTARG#*=}" ;;
 				max-disk=*) DISKNO="${OPTARG#*=}" ;;
