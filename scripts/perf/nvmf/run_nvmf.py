@@ -235,21 +235,20 @@ class Server(ABC):
             self.reload_driver("irdma", "roce_ena=0")
             self.log.info("Loaded irdma driver with iWARP enabled")
 
-    def set_pause_frames(self, rx_state, tx_state):
+    def set_pause_frames(self, pf_state):
         for nic_ip in self.nic_ips:
             nic_name = self.get_nic_name_by_ip(nic_ip)
-            self.exec_cmd(["sudo", "ethtool", "-A", nic_name, "rx", rx_state, "tx", tx_state])
+            self.log.info(f"Turning {pf_state} pause frames for {nic_name}")
+            self.exec_cmd(["sudo", "ethtool", "-A", nic_name, "rx", pf_state, "tx", pf_state])
 
     def configure_pause_frames(self):
         if self.pause_frames is None:
             self.log.info("Keeping NIC's default pause frames setting")
             return
         elif not self.pause_frames:
-            self.log.info("Turning off pause frames")
-            self.set_pause_frames("off", "off")
+            self.set_pause_frames("off")
         else:
-            self.log.info("Turning on pause frames")
-            self.set_pause_frames("on", "on")
+            self.set_pause_frames("on")
 
     def configure_arfs(self):
         rps_flow_cnt = 512 if self.enable_arfs else 0
