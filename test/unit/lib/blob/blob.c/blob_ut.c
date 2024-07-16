@@ -7890,6 +7890,12 @@ blob_decouple_snapshot(void)
 					    snapshot1->active.clusters[cluster]);
 		}
 
+		/*
+		 * Decoupling the parent when ancestor is not an esnap clone
+		 * shouldn't cause back dev sharing.
+		 */
+		CU_ASSERT(LIST_EMPTY(&bs->shared_back_bs_devs));
+
 		spdk_bs_free_io_channel(channel);
 
 		if (delete_snapshot_first) {
@@ -8715,6 +8721,273 @@ blob_ext_md_pages(void)
 	poll_threads();
 	CU_ASSERT(g_bserrno == 0);
 	g_bs = NULL;
+}
+
+static void
+blob_esnap_back_dev_sharing(void)
+{
+	struct spdk_blob_store *bs = g_bs;
+	struct spdk_blob_opts opts[2];
+	struct ut_esnap_opts esnap_opts[2];
+	struct spdk_blob *blob[4], *snap_blob[2];
+	spdk_blob_id blobid[4], snap_blobid[2];
+	int i;
+	bool destroyed[2] = {false, false};
+	struct spdk_io_channel *channel;
+	struct shared_back_bs_dev *shared_dev, *shared_dev2;
+
+	channel = spdk_bs_alloc_io_channel(bs);
+	SPDK_CU_ASSERT_FATAL(channel != NULL);
+
+	/*
+	 * Create two esnap clones and snapshot them.
+	 */
+	for (i = 0; i < 2; i++) {
+		/*
+		 * Create the esnap clone. We don't set the destroyed pointer
+		 * here, because we want to tie to a specific allocation of
+		 * the esnap_dev.
+		 */
+		ut_esnap_opts_init(4096, 2048, __func__, NULL, &esnap_opts[i]);
+		ut_spdk_blob_opts_init(&opts[i]);
+		opts[i].esnap_id = &esnap_opts[i];
+		opts[i].esnap_id_len = sizeof(esnap_opts[i]);
+		opts[i].num_clusters = 10;
+		spdk_bs_create_blob_ext(bs, &opts[i], blob_op_with_id_complete, NULL);
+		poll_threads();
+		CU_ASSERT(g_bserrno == 0);
+		SPDK_CU_ASSERT_FATAL(g_blobid != SPDK_BLOBID_INVALID);
+		blobid[i] = g_blobid;
+
+		/* Open the blob. */
+		spdk_bs_open_blob(bs, blobid[i], blob_op_with_handle_complete, NULL);
+		poll_threads();
+		CU_ASSERT(g_bserrno == 0);
+		SPDK_CU_ASSERT_FATAL(g_blob != NULL);
+		blob[i] = g_blob;
+		UT_ASSERT_IS_ESNAP_CLONE(blob[i], &esnap_opts[i], sizeof(esnap_opts[i]));
+
+		/* Now set the destroyed pointer */
+		ut_esnap_set_destroyed_ptr(blob[i]->back_bs_dev, &destroyed[i]);
+
+		/*
+		 * Create a snapshot of the blob. The snapshot becomes the esnap
+		 * clone.
+		 */
+		spdk_bs_create_snapshot(bs, blobid[i], NULL, blob_op_with_id_complete, NULL);
+		poll_threads();
+		CU_ASSERT(g_bserrno == 0);
+		CU_ASSERT(g_blobid != SPDK_BLOBID_INVALID);
+		snap_blobid[i] = g_blobid;
+
+		spdk_bs_open_blob(bs, snap_blobid[i], blob_op_with_handle_complete, NULL);
+		poll_threads();
+		CU_ASSERT(g_bserrno == 0);
+		SPDK_CU_ASSERT_FATAL(g_blob != NULL);
+		snap_blob[i] = g_blob;
+	}
+
+	/*
+	 * No back_bs_devs have been shared yet.
+	 *
+	 * Current state:
+	 *  snap_blob[0].back_bs_dev (esnap) <- snap_blob[0] <- blob[0]
+	 *  snap_blob[1].back_bs_dev (esnap) <- snap_blob[1] <- blob[1]
+	 */
+	CU_ASSERT(LIST_EMPTY(&bs->shared_back_bs_devs));
+
+	/*
+	 * Create two more clones of the second snapshot.
+	 */
+	for (i = 2; i < 4; i++) {
+		spdk_bs_create_clone(bs, snap_blobid[1], NULL, blob_op_with_id_complete, NULL);
+		poll_threads();
+		CU_ASSERT(g_bserrno == 0);
+		CU_ASSERT(g_blobid != SPDK_BLOBID_INVALID);
+		blobid[i] = g_blobid;
+
+		spdk_bs_open_blob(bs, blobid[i], blob_op_with_handle_complete, NULL);
+		poll_threads();
+		CU_ASSERT(g_bserrno == 0);
+		CU_ASSERT(g_blob != NULL);
+		blob[i] = g_blob;
+	}
+
+	/*
+	 * No back_bs_devs have been shared yet.
+	 *
+	 * Current state:
+	 *  snap_blob[0].back_bs_dev (esnap) <- snap_blob[0] <- blob[0]
+	 *  snap_blob[1].back_bs_dev (esnap) <- snap_blob[1] <- blob[1]
+	 *                                          ^
+	 *                                          |
+	 *                                   blob[2], blob[3]
+	 */
+	CU_ASSERT(LIST_EMPTY(&bs->shared_back_bs_devs));
+
+	/*
+	 * Decouple the parent of first snapshot's clone & check dev sharing.
+	 */
+	spdk_bs_blob_decouple_parent(bs, channel, blobid[0], blob_op_complete, NULL);
+	poll_threads();
+	CU_ASSERT(g_bserrno == 0);
+	UT_ASSERT_IS_ESNAP_CLONE(blob[0], &esnap_opts[0], sizeof(esnap_opts[0]));
+
+	/*
+	 * blob[0] and snap_blob[0] now share the same back_bs_dev instance.
+	 *
+	 * Current state:
+	 *  snap_blob[0].back_bs_dev (esnap) <- snap_blob[0]
+	 *              ^
+	 *              |
+	 *            blob[0]
+	 *  snap_blob[1].back_bs_dev (esnap) <- snap_blob[1] <- blob[1]
+	 *                                          ^
+	 *                                          |
+	 *                                   blob[2], blob[3]
+	 */
+	CU_ASSERT(!LIST_EMPTY(&bs->shared_back_bs_devs));
+
+	shared_dev = LIST_FIRST(&bs->shared_back_bs_devs);
+	CU_ASSERT(shared_dev->bs_dev == snap_blob[0]->back_bs_dev);
+	CU_ASSERT_EQUAL(shared_dev->refs, 2);
+
+	/*
+	 * Decouple the parent of 2nd snapshot's clones & check dev sharing. This
+	 * should create one more shared_back_bs_dev & will insert it to the
+	 * beginning of the list.
+	 */
+	for (i = 1; i < 4; i++) {
+		spdk_bs_blob_decouple_parent(bs, channel, blobid[i], blob_op_complete, NULL);
+		poll_threads();
+		CU_ASSERT(g_bserrno == 0);
+		UT_ASSERT_IS_ESNAP_CLONE(blob[i], &esnap_opts[1], sizeof(esnap_opts[1]));
+
+		CU_ASSERT(!LIST_EMPTY(&bs->shared_back_bs_devs));
+
+		shared_dev = LIST_FIRST(&bs->shared_back_bs_devs);
+		SPDK_CU_ASSERT_FATAL(shared_dev != NULL);
+		CU_ASSERT(shared_dev->bs_dev == snap_blob[1]->back_bs_dev);
+		CU_ASSERT_EQUAL(shared_dev->refs, 1 + i);
+	}
+
+	/*
+	 * Current state:
+	 *  snap_blob[0].back_bs_dev (esnap) <- snap_blob[0]
+	 *              ^
+	 *              |
+	 *            blob[0]
+	 *  snap_blob[1].back_bs_dev (esnap) <- snap_blob[1]
+	 *              ^
+	 *              |
+	 *     blob[1], blob[2], blob[3]
+	 *
+	 * Note that in the above diagram we could write blob[0].back_bs_dev
+	 * instead of snap_blob[0].back_bs_dev, as they're the same instances.
+	 * Same goes for all other shared back_bs_devs.
+	 *
+	 * Verify that we have exactly 2 shared_back_bs_devs.
+	 */
+	shared_dev = LIST_FIRST(&bs->shared_back_bs_devs);
+	shared_dev2 = LIST_NEXT(shared_dev, link);
+	SPDK_CU_ASSERT_FATAL(shared_dev2 != NULL);
+	CU_ASSERT(LIST_NEXT(shared_dev2, link) == NULL);
+	CU_ASSERT(shared_dev->bs_dev == snap_blob[1]->back_bs_dev);
+	CU_ASSERT_EQUAL(shared_dev->refs, 4);
+	CU_ASSERT(shared_dev2->bs_dev == snap_blob[0]->back_bs_dev);
+	CU_ASSERT_EQUAL(shared_dev2->refs, 2);
+
+	/*
+	 * Close the snapshots. After this, each of the shared_back_bs_devs should
+	 * have one less reference.
+	 */
+	for (i = 0; i < 2; i++) {
+		spdk_blob_close(snap_blob[i], blob_op_complete, NULL);
+	}
+	poll_threads();
+
+	/*
+	 * Current state:
+	 *  blob[0].back_bs_dev (esnap)
+	 *              ^
+	 *              |
+	 *            blob[0]
+	 *  blob[1].back_bs_dev (esnap)
+	 *              ^
+	 *              |
+	 *     blob[1], blob[2], blob[3]
+	 *
+	 * We could've also removed blob[0].back_bs_dev from shared_back_bs_devs
+	 * list since it's not shared anymore at this moment, but we don't do
+	 * that now since it's not necessary.
+	 */
+
+	shared_dev = LIST_FIRST(&bs->shared_back_bs_devs);
+	CU_ASSERT_EQUAL(shared_dev->refs, 3);
+	shared_dev2 = LIST_NEXT(shared_dev, link);
+	CU_ASSERT_EQUAL(shared_dev2->refs, 1);
+	CU_ASSERT(LIST_NEXT(shared_dev2, link) == NULL);
+
+	/*
+	 * Re-opening the snapshots won't increase the reference count, as their
+	 * back_bs_dev will be allocated from scratch.
+	 */
+	for (i = 0; i < 2; i++) {
+		spdk_bs_open_blob(bs, snap_blobid[i], blob_op_with_handle_complete, NULL);
+		poll_threads();
+		CU_ASSERT(g_bserrno == 0);
+		SPDK_CU_ASSERT_FATAL(g_blob != NULL);
+		snap_blob[i] = g_blob;
+	}
+
+	/*
+	 * Current state:
+	 *  snap_blob[0].back_bs_dev (esnap) <- snap_blob[0]
+	 *  snap_blob[1].back_bs_dev (esnap) <- snap_blob[1]
+	 *  blob[0].back_bs_dev (esnap)
+	 *              ^
+	 *              |
+	 *            blob[0]
+	 *  blob[1].back_bs_dev (esnap)
+	 *              ^
+	 *              |
+	 *     blob[1], blob[2], blob[3]
+	 */
+
+	shared_dev = LIST_FIRST(&bs->shared_back_bs_devs);
+	CU_ASSERT_EQUAL(shared_dev->refs, 3);
+	shared_dev2 = LIST_NEXT(shared_dev, link);
+	CU_ASSERT_EQUAL(shared_dev2->refs, 1);
+	CU_ASSERT(LIST_NEXT(shared_dev2, link) == NULL);
+
+	/*
+	 * Clean up the snapshots.
+	 */
+	for (i = 0; i < 2; i++) {
+		ut_blob_close_and_delete(bs, snap_blob[i]);
+	}
+
+	/*
+	 * There's only one reference to the back_bs_dev referenced by blob[0],
+	 * so it should be destroyed after closing the blob.
+	 */
+	CU_ASSERT(!destroyed[0]);
+	ut_blob_close_and_delete(bs, blob[0]);
+	CU_ASSERT(destroyed[0]);
+
+	/*
+	 * At this moment, blobs 1,2,3 reference the same back_bs_dev. It should
+	 * be destroyed only after the last blob is closed.
+	 */
+	for (i = 1; i < 4; i++) {
+		CU_ASSERT(!destroyed[1]);
+		ut_blob_close_and_delete(bs, blob[i]);
+	}
+	CU_ASSERT(destroyed[1]);
+
+	CU_ASSERT(LIST_EMPTY(&bs->shared_back_bs_devs));
+
+	spdk_bs_free_io_channel(channel);
 }
 
 static void
@@ -10083,6 +10356,7 @@ main(int argc, char **argv)
 		CU_ADD_TEST(suite, blob_esnap_io_4096_512);
 		CU_ADD_TEST(suite, blob_esnap_io_512_4096);
 		CU_ADD_TEST(suite_esnap_bs, blob_esnap_thread_add_remove);
+		CU_ADD_TEST(suite_esnap_bs, blob_esnap_back_dev_sharing);
 		CU_ADD_TEST(suite_esnap_bs, blob_esnap_clone_snapshot);
 		CU_ADD_TEST(suite_esnap_bs, blob_esnap_clone_inflate);
 		CU_ADD_TEST(suite_esnap_bs, blob_esnap_clone_decouple);

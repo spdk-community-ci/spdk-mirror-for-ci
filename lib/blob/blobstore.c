@@ -342,10 +342,87 @@ xattrs_free(struct spdk_xattr_tailq *xattrs)
 	}
 }
 
+static struct shared_back_bs_dev *
+bs_find_shared_back_bs_dev(struct spdk_blob_store *bs, struct spdk_bs_dev *bs_dev)
+{
+	struct shared_back_bs_dev *shared_dev;
+
+	LIST_FOREACH(shared_dev, &bs->shared_back_bs_devs, link) {
+		if (shared_dev->bs_dev == bs_dev) {
+			return shared_dev;
+		}
+	}
+
+	return NULL;
+}
+
+static int
+bs_incr_dev_share(struct spdk_blob_store *bs, struct spdk_bs_dev *bs_dev)
+{
+	struct shared_back_bs_dev *shared_dev;
+
+	shared_dev = bs_find_shared_back_bs_dev(bs, bs_dev);
+	if (shared_dev == NULL) {
+		shared_dev = calloc(1, sizeof(*shared_dev));
+		if (shared_dev == NULL) {
+			return -ENOMEM;
+		}
+
+		shared_dev->bs_dev = bs_dev;
+		/*
+		 * Devices which haven't been shared have one reference. First
+		 * share make it 2 in the increment below.
+		 */
+		shared_dev->refs = 1;
+		LIST_INSERT_HEAD(&bs->shared_back_bs_devs, shared_dev, link);
+	}
+
+	shared_dev->refs++;
+
+	return 0;
+}
+
+/* Returns number of remaining references to bs_dev. */
+static int
+bs_decr_dev_share(struct spdk_blob_store *bs, struct spdk_bs_dev *bs_dev)
+{
+	struct shared_back_bs_dev *shared_dev;
+
+	shared_dev = bs_find_shared_back_bs_dev(bs, bs_dev);
+	if (shared_dev == NULL) {
+		/*
+		 * If the device is not found, it means it was not shared &
+		 * this is the only reference to it. So, decrementing it will
+		 * make number of references 0.
+		 */
+		return 0;
+	}
+
+	shared_dev->refs--;
+	if (shared_dev->refs == 0) {
+		LIST_REMOVE(shared_dev, link);
+		free(shared_dev);
+		return 0;
+	}
+
+	return shared_dev->refs;
+}
+
 static void
 blob_unref_back_bs_dev(struct spdk_blob *blob)
 {
-	blob->back_bs_dev->destroy(blob->back_bs_dev);
+	int remaining_refs;
+
+	if (blob->parent_id == SPDK_BLOBID_EXTERNAL_SNAPSHOT) {
+		remaining_refs = bs_decr_dev_share(blob->bs, blob->back_bs_dev);
+	} else {
+		remaining_refs = 0;
+	}
+
+	if (remaining_refs == 0) {
+		blob->back_bs_dev->destroy(blob->back_bs_dev);
+	}
+
 	blob->back_bs_dev = NULL;
 }
 
@@ -409,11 +486,24 @@ blob_back_bs_destroy_esnap_done(void *ctx, struct spdk_blob *blob, int bserrno)
 static void
 blob_back_bs_destroy(struct spdk_blob *blob)
 {
+	int remaining_refs;
+
 	SPDK_DEBUGLOG(blob_esnap, "blob 0x%" PRIx64 ": preparing to destroy back_bs_dev\n",
 		      blob->id);
 
-	blob_esnap_destroy_bs_dev_channels(blob, false, blob_back_bs_destroy_esnap_done,
-					   blob->back_bs_dev);
+	if (blob->parent_id == SPDK_BLOBID_EXTERNAL_SNAPSHOT) {
+		remaining_refs = bs_decr_dev_share(blob->bs, blob->back_bs_dev);
+	} else {
+		remaining_refs = 0;
+	}
+
+	if (remaining_refs == 0) {
+		blob_esnap_destroy_bs_dev_channels(blob, false, blob_back_bs_destroy_esnap_done,
+						   blob->back_bs_dev);
+	} else {
+		blob_esnap_destroy_bs_dev_channels(blob, false, NULL, NULL);
+	}
+
 	blob->back_bs_dev = NULL;
 }
 
@@ -6972,6 +7062,45 @@ bs_inflate_blob_set_parent_cpl(void *cb_arg, struct spdk_blob *_parent, int bser
 }
 
 static void
+bs_inflate_blob_set_shared_back_bs_devs(struct spdk_clone_snapshot_ctx *ctx)
+{
+	struct spdk_blob *_blob = ctx->original.blob;
+	struct spdk_blob *_parent = ((struct spdk_blob_bs_dev *)(_blob->back_bs_dev))->blob;
+	int bserrno;
+
+	assert(_parent != NULL);
+	assert(_parent->parent_id == SPDK_BLOBID_EXTERNAL_SNAPSHOT);
+
+	/* Temporarily override md_ro flag for MD modification */
+	_blob->md_ro = false;
+
+	blob_remove_xattr(_blob, BLOB_SNAPSHOT, true);
+	bserrno = bs_snapshot_copy_xattr(_blob, _parent, BLOB_EXTERNAL_SNAPSHOT_ID);
+	if (bserrno != 0) {
+		bs_clone_snapshot_origblob_cleanup(ctx, bserrno);
+		return;
+	}
+
+	bs_blob_list_remove(_blob);
+	blob_back_bs_destroy(_blob);
+
+	_blob->invalid_flags |= SPDK_BLOB_EXTERNAL_SNAPSHOT;
+	_blob->parent_id = SPDK_BLOBID_EXTERNAL_SNAPSHOT;
+	_blob->back_bs_dev = _parent->back_bs_dev;
+
+	/* _blob & _parent now share the same back_bs_dev pointer. So, we
+	 * should record the share.
+	 */
+	bserrno = bs_incr_dev_share(_blob->bs, _blob->back_bs_dev);
+	if (bserrno != 0) {
+		bs_clone_snapshot_origblob_cleanup(ctx, bserrno);
+		return;
+	}
+
+	spdk_blob_sync_md(_blob, bs_clone_snapshot_origblob_cleanup, ctx);
+}
+
+static void
 bs_inflate_blob_done(struct spdk_clone_snapshot_ctx *ctx)
 {
 	struct spdk_blob *_blob = ctx->original.blob;
@@ -6994,17 +7123,22 @@ bs_inflate_blob_done(struct spdk_clone_snapshot_ctx *ctx)
 		assert(!blob_is_esnap_clone(_blob));
 
 		_parent = ((struct spdk_blob_bs_dev *)(_blob->back_bs_dev))->blob;
-		if (_parent->parent_id != SPDK_BLOBID_INVALID) {
+		switch (_parent->parent_id) {
+		case SPDK_BLOBID_INVALID:
+			bs_blob_list_remove(_blob);
+			_blob->parent_id = SPDK_BLOBID_INVALID;
+			blob_back_bs_destroy(_blob);
+			_blob->back_bs_dev = bs_create_zeroes_dev();
+			break;
+		case SPDK_BLOBID_EXTERNAL_SNAPSHOT:
+			bs_inflate_blob_set_shared_back_bs_devs(ctx);
+			return;
+		default:
 			/* We must change the parent of the inflated blob */
 			spdk_bs_open_blob(_blob->bs, _parent->parent_id,
 					  bs_inflate_blob_set_parent_cpl, ctx);
 			return;
 		}
-
-		bs_blob_list_remove(_blob);
-		_blob->parent_id = SPDK_BLOBID_INVALID;
-		blob_back_bs_destroy(_blob);
-		_blob->back_bs_dev = bs_create_zeroes_dev();
 	}
 
 	/* Temporarily override md_ro flag for MD modification */

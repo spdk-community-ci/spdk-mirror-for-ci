@@ -101,6 +101,12 @@ struct spdk_blob_list {
 	TAILQ_ENTRY(spdk_blob_list) link;
 };
 
+struct shared_back_bs_dev {
+	struct spdk_bs_dev *bs_dev;
+	int refs;
+	LIST_ENTRY(shared_back_bs_dev) link;
+};
+
 struct spdk_blob {
 	struct spdk_blob_store *bs;
 
@@ -187,6 +193,14 @@ struct spdk_blob_store {
 
 	RB_HEAD(spdk_blob_tree, spdk_blob) open_blobs;
 	TAILQ_HEAD(, spdk_blob_list)	snapshots;
+
+	/* A back_bs_dev can be shared between multiple blobs if
+	 * we call spdk_bs_blob_decouple_parent on a child of an
+	 * esnap clone. So, we need to keep track of multiple
+	 * references to the same back_bs_dev to know when we can
+	 * free it.
+	 */
+	LIST_HEAD(, shared_back_bs_dev) shared_back_bs_devs;
 
 	bool				clean;
 

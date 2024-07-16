@@ -104,6 +104,14 @@ ut_esnap_opts_init(uint32_t block_size, uint32_t num_blocks, const char *name, b
 	spdk_strcpy_pad(opts->name, name, sizeof(opts->name) - 1, '\0');
 }
 
+static void
+ut_esnap_set_destroyed_ptr(struct spdk_bs_dev *bs_dev, bool *destroyed)
+{
+	struct ut_esnap_dev *ut_dev = (struct ut_esnap_dev *)bs_dev;
+
+	ut_dev->ut_opts.destroyed = destroyed;
+}
+
 static struct spdk_io_channel *
 ut_esnap_create_channel(struct spdk_bs_dev *dev)
 {
