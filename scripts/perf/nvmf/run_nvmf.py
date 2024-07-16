@@ -1834,9 +1834,14 @@ if __name__ == "__main__":
         data = json.load(config)
 
     initiators = []
-    general_config = data["general"]
-    target_config = data["target"]
+    fio_config = data.get("fio", None)
+    general_config = data.get("general", None)
+    target_config = data.get("target", None)
     initiator_configs = [data[x] for x in data.keys() if "initiator" in x]
+
+    if not all([fio_config, general_config, target_config, initiator_configs]):
+        logging.error("Config file missing key information. Make sure all required sections are filled out.")
+        sys.exit(1)
 
     if not validate_allowlist_settings(data, args.force):
         exit(1)
