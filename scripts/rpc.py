@@ -24,6 +24,7 @@ sys.path.append(os.path.dirname(__file__) + '/../python')
 import spdk.rpc as rpc  # noqa
 from spdk.rpc.client import print_dict, print_json, JSONRPCException  # noqa
 from spdk.rpc.helpers import deprecated_aliases  # noqa
+from spdk.rpc.nvme_passthru_cmd import hex_int  # noqa
 
 
 def print_array(a):
@@ -1361,6 +1362,98 @@ if __name__ == "__main__":
                               help='Display health log of the required NVMe bdev controller.')
     p.add_argument('-c', '--name', help="Name of the NVMe bdev controller. Example: Nvme0", required=True)
     p.set_defaults(func=bdev_nvme_get_controller_health_info)
+
+    def bdev_nvme_admin_passthru(args):
+        rpc.nvme_passthru_cmd.bdev_nvme_admin_passthru(client=args.client,
+                                                       name=args.name,
+                                                       opcode=args.opcode,
+                                                       fuse=args.fuse,
+                                                       rsvd=args.rsvd,
+                                                       nsid=args.nsid,
+                                                       cdw2=args.cdw2,
+                                                       cdw3=args.cdw3,
+                                                       cdw10=args.cdw10,
+                                                       cdw11=args.cdw11,
+                                                       cdw12=args.cdw12,
+                                                       cdw13=args.cdw13,
+                                                       cdw14=args.cdw14,
+                                                       cdw15=args.cdw15,
+                                                       read=args.c2h,
+                                                       write=args.h2c,
+                                                       data=args.data,
+                                                       metadata=args.metadata,
+                                                       data_len=args.data_length,
+                                                       metadata_len=args.metadata_length,
+                                                       timeout_ms=args.timeout_ms)
+
+    p = subparsers.add_parser('bdev_nvme_admin_passthru', help='NVMe admin passthrough cmd.')
+    p.add_argument('-c', '--name', help="Name of the NVMe bdev controller. Example: Nvme0", required=True)
+    p.add_argument('--opcode', help="opcode (required)", type=hex_int, required=True)
+    p.add_argument('--fuse', help="Fused Operation [0, 1, 2, 3]", type=hex_int)
+    p.add_argument('--rsvd', help="value for reserved field", type=hex_int)
+    p.add_argument('--nsid', help="namespace id", type=hex_int)
+    p.add_argument('--cdw2', help="command dword 2 value", type=hex_int)
+    p.add_argument('--cdw3', help="command dword 3 value", type=hex_int)
+    p.add_argument('--cdw10', help="command dword 10 value", type=hex_int)
+    p.add_argument('--cdw11', help="command dword 11 value", type=hex_int)
+    p.add_argument('--cdw12', help="command dword 12 value", type=hex_int)
+    p.add_argument('--cdw13', help="command dword 13 value", type=hex_int)
+    p.add_argument('--cdw14', help="command dword 14 value", type=hex_int)
+    p.add_argument('--cdw15', help="command dword 15 value", type=hex_int,)
+    p.add_argument('-d', '--data', help="data input or output file.")
+    p.add_argument('-m', '--metadata', help="metadata input or output file.")
+    p.add_argument('-D', '--data-length', help="data I/O length (bytes)",
+                   type=hex_int)
+    p.add_argument('-M', '--metadata-length', help="metadata length (bytes)",
+                   type=hex_int)
+    p.add_argument('-r', '--read', help="set dataflow direction to receive(controller to host)", dest="c2h",
+                   action='store_true')
+    p.add_argument('-w', '--write', help="set dataflow direction to send(host to controller)", dest="h2c",
+                   action='store_true')
+    p.add_argument('-T', '--timeout-ms',
+                   help="Command execution timeout value, in milliseconds,  if 0, don't track timeout",
+                   type=hex_int)
+    p.set_defaults(func=bdev_nvme_admin_passthru)
+
+    def bdev_nvme_fw_slot_info(args):
+        rpc.nvme_passthru_cmd.bdev_nvme_firmware_slot_info(client=args.client,
+                                                           name=args.name)
+
+    p = subparsers.add_parser('bdev_nvme_fw_slot_info',
+                              help='Display firmware slot information of the required NVMe bdev controller.')
+    p.add_argument('-c', '--name', help="Name of the NVMe bdev controller. Example: Nvme0", required=True)
+    p.set_defaults(func=bdev_nvme_fw_slot_info)
+
+    def bdev_nvme_fw_download(args):
+        rpc.nvme_passthru_cmd.bdev_nvme_firmware_download(client=args.client,
+                                                          name=args.name,
+                                                          filename=args.filename,
+                                                          xfer=args.xfer,
+                                                          offset=args.offset)
+
+    p = subparsers.add_parser('bdev_nvme_fw_download',
+                              help='Download the new firmware to the given NVMe bdev controller.')
+    p.add_argument('-c', '--name', help="Name of the NVMe bdev controller. Example: Nvme0", required=True)
+    p.add_argument('-f', '--filename', help='filename of the firmware to download', type=str, required=True)
+    p.add_argument('-x', '--xfer', help='transfer chunksize limit', type=hex_int)
+    p.add_argument('-o', '--offset', help='starting dword offset, default 0', default=0, type=hex_int)
+    p.set_defaults(func=bdev_nvme_fw_download)
+
+    def bdev_nvme_fw_commit(args):
+        rpc.nvme_passthru_cmd.bdev_nvme_firmware_commit(client=args.client,
+                                                        name=args.name,
+                                                        ca=args.action,
+                                                        fs=args.slot,
+                                                        bpid=args.bpid)
+
+    p = subparsers.add_parser('bdev_nvme_fw_commit',
+                              help='Download the new firmware to the given NVMe bdev controller.')
+    p.add_argument('-c', '--name', help="Name of the NVMe bdev controller. Example: Nvme0", required=True)
+    p.add_argument('-s', '--slot', help='[0-7]: firmware slot for commit', type=hex_int)
+    p.add_argument('-a', '--action', help='[0-7]: commit action', type=hex_int)
+    p.add_argument('-b', '--bpid', help='[0, 1]: boot partition identifier, if applicable (default: 0)',
+                   default=0, type=hex_int)
+    p.set_defaults(func=bdev_nvme_fw_commit)
 
     # iSCSI
     def iscsi_set_options(args):
