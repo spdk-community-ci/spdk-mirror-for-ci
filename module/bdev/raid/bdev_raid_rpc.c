@@ -635,3 +635,75 @@ rpc_bdev_raid_set_options(struct spdk_jsonrpc_request *request, const struct spd
 }
 SPDK_RPC_REGISTER("bdev_raid_set_options", rpc_bdev_raid_set_options,
 		  SPDK_RPC_STARTUP | SPDK_RPC_RUNTIME)
+
+
+struct rpc_bdev_raid_start {
+	/* raid bdev name */
+	char *name;
+};
+
+static const struct spdk_json_object_decoder rpc_bdev_raid_start_decoders[] = {
+	{"name", offsetof(struct rpc_bdev_raid_start, name), spdk_json_decode_string},
+};
+
+struct rpc_bdev_raid_start_ctx {
+	struct rpc_bdev_raid_start req;
+	struct spdk_jsonrpc_request *request;
+};
+
+static void
+free_rpc_bdev_raid_start(struct rpc_bdev_raid_start *req)
+{
+	free(req->name);
+}
+
+/*
+ * brief:
+ * rpc_bdev_raid_start function is the RPC for starting a raid controller for raid bdev.
+ * It takes raid name as input and switch it's state from CONFIGURING to ONLINE.
+ * params:
+ * request - pointer to json rpc request
+ * params - pointer to request parameters
+ * returns:
+ * none
+ */
+static void
+rpc_bdev_raid_start(struct spdk_jsonrpc_request *request,
+		    const struct spdk_json_val *params)
+{
+	struct rpc_bdev_raid_start_ctx *ctx;
+	struct raid_bdev *raid_bdev;
+
+	ctx = calloc(1, sizeof(*ctx));
+	if (!ctx) {
+		spdk_jsonrpc_send_error_response(request, -ENOMEM, spdk_strerror(ENOMEM));
+		return;
+	}
+
+	if (spdk_json_decode_object(params, rpc_bdev_raid_start_decoders,
+				    SPDK_COUNTOF(rpc_bdev_raid_start_decoders),
+				    &ctx->req)) {
+		spdk_jsonrpc_send_error_response(request, SPDK_JSONRPC_ERROR_PARSE_ERROR,
+						 "spdk_json_decode_object failed");
+		goto cleanup;
+	}
+
+	raid_bdev = raid_bdev_find_by_name(ctx->req.name);
+	if (raid_bdev == NULL) {
+		spdk_jsonrpc_send_error_response_fmt(request, -ENODEV,
+						     "raid bdev %s not found",
+						     ctx->req.name);
+		goto cleanup;
+	}
+
+	ctx->request = request;
+
+	bdev_raid_start(raid_bdev);
+
+	return;
+
+cleanup:
+	free_rpc_bdev_raid_start(&ctx->req);
+	free(ctx);
+}
+SPDK_RPC_REGISTER("bdev_raid_start", rpc_bdev_raid_start, SPDK_RPC_RUNTIME)

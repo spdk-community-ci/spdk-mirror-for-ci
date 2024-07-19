@@ -557,5 +557,6 @@ struct spdk_raid_bdev_opts {
 
 void raid_bdev_get_opts(struct spdk_raid_bdev_opts *opts);
 int raid_bdev_set_opts(const struct spdk_raid_bdev_opts *opts);
+void bdev_raid_start(struct raid_bdev *raid_bdev);
 
 #endif /* SPDK_BDEV_RAID_INTERNAL_H */

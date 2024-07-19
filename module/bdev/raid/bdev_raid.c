@@ -3815,5 +3815,12 @@ done:
 	spdk_bdev_module_examine_done(&g_raid_if);
 }
 
+void
+bdev_raid_start(struct raid_bdev *raid_bdev)
+{
+	raid_bdev_configure(raid_bdev);
+	return;
+}
+
 /* Log component for bdev raid bdev module */
 SPDK_LOG_REGISTER_COMPONENT(bdev_raid)

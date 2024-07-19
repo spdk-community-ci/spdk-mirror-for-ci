@@ -2263,6 +2263,13 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
     p.add_argument('name', help='raid bdev name')
     p.set_defaults(func=bdev_raid_delete)
 
+    def bdev_raid_start(args):
+        rpc.bdev.bdev_raid_start(args.client,
+                                 name=args.name)
+    p = subparsers.add_parser('bdev_raid_start', help='Start existing raid bdev')
+    p.add_argument('name', help='raid bdev name')
+    p.set_defaults(func=bdev_raid_start)
+
     def bdev_raid_add_base_bdev(args):
         rpc.bdev.bdev_raid_add_base_bdev(args.client,
                                          raid_bdev=args.raid_bdev,

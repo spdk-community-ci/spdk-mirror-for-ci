@@ -11111,6 +11111,16 @@ Example response:
 }
 ~~~
 
+### bdev_raid_start {#rpc_bdev_raid_start}
+
+Start RAID bdev.
+
+#### Parameters
+
+Name                    | Optional | Type        | Description
+----------------------- | -------- | ----------- | -----------
+name                    | Required | string      | RAID bdev name
+
 ### bdev_raid_add_base_bdev {#rpc_bdev_raid_add_base_bdev}
 
 Add base bdev to existing raid bdev. The raid bdev must have an empty base bdev slot.
