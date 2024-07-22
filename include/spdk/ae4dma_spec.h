@@ -34,6 +34,13 @@ enum spdk_ae4dma_dma_status {
 	AE4DMA_DMA_DESC_ERROR = 4,
 };
 
+/* HW Queue status */
+enum spdk_ae4dma_hwqueue_status {
+	AE4DMA_HWQUEUE_EMPTY = 0,
+	AE4DMA_HWQUEUE_FULL = 1,
+	AE4DMA_HWQUEUE_NOT_EMPTY = 4
+};
+
 #define AE4DMA_CMD_QUEUE_ENABLE	0x1
 
 /** Common to all queues */

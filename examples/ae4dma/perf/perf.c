@@ -73,9 +73,9 @@ construct_user_config(struct user_config *self)
 {
 	self->xfer_size_bytes = 4096;
 	self->ae4dma_chan_num = 1;
-	self->ae4dma_hw_queues = 16;
+	self->ae4dma_hw_queues = AE4DMA_MAX_HWQUEUES_PERDEVICE ;
 	self->queue_depth = 32;
-	self->time_in_sec = 1;
+	self->time_in_sec = 5;
 	self->verify = false;
 	self->core_mask = "0x1";
 }
@@ -108,18 +108,6 @@ ae4dma_exit(void)
 	}
 }
 
-static void
-ae4dma_done(void *cb_arg)
-{
-	struct ae4dma_task *ae4dma_task = (struct ae4dma_task *)cb_arg;
-	struct ae4dma_chan_entry *ae4dma_chan_entry = ae4dma_task->ae4dma_chan_entry;
-
-	if (memcmp(ae4dma_task->src, ae4dma_task->dst, g_user_config.xfer_size_bytes)) {
-		ae4dma_chan_entry->xfer_failed++;
-	} else {
-		ae4dma_chan_entry->xfer_completed++;
-	}
-}
 
 static int
 register_workers(void)
@@ -273,6 +261,42 @@ parse_args(int argc, char **argv)
 	return 0;
 }
 
+static void
+drain_io(struct ae4dma_chan_entry *ae4dma_chan_entry)
+{
+	spdk_ae4dma_flush(ae4dma_chan_entry->chan);
+	while (ae4dma_chan_entry->current_queue_depth > 0) {
+		spdk_ae4dma_process_events(ae4dma_chan_entry->chan);
+	}
+}
+
+static void
+ae4dma_done(void *cb_arg)
+{
+	struct ae4dma_task *ae4dma_task = (struct ae4dma_task *)cb_arg;
+	struct ae4dma_chan_entry *ae4dma_chan_entry = ae4dma_task->ae4dma_chan_entry;
+
+	if (g_user_config.verify &&
+	    memcmp(ae4dma_task->src, ae4dma_task->dst, g_user_config.xfer_size_bytes)) {
+		ae4dma_chan_entry->xfer_failed++;
+	} else {
+		ae4dma_chan_entry->xfer_completed++;
+	}
+
+	if (ae4dma_chan_entry->current_queue_depth) {
+		ae4dma_chan_entry->current_queue_depth--;
+	}
+
+	if (ae4dma_chan_entry->is_draining) {
+		spdk_mempool_put(ae4dma_chan_entry->data_pool, ae4dma_task->src);
+		spdk_mempool_put(ae4dma_chan_entry->data_pool, ae4dma_task->dst);
+		spdk_mempool_put(ae4dma_chan_entry->task_pool, ae4dma_task);
+	} else {
+		submit_single_xfer(ae4dma_chan_entry, ae4dma_task, ae4dma_task->dst, ae4dma_task->src);
+	}
+}
+
+
 static int
 submit_single_xfer(struct ae4dma_chan_entry *ae4dma_chan_entry, struct ae4dma_task *ae4dma_task,
 		   void *dst,
@@ -282,10 +306,10 @@ submit_single_xfer(struct ae4dma_chan_entry *ae4dma_chan_entry, struct ae4dma_ta
 	ae4dma_task->src = src;
 	ae4dma_task->dst = dst;
 
-	if (spdk_ae4dma_build_copy(ae4dma_chan_entry->chan, ae4dma_task, ae4dma_done, dst, src,
-				   g_user_config.xfer_size_bytes)) {
-		return 1 ;
-	}
+	spdk_ae4dma_build_copy(ae4dma_chan_entry->chan, ae4dma_task, ae4dma_done, dst, src,
+			       g_user_config.xfer_size_bytes);
+
+	spdk_ae4dma_flush(ae4dma_chan_entry->chan);
 
 	ae4dma_chan_entry->current_queue_depth++;
 
@@ -299,31 +323,16 @@ submit_xfers(struct ae4dma_chan_entry *ae4dma_chan_entry, uint64_t queue_depth)
 		void *src = NULL, *dst = NULL;
 		struct ae4dma_task *ae4dma_task = NULL;
 
-		src = spdk_dma_zmalloc((g_user_config.xfer_size_bytes * (g_user_config.ae4dma_hw_queues)), ALIGN_4K,
-				       NULL);
-		dst = spdk_dma_zmalloc((g_user_config.xfer_size_bytes * (g_user_config.ae4dma_hw_queues)), ALIGN_4K,
-				       NULL);
+		src = spdk_mempool_get(ae4dma_chan_entry->data_pool);
+		dst = spdk_mempool_get(ae4dma_chan_entry->data_pool);
 
-		ae4dma_task = calloc((g_user_config.ae4dma_hw_queues), sizeof(struct ae4dma_task));
+		ae4dma_task = spdk_mempool_get(ae4dma_chan_entry->task_pool);
 		if (!ae4dma_task) {
 			fprintf(stderr, "Unable to get ae4dma_task\n");
 			return 1;
 		}
 
-		/* for testing */
-		/* memset(src, DATA_PATTERN, g_user_config.xfer_size_bytes); */
-
 		submit_single_xfer(ae4dma_chan_entry, ae4dma_task, dst, src);
-
-		/* Flushing the copy request */
-		spdk_ae4dma_flush(ae4dma_chan_entry->chan);
-
-		spdk_ae4dma_process_events(ae4dma_chan_entry->chan);
-
-		spdk_dma_free(src);
-		spdk_dma_free(dst);
-		free(ae4dma_task);
-
 	}
 	return 0;
 }
@@ -344,11 +353,29 @@ work_fn(void *arg)
 		t->waiting_for_flush = 0;
 		t->flush_threshold = g_user_config.queue_depth / 2;
 
-		do {
-			if (submit_xfers(t, g_user_config.queue_depth) != 0) {
-				return 1;
-			}
-		} while (spdk_get_ticks() < tsc_end);
+		if (submit_xfers(t, g_user_config.queue_depth) != 0) {
+			return 1;
+		}
+		t = t->next;
+	}
+
+	while (1) {
+		t = worker->ctx;
+		while (t != NULL) {
+			spdk_ae4dma_process_events(t->chan);
+			t = t->next;
+		}
+
+		if (spdk_get_ticks() > tsc_end) {
+			break;
+		}
+	}
+
+	t = worker->ctx;
+	while (t != NULL) {
+		/* begin to drain io */
+		t->is_draining = true;
+		drain_io(t);
 		t = t->next;
 	}
 

@@ -15,7 +15,6 @@
 
 #define ALIGN_4K 0x1000
 #define MAX_RETRY 10
-#define AE4DMA_MAX_HWQUEUES_PERDEVICE 16
 #define AE4DMA_DESC_DEBUG 0
 
 uint32_t max_hw_q ;
@@ -64,22 +63,6 @@ ae4dma_unmap_pci_bar(struct spdk_ae4dma_chan *ae4dma)
 	return rc;
 }
 
-
-static inline uint32_t
-ae4dma_get_active(struct spdk_ae4dma_chan *ae4dma)
-{
-	uint32_t qno = ae4dma->hwq_index;
-	uint32_t head = ae4dma->cmd_q[qno].head;
-	uint32_t tail  = ae4dma->cmd_q[qno].tail;
-	return (head - tail) & ((AE4DMA_DESCRITPTORS_PER_CMDQ) - 1);
-}
-
-static inline uint32_t
-ae4dma_get_ring_space(struct spdk_ae4dma_chan *ae4dma)
-{
-	return (AE4DMA_DESCRITPTORS_PER_CMDQ) - ae4dma_get_active(ae4dma) - 1 ;
-}
-
 static void
 ae4dma_submit_single(struct spdk_ae4dma_chan *ae4dma)
 {
@@ -91,24 +74,18 @@ void
 spdk_ae4dma_flush(struct spdk_ae4dma_chan *ae4dma)
 {
 	uint32_t hwq;
-	uint32_t write_idx;
-	unsigned int desc_no;
+	volatile uint32_t write_idx;
 
-	/* To flush all the descs in all the HW queues */
-	for (hwq = 0 ; hwq < max_hw_q ; hwq++) {
-		desc_no = ae4dma->cmd_q[hwq].desc_index;
-		if (desc_no) {
+	/* To flush the updated descs by incrementing the write_index of the queue */
+	hwq = ae4dma->cp_hwq_index ;
 
-			ae4dma->cmd_q[hwq].write_index = (((ae4dma->cmd_q[hwq].write_index) + 1) %
-							  (AE4DMA_CMD_QUEUE_LEN + 1));
-			if (ae4dma->cmd_q[hwq].write_index  == 0) {
-				ae4dma->cmd_q[hwq].write_index++ ;
-			}
-			write_idx = ae4dma->cmd_q[hwq].write_index ;
-			spdk_mmio_write_4(&ae4dma->cmd_q[hwq].regs->write_idx, write_idx);
-			desc_no--;
-		}
-	}
+	write_idx = ae4dma->cmd_q[hwq].write_index;
+	write_idx = (write_idx + 1) % (AE4DMA_CMD_QUEUE_LEN);
+
+	spdk_mmio_write_4(&ae4dma->cmd_q[hwq].regs->write_idx, write_idx);
+
+	ae4dma->cmd_q[hwq].write_index = write_idx;
+	ae4dma->cmd_q[hwq].ring_buff_count++;
 }
 
 static struct ae4dma_descriptor *
@@ -117,36 +94,30 @@ ae4dma_prep_copy(struct spdk_ae4dma_chan *ae4dma, uint64_t dst,
 {
 	struct ae4dma_descriptor *desc;
 	uint32_t hwq;
-	uint32_t i ;
+	uint32_t desc_index ;
 
 	assert(len <= ae4dma->max_xfer_size);
-
-	if (ae4dma_core_queue_full(ae4dma)) {
-		return NULL;
-	}
-
 	hwq = hwq_index ;
 
-	i = ae4dma->cmd_q[hwq].desc_index;
-	desc = &ae4dma->cmd_q[hwq].ring[i];
+	desc_index = ae4dma->cmd_q[hwq].write_index;
+
+	desc = &ae4dma->cmd_q[hwq].ring[desc_index];
 	if (desc == NULL) {
-		SPDK_WARNLOG("desc at %d Q and %d ring is NULL\n", hwq, i);
+		SPDK_WARNLOG("desc at %d Q and %d ring is NULL\n", hwq, desc_index);
 		return NULL;
 	}
 
-	ae4dma->cmd_q[hwq].qbase_addr[i].dw0.byte0 = 0;
+	ae4dma->cmd_q[hwq].qbase_addr[desc_index].dw0.byte0 = 0;
+	ae4dma->cmd_q[hwq].qbase_addr[desc_index].dw1.status = 0;
+	ae4dma->cmd_q[hwq].qbase_addr[desc_index].dw1.err_code = 0;
+	ae4dma->cmd_q[hwq].qbase_addr[desc_index].dw1.desc_id  = 0;
+	ae4dma->cmd_q[hwq].qbase_addr[desc_index].length = len;
 
-	ae4dma->cmd_q[hwq].qbase_addr[i].dw1.status = 0;
-	ae4dma->cmd_q[hwq].qbase_addr[i].dw1.err_code = 0;
-	ae4dma->cmd_q[hwq].qbase_addr[i].dw1.desc_id  = 0;
-	ae4dma->cmd_q[hwq].qbase_addr[i].length = len;
+	ae4dma->cmd_q[hwq].qbase_addr[desc_index].src_lo = upper_32_bits(src);
+	ae4dma->cmd_q[hwq].qbase_addr[desc_index].src_hi = lower_32_bits(src);
+	ae4dma->cmd_q[hwq].qbase_addr[desc_index].dst_lo = upper_32_bits(dst);
+	ae4dma->cmd_q[hwq].qbase_addr[desc_index].dst_hi = lower_32_bits(dst);
 
-	ae4dma->cmd_q[hwq].qbase_addr[i].src_lo = upper_32_bits(src);
-	ae4dma->cmd_q[hwq].qbase_addr[i].src_hi = lower_32_bits(src);
-	ae4dma->cmd_q[hwq].qbase_addr[i].dst_lo = upper_32_bits(dst);
-	ae4dma->cmd_q[hwq].qbase_addr[i].dst_hi = lower_32_bits(dst);
-
-	ae4dma->cmd_q[hwq].desc_index = (ae4dma->cmd_q[hwq].desc_index + 1) % 32 ;
 	ae4dma_submit_single(ae4dma);
 	return desc;
 }
@@ -155,37 +126,40 @@ int
 spdk_ae4dma_build_copy(struct spdk_ae4dma_chan *ae4dma, void *cb_arg, spdk_ae4dma_req_cb cb_fn,
 		       void *dst, const void *src, uint64_t nbytes)
 {
-	struct ae4dma_descriptor        *last_desc;
+	struct ae4dma_descriptor        *cb_desc;
 	uint64_t        vdst, vsrc;
-	uint32_t        orig_head, hwq;
+	uint32_t	hwq;
 
 	if (!ae4dma) {
 		printf("%s, error\n", __func__);
 		return -EINVAL;
 	}
-
 	vdst = (uint64_t)dst;
 	vsrc = (uint64_t)src;
 
-	/* for loop for all the HW q here */
-	for (hwq = 0; hwq < max_hw_q; hwq++) {
-		orig_head = ae4dma->cmd_q[hwq].head;
+	ae4dma->cp_hwq_index = ae4dma->hwq_index;
+	hwq = ae4dma->hwq_index;
 
-		last_desc = ae4dma_prep_copy(ae4dma, vdst, vsrc, nbytes, hwq);
+	if (ae4dma_core_queue_full(ae4dma) == AE4DMA_HWQUEUE_FULL) {
+		hwq = (hwq + 1) % AE4DMA_MAX_HW_QUEUES ;
+		ae4dma->cp_hwq_index = hwq;
+		ae4dma->hwq_index = hwq ;
 
-		if (last_desc) {
-			ae4dma->cmd_q[hwq].completion_event->callback_fn = cb_fn;
-			ae4dma->cmd_q[hwq].completion_event->callback_arg = cb_arg;
-		} else {
-			/*
-			 * Ran out of descriptors in the ring - reset head to leave things as they were
-			 * in case we managed to fill out any descriptors.
-			 */
-			ae4dma->cmd_q[hwq].head = orig_head;
-			return -ENOMEM;
-		}
-		vdst++;
-		vsrc++;
+	}
+
+	cb_desc = ae4dma_prep_copy(ae4dma, vdst, vsrc, nbytes, hwq);
+
+	if (cb_desc) {
+		cb_desc->callback_fn = cb_fn;
+		cb_desc->callback_arg = cb_arg;
+		hwq = (hwq + 1) % AE4DMA_MAX_HW_QUEUES ;
+		ae4dma->hwq_index =  hwq ;
+	} else {
+		/*
+		 * Ran out of descriptors in the ring - reset head to leave things as they were
+		 * in case we managed to fill out any descriptors.
+		 */
+		return -ENOMEM;
 	}
 
 	return 0;
@@ -195,38 +169,51 @@ static int
 ae4dma_process_channel_events(struct spdk_ae4dma_chan *ae4dma)
 {
 	struct spdk_ae4dma_desc *hw_desc;
-	uint64_t events_count = 0;
-	uint32_t   read_ix, hwqno;
-	uint32_t desc_status;
+	uint32_t events_count = 0;
+	volatile uint32_t   tail, read_ix;
+	uint32_t desc_status, hwqno;
 	uint8_t retry_count = MAX_RETRY;
 
-	for (hwqno = 0 ; hwqno < max_hw_q ; hwqno++) {
-		read_ix = spdk_mmio_read_4(&ae4dma->cmd_q[hwqno].regs->read_idx);
-		while (ae4dma->cmd_q[hwqno].tail !=
-		       read_ix) {      /* to process all the pending read_ix from previous run */
-			desc_status = 0;
-			retry_count = MAX_RETRY;
-			do {
-				spdk_delay_us(1);
-				hw_desc = &ae4dma->cmd_q[hwqno].qbase_addr[ae4dma->cmd_q[hwqno].tail];
-				desc_status = hw_desc->dw1.status;
-				if (desc_status) {
-					if (desc_status != AE4DMA_DMA_DESC_COMPLETED) {
-#if AE4DMA_DESC_DEBUG
-						SPDK_DEBUGLOG("Desc error code : %d\n", hw_desc->dw1.err_code);
-#endif
-					}
+	hwqno = ae4dma->cp_hwq_index;
+	tail = ae4dma->cmd_q[hwqno].tail;
 
-					if (ae4dma->cmd_q[hwqno].completion_event->callback_fn) {
-						ae4dma->cmd_q[hwqno].completion_event->callback_fn(
-							ae4dma->cmd_q[hwqno].completion_event->callback_arg);
-					}
+	read_ix = spdk_mmio_read_4(&ae4dma->cmd_q[hwqno].regs->read_idx);
+
+	/* To process all the pending read_ix (including any from previous runs) */
+	while (tail != read_ix) {
+		desc_status = 0;
+		retry_count = MAX_RETRY;
+		do {
+			hw_desc = &ae4dma->cmd_q[hwqno].qbase_addr[tail];
+			desc_status = hw_desc->dw1.status;
+			if (desc_status) {
+				if (desc_status != AE4DMA_DMA_DESC_COMPLETED) {
+#if AE4DMA_DESC_DEBUG
+					SPDK_DEBUGLOG("Desc error code : %d\n", hw_desc->dw1.err_code);
+#endif
 				}
-			} while (!desc_status && retry_count --);
-			ae4dma->cmd_q[hwqno].tail = (ae4dma->cmd_q[hwqno].tail + 1) % AE4DMA_CMD_QUEUE_LEN;
-			events_count++;
+				if (ae4dma->cmd_q[hwqno].ring[tail].callback_fn) {
+					ae4dma->cmd_q[hwqno].ring[tail].callback_fn(
+						ae4dma->cmd_q[hwqno].ring[tail].callback_arg);
+				}
+
+				ae4dma->cmd_q[hwqno].ring_buff_count--;
+				events_count++;
+			}
+		} while (!desc_status && retry_count --);
+
+		tail = (tail + 1) % AE4DMA_CMD_QUEUE_LEN;
+	}
+
+	if (events_count == 0) {
+		int wi = (ae4dma->cmd_q[hwqno].write_index) - 1;
+		if (wi < 0) { wi += AE4DMA_CMD_QUEUE_LEN; };
+		if (ae4dma->cmd_q[hwqno].ring[wi].callback_fn) {
+			ae4dma->cmd_q[hwqno].ring[wi].callback_fn(
+				ae4dma->cmd_q[hwqno].ring[wi].callback_arg);
 		}
 	}
+
 	return events_count;
 }
 
@@ -244,10 +231,6 @@ ae4dma_channel_destruct(struct spdk_ae4dma_chan *ae4dma)
 		if (ae4dma->cmd_q[ae4dma->hwq_index].qbase_addr) {
 			spdk_free(ae4dma->cmd_q[ae4dma->hwq_index].qbase_addr);
 		}
-
-		if (ae4dma->cmd_q[ae4dma->hwq_index].completion_event) {
-			free(ae4dma->cmd_q[ae4dma->hwq_index].completion_event);
-		}
 	}
 }
 
@@ -260,23 +243,23 @@ spdk_ae4dma_get_max_descriptors(struct spdk_ae4dma_chan *ae4dma)
 static int
 ae4dma_channel_start(uint8_t hw_queues, struct spdk_ae4dma_chan *ae4dma)
 {
-	uint32_t  num_descriptors;
 	uint32_t i;
-
 	void   *ae4dma_mmio_base_addr;
 	struct ae4dma_cmd_queue *cmd_q;
 	uint32_t dma_queue_base_addr_low, dma_queue_base_addr_hi;
-	uint32_t q_per_eng = hw_queues;//max_hw_q;
+	uint32_t q_per_eng = hw_queues;
 
 	if (ae4dma_map_pci_bar(ae4dma) != 0) {
 		SPDK_ERRLOG("ae4dma_map_pci_bar() failed\n");
 		return -1;
 	}
 	ae4dma_mmio_base_addr = (uint8_t *)ae4dma->io_regs;
+
 	/* Always support DMA copy */
 	ae4dma->dma_capabilities = SPDK_AE4DMA_ENGINE_COPY_SUPPORTED;
 	ae4dma->max_xfer_size = 1ULL << 32;
 	ae4dma->hwq_index = 0;
+	ae4dma->cp_hwq_index = 0;
 	max_hw_q = hw_queues;
 
 	/* Set the number of HW queues for this AE4DMA engine. */
@@ -286,25 +269,20 @@ ae4dma_channel_start(uint8_t hw_queues, struct spdk_ae4dma_chan *ae4dma)
 	/* Filling up cmd_q; there would be 'n' cmd_q's for 'n' q_per_eng */
 	for (i = 0; i < q_per_eng; i++) {
 
-		/* ae4dma queue initialization */
-		cmd_q = &ae4dma->cmd_q[i]; /* i th cmd_q(total 16) */
+		/* AE4DMA queue initialization */
+
+		/* i th cmd_q(total 16) */
+		cmd_q = &ae4dma->cmd_q[i];
 		ae4dma->cmd_q_count++;
 
 		/* Initialize each queue's HW registers (8 dwords: 32 bytes(0x20)) */
 		cmd_q->regs = (volatile struct spdk_ae4dma_hwq_regs *)ae4dma->io_regs + (i + 1);
 
-		/* queue_size: 32*sizeof(struct ae4dmadma_desc) */
+		/* Queue_size: 32*sizeof(struct ae4dmadma_desc) */
 		cmd_q->queue_size = AE4DMA_QUEUE_SIZE(AE4DMA_QUEUE_DESC_SIZE);
 
-		ae4dma->cmd_q[i].completion_event = (struct  ae4dma_completion_event *)calloc(1,
-						    sizeof(struct ae4dma_completion_event));
-		if (ae4dma->cmd_q[i].completion_event == NULL) {
-			SPDK_ERRLOG("Failed to allocate completion_event memory\n");
-			return ENOMEM;
-		}
-
-		/* dma'ble desc address - for each cmd_q  */
-		cmd_q->qbase_addr = spdk_zmalloc(AE4DMA_CMD_QUEUE_LEN * sizeof(struct spdk_ae4dma_desc), 64, NULL,
+		/* DMA'ble desc address - for each cmd_q  */
+		cmd_q->qbase_addr = spdk_zmalloc(AE4DMA_CMD_QUEUE_LEN * sizeof(struct spdk_ae4dma_desc), 32, NULL,
 						 SPDK_ENV_LCORE_ID_ANY,
 						 SPDK_MALLOC_DMA);
 		cmd_q->qring_buffer_pa = spdk_vtophys(cmd_q->qbase_addr, NULL);
@@ -316,13 +294,11 @@ ae4dma_channel_start(uint8_t hw_queues, struct spdk_ae4dma_chan *ae4dma)
 
 		cmd_q->q_cmd_count = 0;
 
-		spdk_mmio_write_4(&cmd_q->regs->read_idx, 0);
-		spdk_mmio_write_4(&cmd_q->regs->write_idx, 0);
 		cmd_q->write_index = spdk_mmio_read_4(&cmd_q->regs->write_idx);
 	}
 
 	if (ae4dma->cmd_q_count == 0) {
-		printf("no command queues available\n");
+		SPDK_ERRLOG("no command queues available\n");
 		return -1;
 	}
 
@@ -335,8 +311,10 @@ ae4dma_channel_start(uint8_t hw_queues, struct spdk_ae4dma_chan *ae4dma)
 		cmd_q->head = 0;
 		cmd_q->tail = 0;
 		cmd_q->desc_index = 0;
+		cmd_q->ring_buff_count = 0;
 
 		/* Update the device registers with queue information. */
+
 		/* Max Index (cmd queue length) */
 		spdk_mmio_write_4(&cmd_q->regs->max_idx, AE4DMA_CMD_QUEUE_LEN);
 
@@ -353,15 +331,11 @@ ae4dma_channel_start(uint8_t hw_queues, struct spdk_ae4dma_chan *ae4dma)
 		spdk_mmio_write_4(&cmd_q->regs->control_reg.control_raw, AE4DMA_CMD_QUEUE_ENABLE);
 		spdk_mmio_write_4(&cmd_q->regs->intr_status_reg.intr_status_raw, 0x1);
 
-		num_descriptors = AE4DMA_DESCRITPTORS_PER_CMDQ;
-
-		cmd_q->ring = calloc(num_descriptors, sizeof(struct ae4dma_descriptor));
+		cmd_q->ring = calloc(AE4DMA_DESCRITPTORS_PER_CMDQ, sizeof(struct ae4dma_descriptor));
 		if (!cmd_q->ring) {
 			return ENOMEM;
 		}
 	}
-
-	ae4dma->last_seen = 0;
 
 	return 0;
 }
@@ -447,7 +421,7 @@ spdk_ae4dma_probe(void *cb_ctx, spdk_ae4dma_probe_cb probe_cb, spdk_ae4dma_attac
 
 	enum_ctx.probe_cb = probe_cb;
 	enum_ctx.attach_cb = attach_cb;
-	enum_ctx.hw_queues = AE4DMA_MAX_HWQUEUES_PERDEVICE ;
+	enum_ctx.hw_queues =  AE4DMA_MAX_HW_QUEUES;
 	enum_ctx.cb_ctx = cb_ctx;
 
 	rc = spdk_pci_enumerate(spdk_pci_ae4dma_get_driver(), ae4dma_enum_cb, &enum_ctx);
@@ -476,20 +450,25 @@ spdk_ae4dma_detach(struct spdk_ae4dma_chan *ae4dma)
 static int
 ae4dma_core_queue_full(struct spdk_ae4dma_chan *ae4dma)
 {
-	uint32_t queue_status;
 	uint32_t hwq;
+	uint32_t read_idx, write_idx;
 
 	hwq = ae4dma->hwq_index;
 
+	/* Queue_status is not proper, so explicitly verifying queue_full
+	uint32_t queue_status;
 	queue_status = spdk_mmio_read_4(&ae4dma->cmd_q[hwq].regs->status_reg.status_raw) & 0x0E ;
+	queue_status >>= 0x1; */
 
-	queue_status >>= 0x1;
+	read_idx = spdk_mmio_read_4(&ae4dma->cmd_q[hwq].regs->read_idx);
+	write_idx =  spdk_mmio_read_4(&ae4dma->cmd_q[hwq].regs->write_idx);
 
-	if (queue_status == 1) {
-		return 1;
+	if (((write_idx + 1) % AE4DMA_CMD_QUEUE_LEN) == read_idx) {
+		return AE4DMA_HWQUEUE_FULL;
+	} else if (write_idx == read_idx) {
+		return AE4DMA_HWQUEUE_EMPTY;
 	}
-
-	return 0;
+	return AE4DMA_HWQUEUE_NOT_EMPTY;
 }
 
 

@@ -29,20 +29,13 @@
 #define AE4DMA_QUEUE_SIZE(n)  (AE4DMA_CMD_QUEUE_LEN * (n))
 
 struct ae4dma_descriptor {
-	uint64_t		phys_addr;
 	spdk_ae4dma_req_cb	callback_fn;
 	void			*callback_arg;
 };
-struct ae4dma_completion_event {
-	spdk_ae4dma_req_cb	callback_fn;
-	void			*callback_arg;
-};
-
 
 struct ae4dma_cmd_queue {
 
 	volatile struct spdk_ae4dma_hwq_regs *regs;
-	struct	ae4dma_completion_event *completion_event;
 
 	/* Queue base address */
 	struct spdk_ae4dma_desc *qbase_addr;
@@ -58,12 +51,10 @@ struct ae4dma_cmd_queue {
 	uint64_t qring_buffer_pa;
 	uint64_t qdma_tail;
 
-	unsigned int active;
-	unsigned int suspended;
-
 	/* Queue Statistics */
 	uint64_t q_cmd_count;
 	uint32_t write_index;
+	uint32_t ring_buff_count;
 
 	volatile unsigned long desc_id_counter;
 
@@ -74,10 +65,8 @@ struct spdk_ae4dma_chan {
 	struct    spdk_pci_device *device;
 	uint64_t  max_xfer_size;
 
-	uint64_t            last_seen;
-	uint64_t            ring_size_order;
-
 	uint32_t	hwq_index;
+	uint32_t        cp_hwq_index;
 
 	/* I/O area used for device communication */
 	void *io_regs;

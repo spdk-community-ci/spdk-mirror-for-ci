@@ -919,7 +919,7 @@ accel_done(void *arg1, int status)
 		task = _get_task(worker);
 		_submit_single(worker, task);
 	} else {
-		TAILQ_INSERT_TAIL(&worker->tasks_pool, task, link);
+		/* TAILQ_INSERT_TAIL(&worker->tasks_pool, task, link); */
 	}
 }
 
@@ -985,9 +985,8 @@ _check_draining(void *arg)
 	struct worker_thread *worker = arg;
 
 	assert(worker);
-	if (worker->current_queue_depth <= (uint64_t) g_queue_depth) {
-		/* temp check for occasional EAL invalid memory error
-		_free_task_buffers_in_pool(worker); */
+	if (worker->current_queue_depth == 0) {
+		_free_task_buffers_in_pool(worker);
 		spdk_poller_unregister(&worker->is_draining_poller);
 		unregister_worker(worker);
 	}
