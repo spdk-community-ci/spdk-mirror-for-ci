@@ -83,7 +83,7 @@ function fix_up_commit_msg() {
 while getopts "d:ht:u:" opt; do
 	case "${opt}" in
 		d)
-			BACKPORT_DIR="$OPTARG"
+			BACKPORT_DIR=$(realpath "$OPTARG")
 			SPDK_DIR="$BACKPORT_DIR/spdk"
 			CHERRY_PICK_TEMP="$BACKPORT_DIR/cherry-temp"
 			;;
