@@ -17,10 +17,7 @@
 #define MAX_RETRY 10
 #define AE4DMA_DESC_DEBUG 0
 
-<<<<<<< HEAD
 uint32_t max_hw_q;
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 
 static int ae4dma_core_queue_full(struct spdk_ae4dma_chan *ae4dma);
 
@@ -66,9 +63,6 @@ ae4dma_unmap_pci_bar(struct spdk_ae4dma_chan *ae4dma)
 	return rc;
 }
 
-<<<<<<< HEAD
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 static void
 ae4dma_submit_single(struct spdk_ae4dma_chan *ae4dma)
 {
@@ -79,7 +73,6 @@ ae4dma_submit_single(struct spdk_ae4dma_chan *ae4dma)
 void
 spdk_ae4dma_flush(struct spdk_ae4dma_chan *ae4dma)
 {
-<<<<<<< HEAD
 	uint32_t hwq;
 	volatile uint32_t write_idx;
 
@@ -93,8 +86,6 @@ spdk_ae4dma_flush(struct spdk_ae4dma_chan *ae4dma)
 
 	ae4dma->cmd_q[hwq].write_index = write_idx;
 	ae4dma->cmd_q[hwq].ring_buff_count++;
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 }
 
 static struct ae4dma_descriptor *
@@ -102,16 +93,12 @@ ae4dma_prep_copy(struct spdk_ae4dma_chan *ae4dma, uint64_t dst,
 		 uint64_t src, uint32_t len, uint32_t hwq_index)
 {
 	struct ae4dma_descriptor *desc;
-<<<<<<< HEAD
 	uint32_t hwq;
 	uint32_t desc_index ;
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 
 	assert(len <= ae4dma->max_xfer_size);
 	hwq = hwq_index ;
 
-<<<<<<< HEAD
 	desc_index = ae4dma->cmd_q[hwq].write_index;
 
 	desc = &ae4dma->cmd_q[hwq].ring[desc_index];
@@ -130,15 +117,10 @@ ae4dma_prep_copy(struct spdk_ae4dma_chan *ae4dma, uint64_t dst,
 	ae4dma->cmd_q[hwq].qbase_addr[desc_index].src_hi = lower_32_bits(src);
 	ae4dma->cmd_q[hwq].qbase_addr[desc_index].dst_lo = upper_32_bits(dst);
 	ae4dma->cmd_q[hwq].qbase_addr[desc_index].dst_hi = lower_32_bits(dst);
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 
 	ae4dma_submit_single(ae4dma);
 
 	return desc;
-<<<<<<< HEAD
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 }
 
 int
@@ -147,18 +129,12 @@ spdk_ae4dma_build_copy(struct spdk_ae4dma_chan *ae4dma, void *cb_arg, spdk_ae4dm
 {
 	struct ae4dma_descriptor        *cb_desc;
 	uint64_t        vdst, vsrc;
-<<<<<<< HEAD
 	uint32_t	hwq;
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 
 	if (!ae4dma) {
 		printf("%s, error\n", __func__);
 		return -EINVAL;
 	}
-<<<<<<< HEAD
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 	vdst = (uint64_t)dst;
 	vsrc = (uint64_t)src;
 
@@ -172,7 +148,6 @@ spdk_ae4dma_build_copy(struct spdk_ae4dma_chan *ae4dma, void *cb_arg, spdk_ae4dm
 
 	}
 
-<<<<<<< HEAD
 	cb_desc = ae4dma_prep_copy(ae4dma, vdst, vsrc, nbytes, hwq);
 
 	if (cb_desc) {
@@ -180,16 +155,11 @@ spdk_ae4dma_build_copy(struct spdk_ae4dma_chan *ae4dma, void *cb_arg, spdk_ae4dm
 		cb_desc->callback_arg = cb_arg;
 		hwq = (hwq + 1) % AE4DMA_MAX_HW_QUEUES ;
 		ae4dma->hwq_index =  hwq ;
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 	} else {
 		/*
 		 * Ran out of descriptors in the ring - reset head to leave things as they were
 		 * in case we managed to fill out any descriptors.
 		 */
-<<<<<<< HEAD
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 		return -ENOMEM;
 	}
 
@@ -200,20 +170,14 @@ static int
 ae4dma_process_channel_events(struct spdk_ae4dma_chan *ae4dma)
 {
 	struct spdk_ae4dma_desc *hw_desc;
-<<<<<<< HEAD
 	uint32_t events_count = 0;
 	volatile uint32_t   tail, read_ix;
 	uint32_t desc_status, hwqno;
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 	uint8_t retry_count = MAX_RETRY;
 
-<<<<<<< HEAD
 	hwqno = ae4dma->cp_hwq_index;
 	tail = ae4dma->cmd_q[hwqno].tail;
 
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 	read_ix = spdk_mmio_read_4(&ae4dma->cmd_q[hwqno].regs->read_idx);
 
 	/* To process all the pending read_ix (including any from previous runs) */
@@ -221,14 +185,10 @@ ae4dma_process_channel_events(struct spdk_ae4dma_chan *ae4dma)
 		desc_status = 0;
 		retry_count = MAX_RETRY;
 		do {
-<<<<<<< HEAD
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 			hw_desc = &ae4dma->cmd_q[hwqno].qbase_addr[tail];
 			desc_status = hw_desc->dw1.status;
 			if (desc_status) {
 				if (desc_status != AE4DMA_DMA_DESC_COMPLETED) {
-<<<<<<< HEAD
 #if AE4DMA_DESC_DEBUG
 					SPDK_DEBUGLOG("Desc error code : %d\n", hw_desc->dw1.err_code);
 #endif
@@ -242,8 +202,6 @@ ae4dma_process_channel_events(struct spdk_ae4dma_chan *ae4dma)
 				events_count++;
 			}
 		} while (!desc_status && retry_count --);
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 
 		tail = (tail + 1) % AE4DMA_CMD_QUEUE_LEN;
 	}
@@ -255,6 +213,7 @@ ae4dma_process_channel_events(struct spdk_ae4dma_chan *ae4dma)
 				ae4dma->cmd_q[hwqno].ring[wi].callback_arg);
 		}
 	}
+
 	return events_count;
 }
 
@@ -272,9 +231,6 @@ ae4dma_channel_destruct(struct spdk_ae4dma_chan *ae4dma)
 		if (ae4dma->cmd_q[ae4dma->hwq_index].qbase_addr) {
 			spdk_free(ae4dma->cmd_q[ae4dma->hwq_index].qbase_addr);
 		}
-<<<<<<< HEAD
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 	}
 }
 
@@ -288,41 +244,31 @@ static int
 ae4dma_channel_start(uint8_t hw_queues, struct spdk_ae4dma_chan *ae4dma)
 {
 	uint32_t i;
-<<<<<<< HEAD
 	void   *ae4dma_mmio_base_addr;
 	struct ae4dma_cmd_queue *cmd_q;
 	uint32_t dma_queue_base_addr_low, dma_queue_base_addr_hi;
 	uint32_t q_per_eng = hw_queues;
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 
 	if (ae4dma_map_pci_bar(ae4dma) != 0) {
 		SPDK_ERRLOG("ae4dma_map_pci_bar() failed\n");
 		return -1;
 	}
-<<<<<<< HEAD
 	ae4dma_mmio_base_addr = (uint8_t *)ae4dma->io_regs;
 
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 	/* Always support DMA copy */
 	ae4dma->dma_capabilities = SPDK_AE4DMA_ENGINE_COPY_SUPPORTED;
 	ae4dma->max_xfer_size = 1ULL << 32;
 	ae4dma->hwq_index = 0;
-<<<<<<< HEAD
 	ae4dma->cp_hwq_index = 0;
 	max_hw_q = hw_queues;
 
 	/* Set the number of HW queues for this AE4DMA engine. */
 	spdk_mmio_write_4((ae4dma_mmio_base_addr + AE4DMA_COMMON_CONFIG_OFFSET), q_per_eng);
 	q_per_eng = spdk_mmio_read_4((ae4dma_mmio_base_addr + AE4DMA_COMMON_CONFIG_OFFSET));
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 
 	/* Filling up cmd_q; there would be 'n' cmd_q's for 'n' q_per_eng */
 	for (i = 0; i < q_per_eng; i++) {
 
-<<<<<<< HEAD
 		/* AE4DMA queue initialization */
 
 		/* i th cmd_q(total 16) */
@@ -342,16 +288,11 @@ ae4dma_channel_start(uint8_t hw_queues, struct spdk_ae4dma_chan *ae4dma)
 		cmd_q->qring_buffer_pa = spdk_vtophys(cmd_q->qbase_addr, NULL);
 
 		if (cmd_q->qring_buffer_pa == SPDK_VTOPHYS_ERROR) {
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 			SPDK_ERRLOG("Failed to translate descriptor %u to physical address\n", i);
 			return EFAULT;
 		}
 
 		cmd_q->q_cmd_count = 0;
-<<<<<<< HEAD
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 		cmd_q->write_index = spdk_mmio_read_4(&cmd_q->regs->write_idx);
 	}
 
@@ -368,19 +309,16 @@ ae4dma_channel_start(uint8_t hw_queues, struct spdk_ae4dma_chan *ae4dma)
 
 		cmd_q->head = 0;
 		cmd_q->tail = 0;
-<<<<<<< HEAD
 		cmd_q->desc_index = 0;
 		cmd_q->ring_buff_count = 0;
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 
 		/* Update the device registers with queue information. */
+
 		/* Max Index (cmd queue length) */
 		spdk_mmio_write_4(&cmd_q->regs->max_idx, AE4DMA_CMD_QUEUE_LEN);
 
 		cmd_q->qdma_tail = cmd_q->qring_buffer_pa;
 
-<<<<<<< HEAD
 		dma_queue_base_addr_low = lower_32_bits(cmd_q->qdma_tail);
 		spdk_mmio_write_4(&cmd_q->regs->qbase_lo, (uint32_t)dma_queue_base_addr_low);
 		dma_queue_base_addr_low = spdk_mmio_read_4(&cmd_q->regs->qbase_lo);
@@ -388,20 +326,15 @@ ae4dma_channel_start(uint8_t hw_queues, struct spdk_ae4dma_chan *ae4dma)
 		dma_queue_base_addr_hi = upper_32_bits(cmd_q->qdma_tail);
 		spdk_mmio_write_4(&cmd_q->regs->qbase_hi, (uint32_t)dma_queue_base_addr_hi);
 		dma_queue_base_addr_low = spdk_mmio_read_4(&cmd_q->regs->qbase_hi);
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 
 		spdk_mmio_write_4(&cmd_q->regs->control_reg.control_raw, AE4DMA_CMD_QUEUE_ENABLE);
 		spdk_mmio_write_4(&cmd_q->regs->intr_status_reg.intr_status_raw, 0x1);
 
-<<<<<<< HEAD
 		cmd_q->ring = calloc(AE4DMA_DESCRITPTORS_PER_CMDQ, sizeof(struct ae4dma_descriptor));
 		if (!cmd_q->ring) {
 			return ENOMEM;
 		}
 	}
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 	return 0;
 }
 
@@ -486,10 +419,7 @@ spdk_ae4dma_probe(void *cb_ctx, spdk_ae4dma_probe_cb probe_cb, spdk_ae4dma_attac
 
 	enum_ctx.probe_cb = probe_cb;
 	enum_ctx.attach_cb = attach_cb;
-<<<<<<< HEAD
 	enum_ctx.hw_queues = AE4DMA_MAX_HW_QUEUES;
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 	enum_ctx.cb_ctx = cb_ctx;
 
 	rc = spdk_pci_enumerate(spdk_pci_ae4dma_get_driver(), ae4dma_enum_cb, &enum_ctx);
@@ -521,26 +451,20 @@ ae4dma_core_queue_full(struct spdk_ae4dma_chan *ae4dma)
 	uint32_t hwq;
 	uint32_t read_idx, write_idx;
 
-<<<<<<< HEAD
 	hwq = ae4dma->hwq_index;
 
 	/* Queue_status is not proper, so explicitly verifying queue_full
 	uint32_t queue_status;
 	queue_status = spdk_mmio_read_4(&ae4dma->cmd_q[hwq].regs->status_reg.status_raw) & 0x0E ;
 	queue_status >>= 0x1; */
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 
 	read_idx = spdk_mmio_read_4(&ae4dma->cmd_q[hwq].regs->read_idx);
 	write_idx =  spdk_mmio_read_4(&ae4dma->cmd_q[hwq].regs->write_idx);
 
-<<<<<<< HEAD
 	if (((write_idx + 1) % AE4DMA_CMD_QUEUE_LEN) == read_idx) {
 		return AE4DMA_HWQUEUE_FULL;
 	} else if (write_idx == read_idx) {
 		return AE4DMA_HWQUEUE_EMPTY;
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 	}
 	return AE4DMA_HWQUEUE_NOT_EMPTY;
 }

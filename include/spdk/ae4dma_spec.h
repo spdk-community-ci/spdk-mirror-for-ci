@@ -17,20 +17,13 @@
 extern "C" {
 #endif
 
-<<<<<<< HEAD
-
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 /*
  * An AE4DMA engine has 16 DMA queues. Each queue supports 32 descriptors
  */
 
-<<<<<<< HEAD
 #define AE4DMA_MAX_HW_QUEUES		1
 #define AE4DMA_CMD_QUEUE_LEN		32
 #define AE4DMA_QUEUE_START_INDEX	0
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 
 /* Descriptor status */
 enum spdk_ae4dma_dma_status {
@@ -41,22 +34,17 @@ enum spdk_ae4dma_dma_status {
 	AE4DMA_DMA_DESC_ERROR = 4,
 };
 
-<<<<<<< HEAD
 /* HW Queue status */
 enum spdk_ae4dma_hwqueue_status {
 	AE4DMA_HWQUEUE_EMPTY = 0,
 	AE4DMA_HWQUEUE_FULL = 1,
 	AE4DMA_HWQUEUE_NOT_EMPTY = 4
 };
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
+
 #define AE4DMA_CMD_QUEUE_ENABLE	0x1
 
 /** Common to all queues */
 #define AE4DMA_COMMON_CONFIG_OFFSET 0x00
-<<<<<<< HEAD
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 #define AE4DMA_PCIE_BAR 0
 
 /*
@@ -73,27 +61,18 @@ enum spdk_ae4dma_hwqueue_status {
  */
 
 /* AE4DMA Descriptor - DWORD0 - Controls bits: Reserved for future use */
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> a09489954 (AE4DMA : Integrated with accel framework)
 #define AE4DMA_DWORD0_STOP_ON_COMPLETION	BIT(0)
 #define AE4DMA_DWORD0_INTERRUPT_ON_COMPLETION	BIT(1)
 #define AE4DMA_DWORD0_START_OF_MESSAGE		BIT(3)
 #define AE4DMA_DWORD0_END_OF_MESSAGE		BIT(4)
 #define AE4DMA_DWORD0_DESTINATION_MEMORY_TYPE	GENMASK(5, 4)
 #define AE4DMA_DWORD0_SOURCE_MEMEORY_TYPE	GENMASK(7, 6)
-<<<<<<< HEAD
-=======
->>>>>>> a09489954 (AE4DMA : Integrated with accel framework)
 
 #define AE4DMA_DWORD0_DESTINATION_MEMORY_TYPE_MEMORY	0x0
 #define AE4DMA_DWORD0_DESTINATION_MEMORY_TYPE_IOMEMORY	1<<4
 #define AE4DMA_DWORD0_SOURCE_MEMEORY_TYPE_MEMORY	0x0
 #define AE4DMA_DWORD0_SOURCE_MEMEORY_TYPE_IOMEMORY	1<<6
 
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 struct spdk_ae4dma_desc_dword0 {
 	uint8_t	byte0;
 	uint8_t	byte1;
@@ -122,9 +101,6 @@ SPDK_STATIC_ASSERT(sizeof(struct spdk_ae4dma_desc) == 32, "incorrect ae4dma_hw_d
  * regs for each queue :4 bytes len
  * effective addr:offset+reg
  */
-<<<<<<< HEAD
-=======
->>>>>>> acd222ae3 (AE4DMA : Support for multiple hardware queues added)
 struct spdk_ae4dma_hwq_regs {
 	union {
 		uint32_t control_raw;
