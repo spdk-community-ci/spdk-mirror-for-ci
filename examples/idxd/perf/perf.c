@@ -139,7 +139,7 @@ attach_cb(void *cb_ctx, struct spdk_idxd_device *idxd)
 }
 
 static bool
-probe_cb(void *cb_ctx, struct spdk_pci_device *dev)
+probe_cb(void *cb_ctx, struct spdk_pci_device *dev, bool kernel_mode)
 {
 	/* this tool will gladly claim all types of IDXD devices. */
 	return true;

@@ -491,8 +491,13 @@ accel_dsa_enable_probe(bool kernel_mode)
 }
 
 static bool
-probe_cb(void *cb_ctx, struct spdk_pci_device *dev)
+probe_cb(void *cb_ctx, struct spdk_pci_device *dev, bool kernel_mode)
 {
+	/* Only attach to devices matching the requested driver. */
+	if (g_kernel_mode != kernel_mode) {
+		return false;
+	}
+
 	if (dev->id.device_id == PCI_DEVICE_ID_INTEL_DSA) {
 		return true;
 	}

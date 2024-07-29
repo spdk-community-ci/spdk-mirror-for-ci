@@ -126,7 +126,7 @@ kernel_idxd_probe(void *cb_ctx, spdk_idxd_attach_cb attach_cb, spdk_idxd_probe_c
 		} else {
 			fake_device.id.device_id = PCI_DEVICE_ID_INTEL_IAA;
 		}
-		if (probe_cb(cb_ctx, &fake_device) == false) {
+		if (probe_cb(cb_ctx, &fake_device, true) == false) {
 			free(kernel_idxd);
 			continue;
 		}

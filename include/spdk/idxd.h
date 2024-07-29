@@ -77,9 +77,10 @@ typedef void (*spdk_idxd_attach_cb)(void *cb_ctx, struct spdk_idxd_device *idxd)
  *
  * \param cb_ctx User-specified opaque value corresponding to cb_ctx from spdk_idxd_probe().
  * \param dev PCI device that is in question.
+ * \param kernel_mode whether the IDXD driver is kernel or userspace.
  * \return true if the caller wants the device, false if not..
  */
-typedef bool (*spdk_idxd_probe_cb)(void *cb_ctx, struct spdk_pci_device *dev);
+typedef bool (*spdk_idxd_probe_cb)(void *cb_ctx, struct spdk_pci_device *dev, bool kernel_mode);
 
 /**
  * Enumerate the IDXD devices attached to the system and attach the userspace

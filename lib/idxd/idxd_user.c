@@ -380,7 +380,7 @@ idxd_enum_cb(void *ctx, struct spdk_pci_device *pci_dev)
 	/* Call the user probe_cb to see if they want this device or not, if not
 	 * skip it with a positive return code.
 	 */
-	if (enum_ctx->probe_cb(enum_ctx->cb_ctx, pci_dev) == false) {
+	if (enum_ctx->probe_cb(enum_ctx->cb_ctx, pci_dev, false) == false) {
 		return 1;
 	}
 

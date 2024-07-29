@@ -352,8 +352,13 @@ accel_iaa_enable_probe(void)
 }
 
 static bool
-caller_probe_cb(void *cb_ctx, struct spdk_pci_device *dev)
+caller_probe_cb(void *cb_ctx, struct spdk_pci_device *dev, bool kernel_mode)
 {
+	/* IAA only supports user mode */
+	if (kernel_mode) {
+		return false;
+	}
+
 	if (dev->id.device_id == PCI_DEVICE_ID_INTEL_IAA) {
 		return true;
 	}
