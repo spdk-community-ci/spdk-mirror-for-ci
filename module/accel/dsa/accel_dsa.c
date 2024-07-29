@@ -474,15 +474,8 @@ attach_cb(void *cb_ctx, struct spdk_idxd_device *idxd)
 int
 accel_dsa_enable_probe(struct idxd_probe_opts *opts)
 {
-	int rc;
-
 	if (g_dsa_enable) {
 		return -EALREADY;
-	}
-
-	rc = spdk_idxd_set_config(opts->kernel_mode);
-	if (rc != 0) {
-		return rc;
 	}
 
 	spdk_accel_module_list_add(&g_dsa_module);

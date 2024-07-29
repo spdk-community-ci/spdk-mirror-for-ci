@@ -8,7 +8,6 @@
 	spdk_idxd_batch_prep_copy_crc32c;
 	spdk_idxd_batch_cancel;
 	spdk_idxd_get_socket;
-	spdk_idxd_set_config;
 	spdk_idxd_submit_compare;
 	spdk_idxd_submit_crc32c;
 	spdk_idxd_submit_copy_crc32c;

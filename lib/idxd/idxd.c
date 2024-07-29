@@ -34,7 +34,6 @@
 #define METADATA_SIZE_16 16
 
 static STAILQ_HEAD(, spdk_idxd_impl) g_idxd_impls = STAILQ_HEAD_INITIALIZER(g_idxd_impls);
-static struct spdk_idxd_impl *g_idxd_impl;
 
 uint32_t
 spdk_idxd_get_socket(struct spdk_idxd_device *idxd)
@@ -394,48 +393,6 @@ spdk_idxd_put_channel(struct spdk_idxd_io_channel *chan)
 	free(chan);
 }
 
-static inline struct spdk_idxd_impl *
-idxd_get_impl_by_name(const char *impl_name)
-{
-	struct spdk_idxd_impl *impl;
-
-	assert(impl_name != NULL);
-	STAILQ_FOREACH(impl, &g_idxd_impls, link) {
-		if (0 == strcmp(impl_name, impl->name)) {
-			return impl;
-		}
-	}
-
-	return NULL;
-}
-
-int
-spdk_idxd_set_config(bool kernel_mode)
-{
-	struct spdk_idxd_impl *tmp;
-
-	if (kernel_mode) {
-		tmp = idxd_get_impl_by_name(KERNEL_DRIVER_NAME);
-	} else {
-		tmp = idxd_get_impl_by_name(USERSPACE_DRIVER_NAME);
-	}
-
-	if (g_idxd_impl != NULL && g_idxd_impl != tmp) {
-		SPDK_ERRLOG("Cannot change idxd implementation after devices are initialized\n");
-		assert(false);
-		return -EALREADY;
-	}
-	g_idxd_impl = tmp;
-
-	if (g_idxd_impl == NULL) {
-		SPDK_ERRLOG("Cannot set the idxd implementation with %s mode\n",
-			    kernel_mode ? KERNEL_DRIVER_NAME : USERSPACE_DRIVER_NAME);
-		return -EINVAL;
-	}
-
-	return 0;
-}
-
 static void
 idxd_device_destruct(struct spdk_idxd_device *idxd)
 {
@@ -470,11 +427,6 @@ spdk_idxd_probe(void *cb_ctx, spdk_idxd_attach_cb attach_cb,
 	int rc = -1;
 	struct spdk_idxd_impl *impl;
 
-	if (g_idxd_impl != NULL) {
-		return g_idxd_impl->probe(cb_ctx, attach_cb, probe_cb);
-	}
-
-	/* No idxd implementation set, probe all available implementations */
 	STAILQ_FOREACH(impl, &g_idxd_impls, link) {
 		rc = impl->probe(cb_ctx, attach_cb, probe_cb);
 		if (rc != 0) {

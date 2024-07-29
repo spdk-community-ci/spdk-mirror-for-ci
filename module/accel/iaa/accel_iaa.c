@@ -346,12 +346,6 @@ accel_iaa_enable_probe(void)
 		return -EALREADY;
 	}
 
-	/* TODO initially only support user mode w/IAA */
-	rc = spdk_idxd_set_config(false);
-	if (rc != 0) {
-		return rc;
-	}
-
 	spdk_accel_module_list_add(&g_iaa_module);
 	g_iaa_enable = true;
 

@@ -141,6 +141,9 @@ attach_cb(void *cb_ctx, struct spdk_idxd_device *idxd)
 static bool
 probe_cb(void *cb_ctx, struct spdk_pci_device *dev, bool kernel_mode)
 {
+	if (kernel_mode != g_idxd_kernel_mode) {
+		return false;
+	}
 	/* this tool will gladly claim all types of IDXD devices. */
 	return true;
 }
@@ -148,8 +151,6 @@ probe_cb(void *cb_ctx, struct spdk_pci_device *dev, bool kernel_mode)
 static int
 idxd_init(void)
 {
-	spdk_idxd_set_config(g_idxd_kernel_mode);
-
 	if (spdk_idxd_probe(NULL, attach_cb, probe_cb) != 0) {
 		fprintf(stderr, "spdk_idxd_probe() failed\n");
 		return 1;
