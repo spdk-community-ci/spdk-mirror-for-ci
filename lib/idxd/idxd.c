@@ -467,12 +467,22 @@ int
 spdk_idxd_probe(void *cb_ctx, spdk_idxd_attach_cb attach_cb,
 		spdk_idxd_probe_cb probe_cb)
 {
-	if (g_idxd_impl == NULL) {
-		SPDK_ERRLOG("No idxd impl is selected\n");
-		return -1;
+	int rc = -1;
+	struct spdk_idxd_impl *impl;
+
+	if (g_idxd_impl != NULL) {
+		return g_idxd_impl->probe(cb_ctx, attach_cb, probe_cb);
 	}
 
-	return g_idxd_impl->probe(cb_ctx, attach_cb, probe_cb);
+	/* No idxd implementation set, probe all available implementations */
+	STAILQ_FOREACH(impl, &g_idxd_impls, link) {
+		rc = impl->probe(cb_ctx, attach_cb, probe_cb);
+		if (rc != 0) {
+			break;
+		}
+	}
+
+	return rc;
 }
 
 void
