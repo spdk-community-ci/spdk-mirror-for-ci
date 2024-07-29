@@ -69,6 +69,7 @@ kernel_idxd_probe(void *cb_ctx, spdk_idxd_attach_cb attach_cb, spdk_idxd_probe_c
 	/* Loop over each IDXD device */
 	accfg_device_foreach(ctx, device) {
 		enum accfg_device_state dstate;
+		enum accfg_device_type dtype;
 		struct spdk_kernel_idxd_device *kernel_idxd;
 		struct accfg_wq *wq;
 		bool pasid_enabled;
@@ -104,6 +105,31 @@ kernel_idxd_probe(void *cb_ctx, spdk_idxd_attach_cb attach_cb, spdk_idxd_probe_c
 		kernel_idxd->fd = -1;
 		kernel_idxd->idxd.version = accfg_device_get_version(device);
 		kernel_idxd->idxd.pasid_enabled = pasid_enabled;
+
+		dtype = accfg_device_get_type(device);
+		if (dtype == ACCFG_DEVICE_DSA) {
+			kernel_idxd->idxd.type = IDXD_DEV_TYPE_DSA;
+		} else if (dtype == ACCFG_DEVICE_IAX) {
+			kernel_idxd->idxd.type = IDXD_DEV_TYPE_IAA;
+		} else {
+			SPDK_ERRLOG("Unknown device type %d\n", dtype);
+			free(kernel_idxd);
+			return -ENOTSUP;
+		}
+
+		/* Give caller a chance to decide if they want to use this device.
+		 * Note: When using kernel IDXD driver there is no spdk_pci_device,
+		 * yet each caller wants to only attach to only it's own type. */
+		struct spdk_pci_device fake_device = {};
+		if (kernel_idxd->idxd.type == IDXD_DEV_TYPE_DSA) {
+			fake_device.id.device_id = PCI_DEVICE_ID_INTEL_DSA;
+		} else {
+			fake_device.id.device_id = PCI_DEVICE_ID_INTEL_IAA;
+		}
+		if (probe_cb(cb_ctx, &fake_device) == false) {
+			free(kernel_idxd);
+			continue;
+		}
 
 		/* Increment configuration context reference for each device. */
 		kernel_idxd->ctx = accfg_ref(kernel_idxd->ctx);
