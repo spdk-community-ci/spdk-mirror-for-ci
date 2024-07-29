@@ -77,6 +77,8 @@ DEFINE_STUB(nvmf_fc_lld_port_remove, int, (struct spdk_nvmf_fc_port *fc_port), 0
 DEFINE_STUB_V(spdk_nvmf_request_zcopy_start, (struct spdk_nvmf_request *req));
 DEFINE_STUB_V(spdk_nvmf_request_zcopy_end, (struct spdk_nvmf_request *req, bool commit));
 DEFINE_STUB(spdk_mempool_lookup, struct spdk_mempool *, (const char *name), NULL);
+DEFINE_STUB_V(spdk_keyring_put_key, (struct spdk_key *k));
+DEFINE_STUB_V(nvmf_qpair_auth_destroy, (struct spdk_nvmf_qpair *q));
 
 const char *
 spdk_nvme_transport_id_trtype_str(enum spdk_nvme_transport_type trtype)
@@ -213,10 +215,10 @@ create_transport_test(void)
 	const struct spdk_nvmf_transport_ops *ops = NULL;
 	struct spdk_nvmf_transport_opts opts = { 0 };
 	struct spdk_nvmf_target_opts tgt_opts = {
-		.size = SPDK_SIZEOF(&opts, discovery_filter),
-		.name = "nvmf_test_tgt",
-		.max_subsystems = 0
-	};
+                .name = "nvmf_test_tgt",
+                .max_subsystems = 0
+        };
+        tgt_opts.size = SPDK_SIZEOF(&tgt_opts, discovery_filter);
 
 	allocate_threads(8);
 	set_thread(0);
