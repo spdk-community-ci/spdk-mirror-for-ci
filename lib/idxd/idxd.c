@@ -409,7 +409,10 @@ idxd_wq_setup(struct spdk_idxd_device *idxd)
 	 * and achieve optimal performance for common cases.
 	 */
 
-	idxd->descriptors_per_channel = idxd->total_wq_size / ((idxd->total_wq_size >= 128) ? 8 : 4);
+	if (idxd->descriptors_per_channel == 0) {
+		idxd->descriptors_per_channel = idxd->total_wq_size / ((idxd->total_wq_size >= 128) ? 8 : 4);
+	}
+
 	idxd->wq_array = spdk_bit_array_create(idxd->total_wq_size);
 	if (idxd->wq_array == NULL) {
 		SPDK_ERRLOG("Failed to bit create array for the IDXD WQ\n");

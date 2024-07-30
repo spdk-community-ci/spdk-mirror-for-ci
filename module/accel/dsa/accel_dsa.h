@@ -16,6 +16,8 @@ enum accel_dsa_driver_type {
 
 struct idxd_probe_opts {
 	enum accel_dsa_driver_type driver_type;
+	/** Number of descriptors for each I/O channel. */
+	uint32_t descriptors_per_channel;
 };
 
 int accel_dsa_enable_probe(struct idxd_probe_opts *opts);

@@ -462,6 +462,8 @@ attach_cb(void *cb_ctx, struct spdk_idxd_device *idxd)
 		return;
 	}
 
+	idxd->descriptors_per_channel = g_idxd_probe_opts.descriptors_per_channel;
+
 	dev->dsa = idxd;
 	if (g_next_dev == NULL) {
 		g_next_dev = dev;

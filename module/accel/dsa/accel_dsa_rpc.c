@@ -29,6 +29,7 @@ dsa_scan_decode_driver_type(const struct spdk_json_val *val, void *out)
 
 static const struct spdk_json_object_decoder rpc_dsa_scan_accel_module_decoder[] = {
 	{"config_kernel_mode", offsetof(struct idxd_probe_opts, driver_type), dsa_scan_decode_driver_type, true},
+	{"descriptors_per_channel", offsetof(struct idxd_probe_opts, descriptors_per_channel), spdk_json_decode_int32, true},
 };
 
 static void
@@ -36,7 +37,8 @@ rpc_dsa_scan_accel_module(struct spdk_jsonrpc_request *request,
 			  const struct spdk_json_val *params)
 {
 	struct idxd_probe_opts req = {
-		.driver_type = DSA_DRIVER_TYPE_ALL
+		.driver_type = DSA_DRIVER_TYPE_ALL,
+		.descriptors_per_channel = 0
 	};
 	int rc;
 
