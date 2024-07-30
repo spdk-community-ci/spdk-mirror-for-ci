@@ -12,15 +12,32 @@
 #include "spdk/env.h"
 #include "spdk/string.h"
 
+static int
+dsa_scan_decode_driver_type(const struct spdk_json_val *val, void *out)
+{
+	enum accel_dsa_driver_type *driver_type = out;
+	bool kernel_mode;
+	int rc;
+
+	rc = spdk_json_decode_bool(val, &kernel_mode);
+	if (rc == 0) {
+		*driver_type = kernel_mode ? DSA_DRIVER_TYPE_KERNEL : DSA_DRIVER_TYPE_USER;
+	}
+
+	return rc;
+}
+
 static const struct spdk_json_object_decoder rpc_dsa_scan_accel_module_decoder[] = {
-	{"config_kernel_mode", offsetof(struct idxd_probe_opts, kernel_mode), spdk_json_decode_bool, true},
+	{"config_kernel_mode", offsetof(struct idxd_probe_opts, driver_type), dsa_scan_decode_driver_type, true},
 };
 
 static void
 rpc_dsa_scan_accel_module(struct spdk_jsonrpc_request *request,
 			  const struct spdk_json_val *params)
 {
-	struct idxd_probe_opts req = {};
+	struct idxd_probe_opts req = {
+		.driver_type = DSA_DRIVER_TYPE_ALL
+	};
 	int rc;
 
 	if (params != NULL) {
@@ -40,10 +57,16 @@ rpc_dsa_scan_accel_module(struct spdk_jsonrpc_request *request,
 		return;
 	}
 
-	if (req.kernel_mode) {
+	switch (req.driver_type) {
+	case DSA_DRIVER_TYPE_KERNEL:
 		SPDK_NOTICELOG("Enabled DSA kernel-mode\n");
-	} else {
+		break;
+	case DSA_DRIVER_TYPE_USER:
 		SPDK_NOTICELOG("Enabled DSA user-mode\n");
+		break;
+	default:
+		SPDK_NOTICELOG("Enabled DSA user-mode and kernel-mode\n");
+		break;
 	}
 
 	spdk_jsonrpc_send_bool_response(request, true);

@@ -24,7 +24,7 @@
 
 static bool g_dsa_enable = false;
 static struct idxd_probe_opts g_idxd_probe_opts = {
-	.kernel_mode = false,
+	.driver_type = DSA_DRIVER_TYPE_ALL,
 };
 
 enum channel_state {
@@ -488,8 +488,11 @@ accel_dsa_enable_probe(struct idxd_probe_opts *opts)
 static bool
 probe_cb(void *cb_ctx, struct spdk_pci_device *dev, bool kernel_mode)
 {
+	enum accel_dsa_driver_type driver_type = g_idxd_probe_opts.driver_type;
+
 	/* Only attach to devices matching the requested driver. */
-	if (g_idxd_probe_opts.kernel_mode != kernel_mode) {
+	if ((driver_type == DSA_DRIVER_TYPE_KERNEL && !kernel_mode) ||
+	    (driver_type == DSA_DRIVER_TYPE_USER && kernel_mode)) {
 		return false;
 	}
 
@@ -545,11 +548,17 @@ accel_dsa_exit(void *ctx)
 static void
 accel_dsa_write_config_json(struct spdk_json_write_ctx *w)
 {
+	enum accel_dsa_driver_type driver_type = g_idxd_probe_opts.driver_type;
+
 	if (g_dsa_enable) {
 		spdk_json_write_object_begin(w);
 		spdk_json_write_named_string(w, "method", "dsa_scan_accel_module");
 		spdk_json_write_named_object_begin(w, "params");
-		spdk_json_write_named_bool(w, "config_kernel_mode", g_idxd_probe_opts.kernel_mode);
+		if (driver_type == DSA_DRIVER_TYPE_KERNEL) {
+			spdk_json_write_named_bool(w, "config_kernel_mode", true);
+		} else if (driver_type == DSA_DRIVER_TYPE_USER) {
+			spdk_json_write_named_bool(w, "config_kernel_mode", false);
+		}
 		spdk_json_write_object_end(w);
 		spdk_json_write_object_end(w);
 	}
