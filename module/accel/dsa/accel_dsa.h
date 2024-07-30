@@ -8,6 +8,10 @@
 
 #include "spdk/stdinc.h"
 
-int accel_dsa_enable_probe(bool kernel_mode);
+struct idxd_probe_opts {
+	bool kernel_mode;
+};
+
+int accel_dsa_enable_probe(struct idxd_probe_opts *opts);
 
 #endif /* SPDK_ACCEL_ENGINE_DSA_H */

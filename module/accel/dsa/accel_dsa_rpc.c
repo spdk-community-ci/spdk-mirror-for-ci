@@ -12,19 +12,15 @@
 #include "spdk/env.h"
 #include "spdk/string.h"
 
-struct rpc_dsa_scan_accel_module {
-	bool config_kernel_mode;
-};
-
 static const struct spdk_json_object_decoder rpc_dsa_scan_accel_module_decoder[] = {
-	{"config_kernel_mode", offsetof(struct rpc_dsa_scan_accel_module, config_kernel_mode), spdk_json_decode_bool, true},
+	{"config_kernel_mode", offsetof(struct idxd_probe_opts, kernel_mode), spdk_json_decode_bool, true},
 };
 
 static void
 rpc_dsa_scan_accel_module(struct spdk_jsonrpc_request *request,
 			  const struct spdk_json_val *params)
 {
-	struct rpc_dsa_scan_accel_module req = {};
+	struct idxd_probe_opts req = {};
 	int rc;
 
 	if (params != NULL) {
@@ -38,13 +34,13 @@ rpc_dsa_scan_accel_module(struct spdk_jsonrpc_request *request,
 		}
 	}
 
-	rc = accel_dsa_enable_probe(req.config_kernel_mode);
+	rc = accel_dsa_enable_probe(&req);
 	if (rc != 0) {
 		spdk_jsonrpc_send_error_response(request, rc, spdk_strerror(-rc));
 		return;
 	}
 
-	if (req.config_kernel_mode) {
+	if (req.kernel_mode) {
 		SPDK_NOTICELOG("Enabled DSA kernel-mode\n");
 	} else {
 		SPDK_NOTICELOG("Enabled DSA user-mode\n");

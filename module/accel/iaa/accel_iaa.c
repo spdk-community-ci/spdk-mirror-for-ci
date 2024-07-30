@@ -23,6 +23,13 @@
 
 static bool g_iaa_enable = false;
 
+static struct idxd_probe_opts {
+	bool kernel_mode;
+} g_idxd_probe_opts = {
+	/* IAA only supports user mode */
+	.kernel_mode = false,
+};
+
 enum channel_state {
 	IDXD_CHANNEL_ACTIVE,
 	IDXD_CHANNEL_ERROR,
@@ -354,8 +361,8 @@ accel_iaa_enable_probe(void)
 static bool
 caller_probe_cb(void *cb_ctx, struct spdk_pci_device *dev, bool kernel_mode)
 {
-	/* IAA only supports user mode */
-	if (kernel_mode) {
+	/* Only attach to devices matching the requested driver. */
+	if (g_idxd_probe_opts.kernel_mode != kernel_mode) {
 		return false;
 	}
 

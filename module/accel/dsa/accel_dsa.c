@@ -23,7 +23,9 @@
 #include "spdk_internal/trace_defs.h"
 
 static bool g_dsa_enable = false;
-static bool g_kernel_mode = false;
+static struct idxd_probe_opts g_idxd_probe_opts = {
+	.kernel_mode = false,
+};
 
 enum channel_state {
 	IDXD_CHANNEL_ACTIVE,
@@ -470,7 +472,7 @@ attach_cb(void *cb_ctx, struct spdk_idxd_device *idxd)
 }
 
 int
-accel_dsa_enable_probe(bool kernel_mode)
+accel_dsa_enable_probe(struct idxd_probe_opts *opts)
 {
 	int rc;
 
@@ -478,13 +480,13 @@ accel_dsa_enable_probe(bool kernel_mode)
 		return -EALREADY;
 	}
 
-	rc = spdk_idxd_set_config(kernel_mode);
+	rc = spdk_idxd_set_config(opts->kernel_mode);
 	if (rc != 0) {
 		return rc;
 	}
 
 	spdk_accel_module_list_add(&g_dsa_module);
-	g_kernel_mode = kernel_mode;
+	memcpy(&g_idxd_probe_opts, opts, sizeof(struct idxd_probe_opts));
 	g_dsa_enable = true;
 
 	return 0;
@@ -494,7 +496,7 @@ static bool
 probe_cb(void *cb_ctx, struct spdk_pci_device *dev, bool kernel_mode)
 {
 	/* Only attach to devices matching the requested driver. */
-	if (g_kernel_mode != kernel_mode) {
+	if (g_idxd_probe_opts.kernel_mode != kernel_mode) {
 		return false;
 	}
 
@@ -554,7 +556,7 @@ accel_dsa_write_config_json(struct spdk_json_write_ctx *w)
 		spdk_json_write_object_begin(w);
 		spdk_json_write_named_string(w, "method", "dsa_scan_accel_module");
 		spdk_json_write_named_object_begin(w, "params");
-		spdk_json_write_named_bool(w, "config_kernel_mode", g_kernel_mode);
+		spdk_json_write_named_bool(w, "config_kernel_mode", g_idxd_probe_opts.kernel_mode);
 		spdk_json_write_object_end(w);
 		spdk_json_write_object_end(w);
 	}
