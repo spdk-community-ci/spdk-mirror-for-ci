@@ -823,6 +823,7 @@ static void
 exit_handler(void)
 {
 	if (g_in_fuzzer) {
+		g_in_fuzzer = false;
 		spdk_app_stop(0);
 		pthread_join(g_reactor_td, NULL);
 	}
