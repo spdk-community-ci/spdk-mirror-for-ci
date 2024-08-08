@@ -942,6 +942,48 @@ function raid_resize_data_offset_test() {
 	return 0
 }
 
+function raid_io_pi_test() {
+	local raid_level=$1
+	local num_base_bdevs=$2
+	local io_type=$3
+	local base_bdevs=($(for ((i = 1; i <= num_base_bdevs; i++)); do echo BaseBdev$i; done))
+	local raid_bdev_name="raid_bdev1"
+	local strip_size
+	local create_arg
+	local bdevperf_log
+	local fail_per_s
+
+	if [ $raid_level != "raid1" ]; then
+		strip_size=64
+		create_arg+=" -z $strip_size"
+	else
+		strip_size=0
+	fi
+
+	bdevperf_log=$(mktemp -p "$tmp_dir")
+
+	"$rootdir/build/examples/bdevperf" -T $raid_bdev_name -t 1 -w $io_type -o 131072 -q 1 -z -f -L bdev_raid > $bdevperf_log &
+	raid_pid=$!
+	waitforlisten $raid_pid
+
+	# Create base bdevs OK
+	for bdev in "${base_bdevs[@]}"; do
+		$rpc_py bdev_null_create ${bdev} 262144 $base_blocklen $base_null_params
+		waitforbdev ${bdev}
+	done
+
+	# Create RAID bdev
+	$rpc_py bdev_raid_create $create_arg -r $raid_level -b "'${base_bdevs[*]}'" -n $raid_bdev_name
+	verify_raid_bdev_state $raid_bdev_name "online" $raid_level $strip_size $num_base_bdevs
+
+	# Start user I/O
+	"$rootdir/examples/bdev/bdevperf/bdevperf.py" perform_tests
+
+	$rpc_py bdev_raid_delete $raid_bdev_name
+
+	killprocess $raid_pid
+}
+
 mkdir -p "$tmp_dir"
 trap 'cleanup; exit 1' EXIT
 
@@ -998,6 +1040,12 @@ run_test "raid_superblock_test_4k" raid_superblock_test raid1 2
 if [ "$has_nbd" = true ]; then
 	run_test "raid_rebuild_test_sb_4k" raid_rebuild_test raid1 2 true false true
 fi
+
+base_null_params="-m 8 -t 1"
+for level in raid0 raid1 raid5f; do
+	run_test "raid_read_io_pi_test" raid_io_pi_test $level 3 read
+	run_test "raid_write_io_pi_test" raid_io_pi_test $level 3 write
+done
 
 base_malloc_params="-m 32"
 run_test "raid_state_function_test_sb_md_separate" raid_state_function_test raid1 2 true
