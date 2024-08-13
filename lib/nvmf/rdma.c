@@ -755,6 +755,7 @@ nvmf_rdma_resources_create(struct spdk_nvmf_rdma_resource_opts *opts)
 			rc = spdk_rdma_utils_get_translation(opts->map, rdma_recv->buf, opts->in_capsule_data_size,
 							     &translation);
 			if (rc) {
+				SPDK_ERRLOG("addr %p, len %u translation rc %d", rdma_recv->buf, opts->in_capsule_data_size, rc);
 				goto cleanup;
 			}
 			rdma_recv->sgl[1].lkey = spdk_rdma_utils_memory_translation_get_lkey(&translation);
@@ -790,6 +791,8 @@ nvmf_rdma_resources_create(struct spdk_nvmf_rdma_resource_opts *opts)
 		rc = spdk_rdma_utils_get_translation(opts->map, &resources->cpls[i], sizeof(resources->cpls[i]),
 						     &translation);
 		if (rc) {
+			SPDK_ERRLOG("addr %p, len %zu translation rc %d", &resources->cpls[i], sizeof(resources->cpls[i]),
+				    rc);
 			goto cleanup;
 		}
 		rdma_req->rsp.sgl[0].lkey = spdk_rdma_utils_memory_translation_get_lkey(&translation);
@@ -822,6 +825,7 @@ nvmf_rdma_resources_create(struct spdk_nvmf_rdma_resource_opts *opts)
 	}
 
 	if (rc) {
+		SPDK_ERRLOG("%s %p flush rc %d", srq ? "srq" : "qp", opts->qp, rc);
 		goto cleanup;
 	}
 
@@ -1039,7 +1043,6 @@ nvmf_rdma_qpair_initialize(struct spdk_nvmf_qpair *qpair)
 
 		if (!rqpair->resources) {
 			SPDK_ERRLOG("Unable to allocate resources for receive queue.\n");
-			rdma_destroy_qp(rqpair->cm_id);
 			goto error;
 		}
 	} else {
@@ -1055,6 +1058,10 @@ nvmf_rdma_qpair_initialize(struct spdk_nvmf_qpair *qpair)
 	return 0;
 
 error:
+	if (rqpair->rdma_qp) {
+		spdk_rdma_provider_qp_destroy(rqpair->rdma_qp);
+		rqpair->rdma_qp = NULL;
+	}
 	rdma_destroy_id(rqpair->cm_id);
 	rqpair->cm_id = NULL;
 	return -1;
