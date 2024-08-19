@@ -250,16 +250,6 @@ spdk_fio_bdev_close_targets(void *arg)
 }
 
 static void
-spdk_fio_cleanup_thread(struct spdk_fio_thread *fio_thread)
-{
-	spdk_thread_send_msg(fio_thread->thread, spdk_fio_bdev_close_targets, fio_thread);
-
-	pthread_mutex_lock(&g_init_mtx);
-	TAILQ_INSERT_TAIL(&g_threads, fio_thread, link);
-	pthread_mutex_unlock(&g_init_mtx);
-}
-
-static void
 spdk_fio_calc_timeout(struct spdk_fio_thread *fio_thread, struct timespec *ts)
 {
 	uint64_t timeout, now;
@@ -487,7 +477,7 @@ spdk_init_thread_poll(void *arg)
 		}
 	}
 
-	spdk_fio_cleanup_thread(fio_thread);
+	TAILQ_INSERT_TAIL(&g_threads, fio_thread, link);
 
 	/* Finalize the bdev layer */
 	done = false;
