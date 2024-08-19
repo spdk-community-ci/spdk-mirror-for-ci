@@ -215,6 +215,26 @@ spdk_fio_init_thread(struct thread_data *td)
 	return 0;
 }
 
+static int
+spdk_fio_poll_threads(void)
+{
+	struct spdk_fio_thread		*thread, *tmp;
+	int count = 0;
+
+	TAILQ_FOREACH_SAFE(thread, &g_threads, link, tmp) {
+		if (spdk_thread_is_exited(thread->thread)) {
+			TAILQ_REMOVE(&g_threads, thread, link);
+			free(thread->iocq);
+			spdk_thread_destroy(thread->thread);
+		} else {
+			spdk_fio_poll_thread(thread);
+			count++;
+		}
+	}
+
+	return count;
+}
+
 static void
 spdk_fio_bdev_close_targets(void *arg)
 {
@@ -346,7 +366,7 @@ spdk_init_thread_poll(void *arg)
 {
 	struct spdk_fio_options		*eo = arg;
 	struct spdk_fio_thread		*fio_thread;
-	struct spdk_fio_thread		*thread, *tmp;
+	struct spdk_fio_thread		*thread;
 	struct spdk_env_opts		opts;
 	bool				done;
 	int				rc;
@@ -449,17 +469,7 @@ spdk_init_thread_poll(void *arg)
 		spdk_fio_poll_thread(fio_thread);
 
 		pthread_mutex_lock(&g_init_mtx);
-		if (!TAILQ_EMPTY(&g_threads)) {
-			TAILQ_FOREACH_SAFE(thread, &g_threads, link, tmp) {
-				if (spdk_thread_is_exited(thread->thread)) {
-					TAILQ_REMOVE(&g_threads, thread, link);
-					free(thread->iocq);
-					spdk_thread_destroy(thread->thread);
-				} else {
-					spdk_fio_poll_thread(thread);
-				}
-			}
-
+		if (spdk_fio_poll_threads() > 0) {
 			/* If there are exiting threads to poll, don't sleep. */
 			pthread_mutex_unlock(&g_init_mtx);
 			continue;
@@ -484,11 +494,7 @@ spdk_init_thread_poll(void *arg)
 	spdk_thread_send_msg(fio_thread->thread, spdk_fio_bdev_fini_start, &done);
 
 	do {
-		spdk_fio_poll_thread(fio_thread);
-
-		TAILQ_FOREACH_SAFE(thread, &g_threads, link, tmp) {
-			spdk_fio_poll_thread(thread);
-		}
+		spdk_fio_poll_threads();
 	} while (!done);
 
 	/* Now exit all the threads */
@@ -499,17 +505,7 @@ spdk_init_thread_poll(void *arg)
 	}
 
 	/* And wait for them to gracefully exit */
-	while (!TAILQ_EMPTY(&g_threads)) {
-		TAILQ_FOREACH_SAFE(thread, &g_threads, link, tmp) {
-			if (spdk_thread_is_exited(thread->thread)) {
-				TAILQ_REMOVE(&g_threads, thread, link);
-				free(thread->iocq);
-				spdk_thread_destroy(thread->thread);
-			} else {
-				spdk_thread_poll(thread->thread, 0, 0);
-			}
-		}
-	}
+	while (spdk_fio_poll_threads() > 0) {};
 
 	pthread_exit(NULL);
 
