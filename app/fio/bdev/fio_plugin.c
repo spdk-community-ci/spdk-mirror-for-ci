@@ -176,6 +176,7 @@ spdk_fio_schedule_thread(struct spdk_thread *thread)
 	}
 
 	fio_thread = spdk_thread_get_ctx(thread);
+	fio_thread->thread = thread;
 
 	pthread_mutex_lock(&g_init_mtx);
 	TAILQ_INSERT_TAIL(&g_threads, fio_thread, link);
