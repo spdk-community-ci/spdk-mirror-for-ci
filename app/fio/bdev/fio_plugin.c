@@ -236,20 +236,6 @@ spdk_fio_poll_threads(void)
 }
 
 static void
-spdk_fio_bdev_close_targets(void *arg)
-{
-	struct spdk_fio_thread *fio_thread = arg;
-	struct spdk_fio_target *target, *tmp;
-
-	TAILQ_FOREACH_SAFE(target, &fio_thread->targets, link, tmp) {
-		TAILQ_REMOVE(&fio_thread->targets, target, link);
-		spdk_put_io_channel(target->ch);
-		spdk_bdev_close(target->desc);
-		free(target);
-	}
-}
-
-static void
 spdk_fio_calc_timeout(struct spdk_fio_thread *fio_thread, struct timespec *ts)
 {
 	uint64_t timeout, now;
@@ -796,13 +782,27 @@ spdk_fio_init(struct thread_data *td)
 }
 
 static void
+spdk_fio_bdev_close(void *arg)
+{
+	struct spdk_fio_thread *fio_thread = arg;
+	struct spdk_fio_target *target, *tmp;
+
+	TAILQ_FOREACH_SAFE(target, &fio_thread->targets, link, tmp) {
+		TAILQ_REMOVE(&fio_thread->targets, target, link);
+		spdk_put_io_channel(target->ch);
+		spdk_bdev_close(target->desc);
+		free(target);
+	}
+}
+
+static void
 spdk_fio_cleanup(struct thread_data *td)
 {
 	struct spdk_fio_thread *fio_thread = td->io_ops_data;
 
 	spdk_set_thread(fio_thread->thread);
 
-	spdk_thread_send_msg(fio_thread->thread, spdk_fio_bdev_close_targets, fio_thread);
+	spdk_thread_send_msg(fio_thread->thread, spdk_fio_bdev_close, fio_thread);
 	while (spdk_fio_poll_thread(fio_thread) > 0) {}
 
 	spdk_thread_exit(fio_thread->thread);
