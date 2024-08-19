@@ -814,7 +814,19 @@ spdk_fio_cleanup(struct thread_data *td)
 {
 	struct spdk_fio_thread *fio_thread = td->io_ops_data;
 
-	spdk_fio_cleanup_thread(fio_thread);
+	spdk_set_thread(fio_thread->thread);
+
+	spdk_thread_send_msg(fio_thread->thread, spdk_fio_bdev_close_targets, fio_thread);
+	while (spdk_fio_poll_thread(fio_thread) > 0) {}
+
+	spdk_thread_exit(fio_thread->thread);
+	while (!spdk_thread_is_exited(fio_thread->thread)) {
+		spdk_fio_poll_thread(fio_thread);
+	}
+
+	free(fio_thread->iocq);
+	spdk_thread_destroy(fio_thread->thread);
+
 	td->io_ops_data = NULL;
 }
 
