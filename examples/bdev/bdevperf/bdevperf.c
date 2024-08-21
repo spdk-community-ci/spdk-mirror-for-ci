@@ -24,6 +24,7 @@
 #define BDEVPERF_CONFIG_MAX_FILENAME 1024
 #define BDEVPERF_CONFIG_UNDEFINED -1
 #define BDEVPERF_CONFIG_ERROR -2
+#define BDEVPERF_MIN_ALIGNMENT 4096
 #define PATTERN_TYPES_STR "(read, write, randread, randwrite, rw, randrw, verify, reset, unmap, flush, write_zeroes)"
 
 struct bdevperf_task {
@@ -1735,6 +1736,12 @@ job_init_rw(struct bdevperf_job *job, enum job_config_rw rw)
 	}
 }
 
+static size_t
+bdevperf_get_alignment(struct bdevperf_job *job)
+{
+	return spdk_max(spdk_bdev_get_buf_align(job->bdev), BDEVPERF_MIN_ALIGNMENT);
+}
+
 static int
 bdevperf_construct_job(struct spdk_bdev *bdev, struct job_config *config,
 		       struct spdk_thread *thread)
@@ -1875,7 +1882,7 @@ bdevperf_construct_job(struct spdk_bdev *bdev, struct job_config *config,
 			return -ENOMEM;
 		}
 
-		task->buf = spdk_zmalloc(job->buf_size, spdk_bdev_get_buf_align(job->bdev), NULL,
+		task->buf = spdk_zmalloc(job->buf_size, bdevperf_get_alignment(job), NULL,
 					 numa_id, SPDK_MALLOC_DMA);
 		if (!task->buf) {
 			fprintf(stderr, "Cannot allocate buf for task=%p\n", task);
@@ -1885,7 +1892,7 @@ bdevperf_construct_job(struct spdk_bdev *bdev, struct job_config *config,
 		}
 
 		if (job->verify && job->buf_size > SPDK_BDEV_LARGE_BUF_MAX_SIZE) {
-			task->verify_buf = spdk_zmalloc(job->buf_size, spdk_bdev_get_buf_align(job->bdev), NULL,
+			task->verify_buf = spdk_zmalloc(job->buf_size, bdevperf_get_alignment(job), NULL,
 							numa_id, SPDK_MALLOC_DMA);
 			if (!task->verify_buf) {
 				fprintf(stderr, "Cannot allocate buf_verify for task=%p\n", task);
