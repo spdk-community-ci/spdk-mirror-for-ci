@@ -1,5 +1,6 @@
 /*   SPDX-License-Identifier: BSD-3-Clause
  *   Copyright (C) 2017 Intel Corporation.
+ *   Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES.
  *   All rights reserved.
  */
 
@@ -7,7 +8,7 @@
 
 #include "iscsi/iscsi.h"
 
-#include "spdk_internal/init.h"
+#include "spdk/init.h"
 
 static void
 iscsi_subsystem_init_complete(void *cb_arg, int rc)

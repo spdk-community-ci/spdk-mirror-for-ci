@@ -1,11 +1,12 @@
 /*   SPDX-License-Identifier: BSD-3-Clause
  *   Copyright (C) 2021 Intel Corporation.
  *   Copyright (c) 2020 Mellanox Technologies LTD. All rights reserved.
+ *   Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES.
  */
 
 #include "spdk/stdinc.h"
 #include "spdk/sock.h"
-#include "spdk_internal/init.h"
+#include "spdk/init.h"
 #include "spdk_internal/sock.h"
 #include "spdk/log.h"
 

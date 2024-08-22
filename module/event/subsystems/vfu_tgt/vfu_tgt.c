@@ -1,12 +1,13 @@
 /*   SPDX-License-Identifier: BSD-3-Clause
  *   Copyright (C) 2022 Intel Corporation.
+ *   Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES.
  *   All rights reserved.
  */
 
 #include "spdk/stdinc.h"
 #include "spdk/vfu_target.h"
 
-#include "spdk_internal/init.h"
+#include "spdk/init.h"
 
 static void
 vfu_subsystem_init_done(int rc)

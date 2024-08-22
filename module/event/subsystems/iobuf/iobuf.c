@@ -1,5 +1,6 @@
 /*   SPDX-License-Identifier: BSD-3-Clause
  *   Copyright (C) 2022 Intel Corporation.
+ *   Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES.
  *   All rights reserved.
  */
 
@@ -7,7 +8,7 @@
 #include "spdk/bdev.h"
 #include "spdk/log.h"
 #include "spdk/thread.h"
-#include "spdk_internal/init.h"
+#include "spdk/init.h"
 
 static void
 iobuf_subsystem_initialize(void)

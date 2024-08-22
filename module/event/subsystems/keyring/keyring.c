@@ -1,10 +1,12 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright (c) 2024 Intel Corporation.  All rights reserved.
+ * Copyright (c) 2024 Intel Corporation.
+ * Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved.
  */
 
 #include "spdk/stdinc.h"
 #include "spdk/keyring.h"
-#include "spdk_internal/init.h"
+#include "spdk/init.h"
 
 static void
 keyring_subsystem_init(void)

@@ -1,11 +1,12 @@
 /*   SPDX-License-Identifier: BSD-3-Clause
  *   Copyright (C) 2022 Intel Corporation.
+ *   Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES.
  *   All rights reserved.
  */
 
 #include "spdk/stdinc.h"
 #include "spdk/ublk.h"
-#include "spdk_internal/init.h"
+#include "spdk/init.h"
 
 static void
 ublk_subsystem_init(void)

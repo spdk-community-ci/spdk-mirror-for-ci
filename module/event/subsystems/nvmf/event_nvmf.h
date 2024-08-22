@@ -1,7 +1,7 @@
 /*   SPDX-License-Identifier: BSD-3-Clause
  *   Copyright (C) 2016 Intel Corporation.
+ *   Copyright (c) 2021-2024 NVIDIA CORPORATION & AFFILIATES.
  *   All rights reserved.
- *   Copyright (c) 2021 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  */
 
 #ifndef NVMF_TGT_H
@@ -12,7 +12,7 @@
 #include "spdk/nvmf.h"
 #include "spdk/queue.h"
 
-#include "spdk_internal/init.h"
+#include "spdk/init.h"
 #include "spdk/log.h"
 
 struct spdk_nvmf_admin_passthru_conf {

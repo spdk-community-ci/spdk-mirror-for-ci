@@ -1,5 +1,6 @@
 /*   SPDX-License-Identifier: BSD-3-Clause
  *   Copyright (C) 2019 Intel Corporation.
+ *   Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES.
  *   All rights reserved.
  */
 
@@ -9,10 +10,9 @@
 #include "spdk/thread.h"
 #include "spdk/likely.h"
 #include "spdk/log.h"
-
+#include "spdk/init.h"
 #include "spdk/vmd.h"
 
-#include "spdk_internal/init.h"
 #include "event_vmd.h"
 
 static struct spdk_poller *g_hotplug_poller;

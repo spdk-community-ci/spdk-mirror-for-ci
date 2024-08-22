@@ -1,5 +1,6 @@
 /*   SPDX-License-Identifier: BSD-3-Clause
  *   Copyright (C) 2020 Intel Corporation.
+ *   Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES.
  *   All rights reserved.
  */
 
@@ -7,7 +8,7 @@
 
 #include "spdk/accel.h"
 
-#include "spdk_internal/init.h"
+#include "spdk/init.h"
 #include "spdk/env.h"
 
 static void
