@@ -103,7 +103,7 @@ struct spdk_bdev_nvme_opts {
 	uint32_t dhchap_dhgroups;
 	bool rdma_umr_per_io;
 };
-SPDK_STATIC_ASSERT(sizeof(struct spdk_bdev_nvme_opts) == 120, "Incorrect size");
+SPDK_STATIC_ASSERT(sizeof(struct spdk_bdev_nvme_opts) == 128, "Incorrect size");
 
 /**
  * Connect to the NVMe controller and populate namespaces as bdevs.
