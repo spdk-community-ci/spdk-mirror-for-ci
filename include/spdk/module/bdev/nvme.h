@@ -1,5 +1,6 @@
 /*   SPDX-License-Identifier: BSD-3-Clause
  *   Copyright (C) 2024 Nutanix Inc. All rights reserved.
+ *   Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  */
 
 /** \file
@@ -100,6 +101,7 @@ struct spdk_bdev_nvme_opts {
 	uint8_t reserved110[2];
 	uint32_t dhchap_digests;
 	uint32_t dhchap_dhgroups;
+	bool rdma_umr_per_io;
 };
 SPDK_STATIC_ASSERT(sizeof(struct spdk_bdev_nvme_opts) == 120, "Incorrect size");
 
