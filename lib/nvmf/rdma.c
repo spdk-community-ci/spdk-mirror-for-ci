@@ -389,6 +389,12 @@ struct spdk_nvmf_rdma_qpair {
 
 	/* Indicate that nvmf_rdma_close_qpair is called */
 	bool					to_close;
+
+	/* Poller to schedule forcing disconnection of the qpair if accept failed */
+	struct spdk_poller			*disconnect_poller;
+
+	/* Indicate whether the accept failed so that we can be careful when destroying the qpair */
+	bool					accept_failed;
 };
 
 struct spdk_nvmf_rdma_poller_stat {
@@ -853,6 +859,8 @@ nvmf_rdma_qpair_destroy(struct spdk_nvmf_rdma_qpair *rqpair)
 	int				rc;
 
 	spdk_trace_record(TRACE_RDMA_QP_DESTROY, 0, 0, (uintptr_t)rqpair);
+
+	spdk_poller_unregister(&rqpair->disconnect_poller);
 
 	if (rqpair->qd != 0) {
 		struct spdk_nvmf_qpair *qpair = &rqpair->qpair;
@@ -4280,6 +4288,21 @@ nvmf_rdma_qpair_reject_connection(struct spdk_nvmf_rdma_qpair *rqpair)
 	}
 }
 
+static void nvmf_rdma_close_qpair(struct spdk_nvmf_qpair *qpair,
+				  spdk_nvmf_transport_qpair_fini_cb cb_fn, void *cb_arg);
+
+#define NVMF_RDMA_QPAIR_FORCE_DISCONNECTION_TIMEOUT_US (30 * SPDK_SEC_TO_USEC)
+
+static int
+nvmf_rdma_qpair_force_disconnection(void *arg)
+{
+	struct spdk_nvmf_rdma_qpair *rqpair = arg;
+
+	rqpair->accept_failed = false;
+	nvmf_rdma_close_qpair(&rqpair->qpair, NULL, NULL);
+	return SPDK_POLLER_BUSY;
+}
+
 static int
 nvmf_rdma_poll_group_add(struct spdk_nvmf_transport_poll_group *group,
 			 struct spdk_nvmf_qpair *qpair)
@@ -4326,6 +4349,16 @@ nvmf_rdma_poll_group_add(struct spdk_nvmf_transport_poll_group *group,
 
 	rc = nvmf_rdma_event_accept(rqpair->cm_id, rqpair);
 	if (rc) {
+		/*
+		 * Bummer, we reached a point where we can't know if the qpair is active or not.
+		 * Let's tentatively mark the qpair as active and wait for a normal disconnection.
+		 * Let's schedule a poller just in case so that we force the qpair deletion if it
+		 * wasn't active and couldn't be disconnected the normal way.
+		 */
+		rqpair->disconnect_poller = SPDK_POLLER_REGISTER(
+						    nvmf_rdma_qpair_force_disconnection, rqpair,
+						    NVMF_RDMA_QPAIR_FORCE_DISCONNECTION_TIMEOUT_US);
+		rqpair->accept_failed = true;
 		/* Try to reject, but we probably can't */
 		nvmf_rdma_qpair_reject_connection(rqpair);
 		return -1;
@@ -4423,7 +4456,7 @@ nvmf_rdma_close_qpair(struct spdk_nvmf_qpair *qpair,
 	 * the RDMA qp has not been initialized yet and the RDMA CM
 	 * event has not yet been acknowledged, so we need to reject it.
 	 */
-	if (rqpair->qpair.state == SPDK_NVMF_QPAIR_UNINITIALIZED) {
+	if (rqpair->qpair.state == SPDK_NVMF_QPAIR_UNINITIALIZED && !rqpair->accept_failed) {
 		nvmf_rdma_qpair_reject_connection(rqpair);
 		nvmf_rdma_qpair_destroy(rqpair);
 		return;
