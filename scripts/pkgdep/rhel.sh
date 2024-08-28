@@ -137,7 +137,7 @@ if echo "$ID $VERSION_ID" | grep -E -q 'centos 8|rhel 8|rocky 8'; then
 	pip3 install --upgrade pip
 	pip3() { /usr/local/bin/pip "$@"; }
 else
-	yum install -y python python3-devel
+	yum install -y python3 python3-devel
 fi
 pip3 install ninja
 pip3 install meson
