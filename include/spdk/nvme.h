@@ -2175,6 +2175,15 @@ int spdk_nvme_ctrlr_authenticate(struct spdk_nvme_ctrlr *ctrlr,
 				 spdk_nvme_authenticate_cb cb_fn, void *cb_ctx);
 
 /**
+ * Get the controller with which this qpair is associated.
+ *
+ * \param qpair The qpair to query.
+ *
+ * \return a pointer to the controller.
+ */
+struct spdk_nvme_ctrlr *spdk_nvme_qpair_get_ctrlr(struct spdk_nvme_qpair *qpair);
+
+/**
  * Send the given admin command to the NVMe controller.
  *
  * This is a low level interface for submitting admin commands directly. Prefer
