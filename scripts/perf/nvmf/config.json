@@ -1,7 +1,5 @@
 {
   "general": {
-    "username": "uname",
-    "password": "pass",
     "transport": "transport_type"
   },
   "target": {

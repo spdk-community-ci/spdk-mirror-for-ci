@@ -56,11 +56,12 @@ class Server(ABC):
 
         config_fields = [
             ConfigField(name='username', required=True),
-            ConfigField(name='password', required=True),
+            ConfigField(name='password', required=False),
             ConfigField(name='transport', required=True),
             ConfigField(name='skip_spdk_install', default=False),
             ConfigField(name='irdma_roce_enable', default=False),
-            ConfigField(name='pause_frames', default=None)
+            ConfigField(name='pause_frames', default=None),
+            ConfigField(name='ssh_key_path', default='~/.ssh/id_rsa_perf')
         ]
 
         self.read_config(config_fields, general_config)
@@ -780,9 +781,25 @@ class Initiator(Server):
 
         self.subsystem_info_list = []
 
+        connect_params = {
+            'hostname': self.ip,
+            'username': self.username,
+            'password': self.password
+        }
+
+        if not self.password:
+            _ssh_key_path = os.path.expanduser(self.ssh_key_path)
+            connect_params['pkey'] = paramiko.RSAKey.from_private_key(open(_ssh_key_path))
+
         self.ssh_connection = paramiko.SSHClient()
         self.ssh_connection.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        self.ssh_connection.connect(self.ip, username=self.username, password=self.password)
+
+        try:
+            self.ssh_connection.connect(**connect_params)
+        except Exception as e:
+            logging.error(f"An exception occurred while trying to establish the SSH connection: {e}")
+            sys.exit(1)
+
         self.exec_cmd(["sudo", "rm", "-rf", "%s/nvmf_perf" % self.spdk_dir])
         self.exec_cmd(["mkdir", "-p", "%s" % self.spdk_dir])
         self._nics_json_obj = json.loads(self.exec_cmd(["ip", "-j", "address", "show"]))
@@ -1807,6 +1824,11 @@ if __name__ == "__main__":
                         help='Results directory.')
     parser.add_argument('-s', '--csv-filename', type=str, default='nvmf_results.csv',
                         help='CSV results filename.')
+    parser.add_argument('-u', '--username', type=str, default=os.getlogin(),
+                        help='Username to use (default: the user running the script)')
+    parser.add_argument('-p', '--password', type=str, default="", required=False,
+                        help="""(Optional) Username password. If password is not given,
+                        script will try to connect using SSH keys.""")
     parser.add_argument('-f', '--force', default=False, action='store_true',
                         dest='force', help="""Force script to continue and try to use all
                         available NVMe devices during test.
@@ -1825,6 +1847,13 @@ if __name__ == "__main__":
     general_config = data["general"]
     target_config = data["target"]
     initiator_configs = [data[x] for x in data.keys() if "initiator" in x]
+
+    data["general"].update(
+        {
+            "username": args.username,
+            "password": args.password
+        }
+    )
 
     if not validate_allowlist_settings(data, args.force):
         exit(1)

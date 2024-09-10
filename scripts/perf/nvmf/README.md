@@ -56,19 +56,16 @@ The following sub-chapters describe each configuration section in more detail.
 
 ``` ~sh
 "general": {
-    "username": "user",
-    "password": "password",
     "transport": "transport_type",
     "skip_spdk_install": bool,
     "irdma_roce_enable": bool,
-    "pause_frames": bool
+    "pause_frames": bool,
+    "ssh_key_path": string
 }
 ```
 
 Required:
 
-- username - username for the SSH session
-- password - password for the SSH session
 - transport - transport layer to be used throughout the test ("tcp" or "rdma")
 
 Optional:
@@ -84,6 +81,7 @@ Optional:
 - pause_frames - configures pause frames when RoCEv2 network protocol is enabled on Target and
   Initiator machines.
   Default: false
+- ssh_key_path - use if ssh key should be used for connection auth. Default: '~/.ssh/id_rsa_perf'
 
 ### Target System Configuration
 
@@ -426,6 +424,11 @@ Besides `run_num`, more information on these options can be found in `man fio`.
 Before running the test script run the spdk/scripts/setup.sh script on Target
 system. This binds the devices to VFIO/UIO userspace driver and allocates
 hugepages for SPDK process.
+
+The default authentication method is an SSH key. To connect using a username
+and password, provide the -u (or --username) and -p (or --password) arguments
+when running the script. By default, the script uses the username of the user
+who runs it.
 
 Run the script on the NVMe-oF target system:
 
