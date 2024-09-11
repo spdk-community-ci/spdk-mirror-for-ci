@@ -52,7 +52,7 @@ trap cleanup SIGINT SIGTERM EXIT
 tgt2pid=$!
 
 tgt1addr="$NVMF_FIRST_TARGET_IP"
-tgt2addr="$(get_main_ns_ip)"
+tgt2addr=127.0.0.1
 ns1uuid=$(uuidgen)
 ns2uuid=$(uuidgen)
 ns3uuid=$(uuidgen)
