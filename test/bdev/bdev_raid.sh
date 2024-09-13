@@ -943,6 +943,49 @@ function raid_resize_data_offset_test() {
 	return 0
 }
 
+function raid_io_pi_test() {
+	local raid_level=$1
+	local num_base_bdevs=$2
+	local base_bdevs=($(for ((i = 1; i <= num_base_bdevs; i++)); do echo BaseBdev$i; done))
+	local raid_bdev_name="raid_bdev1"
+	local strip_size
+	local create_arg
+	local bdevperf_log
+	local fail_per_s
+
+	if [ $raid_level != "raid1" ]; then
+		strip_size=64
+		create_arg+=" -z $strip_size"
+	else
+		strip_size=0
+	fi
+
+	bdevperf_log=$(mktemp -p "$tmp_dir")
+
+	"$rootdir/build/examples/bdevperf" -T $raid_bdev_name -t 1 -w verify -o 131072 -q 1 -z -f -L bdev_raid > $bdevperf_log &
+	raid_pid=$!
+	waitforlisten $raid_pid
+
+	# Create base bdevs
+	for bdev in "${base_bdevs[@]}"; do
+		$rpc_py bdev_malloc_create -b ${bdev} 100 $base_blocklen $base_malloc_params
+	done
+
+	# Create RAID bdev
+	$rpc_py bdev_raid_create $create_arg -r $raid_level -b "'${base_bdevs[*]}'" -n $raid_bdev_name
+	verify_raid_bdev_state $raid_bdev_name "online" $raid_level $strip_size $num_base_bdevs
+
+	# Start user I/O
+	"$rootdir/examples/bdev/bdevperf/bdevperf.py" perform_tests
+
+	$rpc_py bdev_raid_delete $raid_bdev_name
+
+	killprocess $raid_pid
+
+	fail_per_s=$(grep -v Job $bdevperf_log | grep $raid_bdev_name | awk '{print $6}')
+	[[ "$fail_per_s" = "0.00" ]]
+}
+
 mkdir -p "$tmp_dir"
 trap 'cleanup; exit 1' EXIT
 
@@ -991,6 +1034,10 @@ for n in {3..4}; do
 		run_test "raid5f_rebuild_test_sb" raid_rebuild_test raid5f $n true false true
 	fi
 done
+
+base_malloc_params="-m 8 -t 1"
+run_test "raid_verify_io_pi_test" raid_io_pi_test raid0 3
+base_malloc_params=""
 
 base_blocklen=4096
 
