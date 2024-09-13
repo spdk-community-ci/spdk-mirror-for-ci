@@ -749,7 +749,7 @@ nvme_ctrlr_can_be_unregistered(struct nvme_ctrlr *nvme_ctrlr)
 }
 
 static void
-nvme_ctrlr_release(struct nvme_ctrlr *nvme_ctrlr)
+nvme_ctrlr_put_ref(struct nvme_ctrlr *nvme_ctrlr)
 {
 	pthread_mutex_lock(&nvme_ctrlr->mutex);
 	SPDK_DTRACE_PROBE2(bdev_nvme_ctrlr_release, nvme_ctrlr->nbdev_ctrlr->name, nvme_ctrlr->ref);
@@ -1899,7 +1899,7 @@ bdev_nvme_destruct(void *ctx)
 		if (nvme_ctrlr_get_ns(nvme_ns->ctrlr, nvme_ns->id) == NULL) {
 			pthread_mutex_unlock(&nvme_ns->ctrlr->mutex);
 
-			nvme_ctrlr_release(nvme_ns->ctrlr);
+			nvme_ctrlr_put_ref(nvme_ns->ctrlr);
 			nvme_ns_free(nvme_ns);
 		} else {
 			pthread_mutex_unlock(&nvme_ns->ctrlr->mutex);
@@ -3595,7 +3595,7 @@ nvme_qpair_delete(struct nvme_qpair *nvme_qpair)
 
 	spdk_put_io_channel(spdk_io_channel_from_ctx(nvme_qpair->group));
 
-	nvme_ctrlr_release(nvme_qpair->ctrlr);
+	nvme_ctrlr_put_ref(nvme_qpair->ctrlr);
 
 	free(nvme_qpair);
 }
@@ -4915,7 +4915,7 @@ nvme_ctrlr_depopulate_namespace_done(struct nvme_ns *nvme_ns)
 	nvme_ns_free(nvme_ns);
 	pthread_mutex_unlock(&nvme_ctrlr->mutex);
 
-	nvme_ctrlr_release(nvme_ctrlr);
+	nvme_ctrlr_put_ref(nvme_ctrlr);
 }
 
 static void
@@ -5920,7 +5920,7 @@ _nvme_ctrlr_destruct(void *ctx)
 	struct nvme_ctrlr *nvme_ctrlr = ctx;
 
 	nvme_ctrlr_depopulate_namespaces(nvme_ctrlr);
-	nvme_ctrlr_release(nvme_ctrlr);
+	nvme_ctrlr_put_ref(nvme_ctrlr);
 }
 
 static int
