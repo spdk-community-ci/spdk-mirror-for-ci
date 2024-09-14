@@ -20,7 +20,8 @@ static struct spdk_cpuset g_vhost_core_mask;
 
 static TAILQ_HEAD(, spdk_vhost_dev) g_vhost_devices = TAILQ_HEAD_INITIALIZER(
 			g_vhost_devices);
-static pthread_mutex_t g_vhost_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t g_vhost_mutex;
+static bool g_vhost_mutex_init;
 
 static TAILQ_HEAD(, spdk_virtio_blk_transport) g_virtio_blk_transports = TAILQ_HEAD_INITIALIZER(
 			g_virtio_blk_transports);
@@ -238,15 +239,35 @@ spdk_vhost_get_coalescing(struct spdk_vhost_dev *vdev, uint32_t *delay_base_us,
 	vdev->backend->get_coalescing(vdev, delay_base_us, iops_threshold);
 }
 
+static void
+spdk_vhost_mutex_init(pthread_mutex_t *mutex)
+{
+	pthread_mutexattr_t attr;
+
+	pthread_mutexattr_init(&attr);
+	pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+	pthread_mutex_init(mutex, &attr);
+}
+
 void
 spdk_vhost_lock(void)
 {
+	if (!g_vhost_mutex_init) {
+		spdk_vhost_mutex_init(&g_vhost_mutex);
+		g_vhost_mutex_init = true;
+	}
+
 	pthread_mutex_lock(&g_vhost_mutex);
 }
 
 int
 spdk_vhost_trylock(void)
 {
+	if (!g_vhost_mutex_init) {
+		spdk_vhost_mutex_init(&g_vhost_mutex);
+		g_vhost_mutex_init = true;
+	}
+
 	return -pthread_mutex_trylock(&g_vhost_mutex);
 }
 
