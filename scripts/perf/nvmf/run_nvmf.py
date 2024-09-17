@@ -1811,6 +1811,38 @@ class CpuThrottlingError(Exception):
         super().__init__(message)
 
 
+DEVICE_CLASSES = {
+    "target": {
+        "spdk": SPDKTarget,
+        "kernel": KernelTarget
+    },
+    "initiator": {
+        "spdk": SPDKInitiator,
+        "kernel": KernelInitiator
+    }
+}
+
+
+def create_device(obj_type, key, general_data, value):
+    device_class = DEVICE_CLASSES[obj_type][value["mode"]]
+    return device_class(key, general_data, value)
+
+
+def create_fio_settings(fio_data):
+    return {
+        "workloads": itertools.product(fio_data["bs"], fio_data["qd"], fio_data["rw"]),
+        "run_time": fio_data.get("run_time", 10),
+        "ramp_time": fio_data.get("ramp_time", 0),
+        "rw_mix_read": fio_data.get("rwmixread", 70),
+        "run_num": fio_data.get("run_num", None),
+        "num_jobs": fio_data.get("num_jobs", None),
+        "rate_iops": fio_data.get("rate_iops", 0),
+        "offset": fio_data.get("offset", False),
+        "offset_inc": fio_data.get("offset_inc", 0),
+        "numa_align": fio_data.get("numa_align", 1)
+    }
+
+
 if __name__ == "__main__":
     exit_code = 0
 
@@ -1858,29 +1890,13 @@ if __name__ == "__main__":
     for k, v in data.items():
         if "target" in k:
             v.update({"results_dir": args.results})
-            if data[k]["mode"] == "spdk":
-                target_obj = SPDKTarget(k, data["general"], v)
-            elif data[k]["mode"] == "kernel":
-                target_obj = KernelTarget(k, data["general"], v)
+            target_obj = create_device("target", k, data["general"], v)
         elif "initiator" in k:
-            if data[k]["mode"] == "spdk":
-                init_obj = SPDKInitiator(k, data["general"], v)
-            elif data[k]["mode"] == "kernel":
-                init_obj = KernelInitiator(k, data["general"], v)
-            initiators.append(init_obj)
+            init_obj = create_device("initiator", k, data["general"], v)
+            if init_obj:
+                initiators.append(init_obj)
         elif "fio" in k:
-            fio_settings = {
-                "workloads": itertools.product(data[k]["bs"], data[k]["qd"],  data[k]["rw"]),
-                "run_time": data[k].get("run_time", 10),
-                "ramp_time": data[k].get("ramp_time", 0),
-                "rw_mix_read": data[k].get("rwmixread", 70),
-                "run_num": data[k].get("run_num", None),
-                "num_jobs": data[k].get("num_jobs", None),
-                "rate_iops": data[k].get("rate_iops", 0),
-                "offset": data[k].get("offset", False),
-                "offset_inc": data[k].get("offset_inc", 0),
-                "numa_align": data[k].get("numa_align", 1)
-            }
+            fio_settings = create_fio_settings(v)
         else:
             continue
 
