@@ -1844,9 +1844,6 @@ if __name__ == "__main__":
         data = json.load(config)
 
     initiators = []
-    general_config = data["general"]
-    target_config = data["target"]
-    initiator_configs = [data[x] for x in data.keys() if "initiator" in x]
 
     data["general"].update(
         {
