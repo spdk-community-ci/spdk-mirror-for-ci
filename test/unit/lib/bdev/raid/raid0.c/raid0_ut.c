@@ -326,11 +326,6 @@ get_child_io(struct io_output *output)
 static void
 child_io_complete(struct spdk_bdev_io *bdev_io, spdk_bdev_io_completion_cb cb, void *cb_arg)
 {
-	if (g_child_io_status_flag && bdev_io->type == SPDK_BDEV_IO_TYPE_READ) {
-		verify_dif(bdev_io->u.bdev.iovs, bdev_io->u.bdev.iovcnt, bdev_io->u.bdev.md_buf,
-			   bdev_io->u.bdev.offset_blocks, bdev_io->u.bdev.num_blocks, bdev_io->bdev);
-	}
-
 	cb(bdev_io, g_child_io_status_flag, cb_arg);
 }
 
