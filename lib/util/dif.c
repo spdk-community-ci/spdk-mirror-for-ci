@@ -2180,8 +2180,7 @@ spdk_dif_get_length_with_md(uint32_t data_len, const struct spdk_dif_ctx *ctx)
 
 static int
 _dif_remap_ref_tag(struct _dif_sgl *sgl, uint32_t offset_blocks,
-		   const struct spdk_dif_ctx *ctx, struct spdk_dif_error *err_blk,
-		   bool check_ref_tag)
+		   const struct spdk_dif_ctx *ctx, struct spdk_dif_error *err_blk)
 {
 	uint32_t offset, buf_len;
 	uint64_t expected = 0, remapped;
@@ -2221,7 +2220,7 @@ _dif_remap_ref_tag(struct _dif_sgl *sgl, uint32_t offset_blocks,
 	}
 
 	/* Verify the stored Reference Tag. */
-	if (check_ref_tag && !_dif_reftag_check(&dif, ctx, expected, offset_blocks, err_blk)) {
+	if (!_dif_reftag_check(&dif, ctx, expected, offset_blocks, err_blk)) {
 		return -1;
 	}
 
@@ -2247,8 +2246,7 @@ end:
 
 int
 spdk_dif_remap_ref_tag(struct iovec *iovs, int iovcnt, uint32_t num_blocks,
-		       const struct spdk_dif_ctx *ctx, struct spdk_dif_error *err_blk,
-		       bool check_ref_tag)
+		       const struct spdk_dif_ctx *ctx, struct spdk_dif_error *err_blk)
 {
 	struct _dif_sgl sgl;
 	uint32_t offset_blocks;
@@ -2270,7 +2268,7 @@ spdk_dif_remap_ref_tag(struct iovec *iovs, int iovcnt, uint32_t num_blocks,
 	}
 
 	for (offset_blocks = 0; offset_blocks < num_blocks; offset_blocks++) {
-		rc = _dif_remap_ref_tag(&sgl, offset_blocks, ctx, err_blk, check_ref_tag);
+		rc = _dif_remap_ref_tag(&sgl, offset_blocks, ctx, err_blk);
 		if (rc != 0) {
 			return rc;
 		}
@@ -2281,8 +2279,7 @@ spdk_dif_remap_ref_tag(struct iovec *iovs, int iovcnt, uint32_t num_blocks,
 
 static int
 _dix_remap_ref_tag(struct _dif_sgl *md_sgl, uint32_t offset_blocks,
-		   const struct spdk_dif_ctx *ctx, struct spdk_dif_error *err_blk,
-		   bool check_ref_tag)
+		   const struct spdk_dif_ctx *ctx, struct spdk_dif_error *err_blk)
 {
 	uint64_t expected = 0, remapped;
 	uint8_t *md_buf;
@@ -2308,7 +2305,7 @@ _dix_remap_ref_tag(struct _dif_sgl *md_sgl, uint32_t offset_blocks,
 	}
 
 	/* Verify the stored Reference Tag. */
-	if (check_ref_tag && !_dif_reftag_check(dif, ctx, expected, offset_blocks, err_blk)) {
+	if (!_dif_reftag_check(dif, ctx, expected, offset_blocks, err_blk)) {
 		return -1;
 	}
 
@@ -2324,8 +2321,7 @@ end:
 int
 spdk_dix_remap_ref_tag(struct iovec *md_iov, uint32_t num_blocks,
 		       const struct spdk_dif_ctx *ctx,
-		       struct spdk_dif_error *err_blk,
-		       bool check_ref_tag)
+		       struct spdk_dif_error *err_blk)
 {
 	struct _dif_sgl md_sgl;
 	uint32_t offset_blocks;
@@ -2347,7 +2343,7 @@ spdk_dix_remap_ref_tag(struct iovec *md_iov, uint32_t num_blocks,
 	}
 
 	for (offset_blocks = 0; offset_blocks < num_blocks; offset_blocks++) {
-		rc = _dix_remap_ref_tag(&md_sgl, offset_blocks, ctx, err_blk, check_ref_tag);
+		rc = _dix_remap_ref_tag(&md_sgl, offset_blocks, ctx, err_blk);
 		if (rc != 0) {
 			return rc;
 		}
