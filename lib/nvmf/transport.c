@@ -589,6 +589,7 @@ nvmf_transport_poll_group_create_poller(struct spdk_nvmf_transport_poll_group *t
 	snprintf(poller_name, sizeof(poller_name), "nvmf_%s", tgroup->transport->ops->name);
 	tgroup->poller = spdk_poller_register_named(nvmf_tgroup_poll, tgroup, 0, poller_name);
 	spdk_poller_register_interrupt(tgroup->poller, NULL, NULL);
+	spdk_poller_set_pending_work(tgroup->poller, false);
 }
 
 struct spdk_nvmf_transport_poll_group *
