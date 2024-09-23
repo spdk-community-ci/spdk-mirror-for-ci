@@ -127,12 +127,16 @@
 	spdk_nvme_ctrlr_authenticate;
 
 	spdk_nvme_poll_group_create;
+	spdk_nvme_poll_group_create_ext;
+	spdk_nvme_poll_group_default_opts;
 	spdk_nvme_poll_group_add;
 	spdk_nvme_poll_group_remove;
 	spdk_nvme_poll_group_destroy;
 	spdk_nvme_poll_group_process_completions;
 	spdk_nvme_poll_group_all_connected;
 	spdk_nvme_poll_group_get_ctx;
+	spdk_nvme_poll_group_wait;
+	spdk_nvme_poll_group_get_fd_group_fd;
 
 	spdk_nvme_ns_get_data;
 	spdk_nvme_ns_get_id;

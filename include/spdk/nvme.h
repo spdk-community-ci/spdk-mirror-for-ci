@@ -20,6 +20,7 @@ extern "C" {
 
 #include "spdk/dma.h"
 #include "spdk/env.h"
+#include "spdk/fd_group.h"
 #include "spdk/keyring.h"
 #include "spdk/nvme_spec.h"
 #include "spdk/nvmf_spec.h"
@@ -2969,6 +2970,25 @@ void spdk_nvme_ctrlr_free_qid(struct spdk_nvme_ctrlr *ctrlr, uint16_t qid);
  */
 struct spdk_nvme_poll_group;
 
+struct spdk_nvme_poll_group_opts {
+	/**
+	 * The size of spdk_nvme_poll_group_opts according to the caller of this library is used
+	 * for ABI compatibility. The library uses this field to know how many fields in this
+	 * structure are valid. And the library will populate any remaining fields with default
+	 * values. New added fields should be put at the end of the struct.
+	 */
+	size_t opts_size;
+
+	/**
+	 * This flag if set to true enables the creation of fd_group within the poll group.
+	 * Default mode is set to false i.e. fd_group is not created within the poll group.
+	 */
+	bool create_fd_group;
+
+	/* Hole at bytes 9-15. */
+	uint8_t reserved9[7];
+};
+SPDK_STATIC_ASSERT(sizeof(struct spdk_nvme_poll_group_opts) == 16, "Incorrect size");
 
 /**
  * This function alerts the user to disconnected qpairs when calling
@@ -2988,6 +3008,29 @@ typedef void (*spdk_nvme_disconnected_qpair_cb)(struct spdk_nvme_qpair *qpair,
  */
 struct spdk_nvme_poll_group *spdk_nvme_poll_group_create(void *ctx,
 		struct spdk_nvme_accel_fn_table *table);
+
+/**
+ * Create a new poll group with optional parameters.
+ *
+ * \param ctx A user supplied context that can be retrieved later with spdk_nvme_poll_group_get_ctx
+ * \param table The call back table defined by users which contains the accelerated functions
+ * which can be used to accelerate some operations such as crc32c.
+ * \param opts Optional poll group parameters \ref spdk_nvme_poll_group_opts.
+ *
+ * \return Pointer to the new poll group, or NULL on error.
+ */
+struct spdk_nvme_poll_group *spdk_nvme_poll_group_create_ext(void *ctx,
+		struct spdk_nvme_accel_fn_table *table,
+		struct spdk_nvme_poll_group_opts *opts);
+
+/**
+ * Initialize a spdk_nvme_poll_group_opts structure to the default values.
+ *
+ * \param[out] opts Will be filled with default option.
+ * \param opts_size Must be the size of spdk_nvme_poll_group_opts structure.
+ */
+void spdk_nvme_poll_group_default_opts(struct spdk_nvme_poll_group_opts *opts,
+				       size_t opts_size);
 
 /**
  * Get a optimal poll group.
@@ -3022,6 +3065,32 @@ int spdk_nvme_poll_group_add(struct spdk_nvme_poll_group *group, struct spdk_nvm
  * disconnected in the group, or -EPROTO on a protocol (transport) specific failure.
  */
 int spdk_nvme_poll_group_remove(struct spdk_nvme_poll_group *group, struct spdk_nvme_qpair *qpair);
+
+/**
+ * Wait for events on the file descriptors of all the qpairs in this poll group.
+ *
+ * This function collectively wait for events on all the file descriptors of spdk_nvme_qpair
+ * within this poll group.
+ * It can either be called directly from an application that manages the nvme poll group, or
+ * can be a callback function for event source file descriptors, when the event source is
+ * registered to a specific fd_group, or
+ * can be a callback function for interrupt file descriptor, when spdk_interrupt is registered on
+ * the current thread.
+ * To accomodate the later use-cases the argument is kept as void *.
+ *
+ * \param arg must be a pointer to spdk_nvme_poll_group.
+ * \return number of events processed on success, or -errno in case of failure.
+ */
+int spdk_nvme_poll_group_wait(void *arg);
+
+/**
+ * Return the internal epoll_fd for the fd group of this poll group.
+ *
+ * \param group The poll group which contains the fd group.
+ *
+ * \return epoll_fd for the poll group, -EINVAL if there is no fd group for this poll group.
+ */
+int spdk_nvme_poll_group_get_fd_group_fd(struct spdk_nvme_poll_group *group);
 
 /**
  * Destroy an empty poll group.
