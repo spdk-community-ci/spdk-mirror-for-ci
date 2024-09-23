@@ -203,7 +203,6 @@ static void
 ae4dma_channel_destruct(uint8_t hwqueues, struct spdk_ae4dma_chan *ae4dma)
 {
 	ae4dma_unmap_pci_bar(ae4dma);
-	spdk_pci_device_detach(ae4dma->device);
 
 	for (int i = 0; i < hwqueues; i++) {
 		if (ae4dma->cmd_q[i].qbase_addr) {
