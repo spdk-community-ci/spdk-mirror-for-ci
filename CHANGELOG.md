@@ -30,6 +30,11 @@ DMA (AE4DMA) offload engine.
   - New user-space driver supporting DMA memory copy offload on AMD EYPC systems.
   - Example program `ae4dma/perf`
 
+### rpc
+
+Integrated AE4DMA in accel framework. New RPC `ae4dma_scan_accel_module` has
+been added to enable this accel module.
+
 ## v24.09
 
 ### accel

@@ -26,7 +26,7 @@ static int g_rc;
 static int g_xfer_size_bytes = 4096;
 static int g_block_size_bytes = 512;
 static int g_md_size_bytes = 8;
-static int g_queue_depth = 32;
+static int g_queue_depth = 28;
 /* g_allocate_depth indicates how many tasks we allocate per worker. It will
  * be at least as much as the queue depth.
  */
@@ -559,7 +559,7 @@ _get_task_data_bufs(struct ap_task *task)
 			memset(task->sources[i], DATA_PATTERN, g_xfer_size_bytes);
 		}
 	} else {
-		task->src = spdk_dma_zmalloc(g_xfer_size_bytes, 0, NULL);
+		task->src = spdk_dma_zmalloc(g_xfer_size_bytes, ALIGN_4K, NULL);
 		if (task->src == NULL) {
 			fprintf(stderr, "Unable to alloc src buffer\n");
 			return -ENOMEM;
@@ -580,7 +580,7 @@ _get_task_data_bufs(struct ap_task *task)
 	    g_workload_selection != SPDK_ACCEL_OPC_DIF_VERIFY_COPY &&
 	    g_workload_selection != SPDK_ACCEL_OPC_DIX_VERIFY &&
 	    g_workload_selection != SPDK_ACCEL_OPC_DIX_GENERATE) {
-		task->dst = spdk_dma_zmalloc(dst_buff_len, align, NULL);
+		task->dst = spdk_dma_zmalloc(dst_buff_len, ALIGN_4K, NULL);
 		if (task->dst == NULL) {
 			fprintf(stderr, "Unable to alloc dst buffer\n");
 			return -ENOMEM;
@@ -993,7 +993,9 @@ accel_done(void *arg1, int status)
 		worker->xfer_failed++;
 	}
 
-	worker->current_queue_depth--;
+	if (worker->current_queue_depth) {
+		worker->current_queue_depth--;
+	}
 
 	if (!worker->is_draining && status == 0) {
 		TAILQ_INSERT_TAIL(&worker->tasks_pool, task, link);
@@ -1014,9 +1016,9 @@ dump_result(void)
 	struct worker_thread *worker = g_workers;
 	char tmp[64];
 
-	printf("\n%-12s %20s %16s %16s %16s\n",
-	       "Core,Thread", "Transfers", "Bandwidth", "Failed", "Miscompares");
-	printf("------------------------------------------------------------------------------------\n");
+	printf("\n%-12s %16s %16s %16s %16s\n",
+	       "Core-devs  Thread-Chan", "Transfers", "Bandwidth", "Failed", "Miscompares");
+	printf("----------------------------------------------------------------------------------------\n");
 	while (worker != NULL) {
 
 		uint64_t xfer_per_sec = worker->stats.executed / g_time_in_sec;
@@ -1028,9 +1030,9 @@ dump_result(void)
 		total_miscompared += worker->injected_miscompares;
 		total_bw_in_MiBps += bw_in_MiBps;
 
-		snprintf(tmp, sizeof(tmp), "%u,%u", worker->display.core, worker->display.thread);
+		snprintf(tmp, sizeof(tmp), "%u         %u", worker->display.core, worker->display.thread);
 		if (xfer_per_sec) {
-			printf("%-12s %18" PRIu64 "/s %10" PRIu64 " MiB/s %16"PRIu64 " %16" PRIu64 "\n",
+			printf("%-12s %20" PRIu64 "/s %10" PRIu64 " MiB/s %16"PRIu64 " %16" PRIu64 "\n",
 			       tmp, xfer_per_sec, bw_in_MiBps, worker->xfer_failed,
 			       worker->injected_miscompares);
 		}
@@ -1040,8 +1042,8 @@ dump_result(void)
 
 	total_xfer_per_sec = total_completed / g_time_in_sec;
 
-	printf("====================================================================================\n");
-	printf("%-12s %18" PRIu64 "/s %10" PRIu64 " MiB/s %16"PRIu64 " %16" PRIu64 "\n",
+	printf("===========================================================================================\n");
+	printf("%-12s %20" PRIu64 "/s %10" PRIu64 " MiB/s %16"PRIu64 " %16" PRIu64 "\n",
 	       "Total", total_xfer_per_sec, total_bw_in_MiBps, total_failed, total_miscompared);
 
 	return total_failed ? 1 : 0;
