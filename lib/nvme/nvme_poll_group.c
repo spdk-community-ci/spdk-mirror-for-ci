@@ -11,6 +11,7 @@ struct spdk_nvme_poll_group *
 spdk_nvme_poll_group_create(void *ctx, struct spdk_nvme_accel_fn_table *table)
 {
 	struct spdk_nvme_poll_group *group;
+	int rc;
 
 	group = calloc(1, sizeof(*group));
 	if (group == NULL) {
@@ -57,10 +58,34 @@ spdk_nvme_poll_group_create(void *ctx, struct spdk_nvme_accel_fn_table *table)
 		return NULL;
 	}
 
+	/* If interrupt is enabled, this fd_group will be used to manage events triggerd on file
+	 * descriptors of all the qpairs in this poll group */
+	rc = spdk_fd_group_create(&group->fgrp);
+	if (rc) {
+		/* Ignore this for non-Linux platforms, as fd_groups aren't supported there. */
+#if defined(__linux__)
+		SPDK_ERRLOG("Cannot create fd group for the nvme poll group\n");
+		free(group);
+		return NULL;
+#endif
+	}
+
 	group->ctx = ctx;
 	STAILQ_INIT(&group->tgroups);
 
 	return group;
+}
+
+int
+spdk_nvme_poll_group_get_fd(struct spdk_nvme_poll_group *group)
+{
+	if (!group->fgrp) {
+		SPDK_ERRLOG("No fd group present for the nvme poll group.\n");
+		assert(false);
+		return -EINVAL;
+	}
+
+	return spdk_fd_group_get_fd(group->fgrp);
 }
 
 struct spdk_nvme_poll_group *
@@ -84,6 +109,15 @@ spdk_nvme_poll_group_add(struct spdk_nvme_poll_group *group, struct spdk_nvme_qp
 	const struct spdk_nvme_transport *transport;
 
 	if (nvme_qpair_get_state(qpair) != NVME_QPAIR_DISCONNECTED) {
+		return -EINVAL;
+	}
+
+	if (!group->enable_interrupts_is_valid) {
+		group->enable_interrupts_is_valid = true;
+		group->enable_interrupts = qpair->ctrlr->opts.enable_interrupts;
+	} else if (qpair->ctrlr->opts.enable_interrupts != group->enable_interrupts) {
+		SPDK_ERRLOG("Queue pair %s interrupts cannot be added to poll group\n",
+			    qpair->ctrlr->opts.enable_interrupts ? "without" : "with");
 		return -EINVAL;
 	}
 
@@ -127,16 +161,104 @@ spdk_nvme_poll_group_remove(struct spdk_nvme_poll_group *group, struct spdk_nvme
 	return -ENODEV;
 }
 
+static int
+nvme_poll_group_add_qpair_fd(struct spdk_nvme_qpair *qpair)
+{
+	struct spdk_nvme_poll_group *group;
+	struct spdk_event_handler_opts opts = {};
+	const struct spdk_nvme_transport_id *trid;
+	int fd;
+
+	group = qpair->poll_group->group;
+	if (group->enable_interrupts == false) {
+		return 0;
+	}
+
+	if (!qpair->opts.event_cb_fn) {
+		SPDK_ERRLOG("Event callback function not specified\n");
+		assert(false);
+		return -EINVAL;
+	}
+
+	spdk_fd_group_get_default_event_handler_opts(&opts, sizeof(opts));
+
+	trid = spdk_nvme_ctrlr_get_transport_id(qpair->ctrlr);
+	if (trid->trtype == SPDK_NVME_TRANSPORT_PCIE) {
+		opts.fd_type = SPDK_FD_TYPE_VFIO;
+	}
+
+	fd = spdk_nvme_qpair_get_fd(qpair);
+	if (fd < 0) {
+		SPDK_ERRLOG("Cannot get fd for the qpair: %d\n", fd);
+		return -EINVAL;
+	}
+
+	return SPDK_FD_GROUP_ADD_EXT(group->fgrp, fd, qpair->opts.event_cb_fn,
+				     qpair->opts.event_cb_arg, &opts);
+}
+
+static void
+nvme_poll_group_remove_qpair_fd(struct spdk_nvme_qpair *qpair)
+{
+	struct spdk_nvme_poll_group *group;
+	int fd;
+
+	group = qpair->poll_group->group;
+	if (group->enable_interrupts == false) {
+		return;
+	}
+
+	fd = spdk_nvme_qpair_get_fd(qpair);
+	if (fd < 0) {
+		SPDK_ERRLOG("Cannot get fd for the qpair: %d\n", fd);
+		assert(false);
+		return;
+	}
+
+	spdk_fd_group_remove(group->fgrp, fd);
+}
+
 int
 nvme_poll_group_connect_qpair(struct spdk_nvme_qpair *qpair)
 {
-	return nvme_transport_poll_group_connect_qpair(qpair);
+	int rc;
+
+	rc = nvme_transport_poll_group_connect_qpair(qpair);
+
+	if (rc == 0) {
+		rc = nvme_poll_group_add_qpair_fd(qpair);
+		return rc ? nvme_transport_poll_group_disconnect_qpair(qpair) : rc;
+	} else {
+		return rc;
+	}
 }
 
 int
 nvme_poll_group_disconnect_qpair(struct spdk_nvme_qpair *qpair)
 {
+	nvme_poll_group_remove_qpair_fd(qpair);
+
 	return nvme_transport_poll_group_disconnect_qpair(qpair);
+}
+
+int
+spdk_nvme_poll_group_wait(struct spdk_nvme_poll_group *group,
+			  spdk_nvme_disconnected_qpair_cb disconnected_qpair_cb)
+{
+	struct spdk_nvme_transport_poll_group *tgroup;
+	int num_events, timeout = -1;
+
+	if (disconnected_qpair_cb == NULL) {
+		return -EINVAL;
+	}
+
+	STAILQ_FOREACH(tgroup, &group->tgroups, link) {
+		nvme_transport_poll_group_check_disconnected_qpairs(tgroup, disconnected_qpair_cb);
+	}
+
+	num_events = spdk_fd_group_wait(group->fgrp, timeout);
+
+	return num_events;
 }
 
 int64_t
@@ -219,6 +341,10 @@ spdk_nvme_poll_group_destroy(struct spdk_nvme_poll_group *group)
 			return -EBUSY;
 		}
 
+	}
+
+	if (group->fgrp) {
+		spdk_fd_group_destroy(group->fgrp);
 	}
 
 	free(group);
