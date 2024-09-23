@@ -31,6 +31,13 @@ Added APIs `spdk_nvme_ctrlr_qpair_get_fd()` and `spdk_nvme_ctrlr_get_admin_qp_fd
 fd for an I/O and admin qpair respectively for a given NVMe controller. This is applicable only
 for the PCIe transport.
 
+Added new APIs to manage `spdk_nvme_qpair` fds within nvme poll group.
+`spdk_nvme_poll_group_create_fd_group()` creates a fd group for the nvme poll group.
+`spdk_nvme_poll_group_get_fd()` retrieves internal epoll_fd of the fd group in nvme poll group.
+`spdk_nvme_poll_group_wait()` waits for events on all the qpair fds in the nvme poll group.
+`spdk_nvme_poll_group_add_qpair_fd_ext()` receives `spdk_event_handler_opts` structure to register
+one event source for the fd of qpair to the fd group in nvme poll group.
+
 ### nvmf
 
 Added public API `spdk_nvmf_send_discovery_log_notice` to send discovery log page

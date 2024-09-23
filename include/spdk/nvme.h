@@ -20,6 +20,7 @@ extern "C" {
 
 #include "spdk/dma.h"
 #include "spdk/env.h"
+#include "spdk/fd_group.h"
 #include "spdk/keyring.h"
 #include "spdk/nvme_spec.h"
 #include "spdk/nvmf_spec.h"
@@ -2955,6 +2956,15 @@ struct spdk_nvme_poll_group *spdk_nvme_poll_group_create(void *ctx,
 		struct spdk_nvme_accel_fn_table *table);
 
 /**
+ * Create a fd_group for nvme poll group.
+ *
+ * \param group The group for which fd group needs to be created.
+ *
+ * \return 0 on success, or -errno in case of failure.
+ */
+int spdk_nvme_poll_group_create_fd_group(struct spdk_nvme_poll_group *group);
+
+/**
  * Get a optimal poll group.
  *
  * \param qpair The qpair to get the optimal poll group.
@@ -2987,6 +2997,53 @@ int spdk_nvme_poll_group_add(struct spdk_nvme_poll_group *group, struct spdk_nvm
  * disconnected in the group, or -EPROTO on a protocol (transport) specific failure.
  */
 int spdk_nvme_poll_group_remove(struct spdk_nvme_poll_group *group, struct spdk_nvme_qpair *qpair);
+
+/**
+ * Register one event type for fd of the spdk_nvme_qpair to the fd group of its poll group.
+ *
+ * For poll group to collectively wait for events on file descriptors of all its spdk_nvme_qpairs,
+ * event source must be registered for the file descriptor of qpair to the fd group of the poll
+ * group. spdk_event_handler_opts argument consists of event which is a bit mask composed by ORing
+ * together enum spdk_interrupt_event_types values. It also consists of fd_type, which can be
+ * used by event handler to perform extra checks during the spdk_fd_group_wait call.
+ *
+ * This should be called after the qpairs are connected and added to the poll group.
+ *
+ * \param qpair The qpair whose fd has to be added to its poll group.
+ * \param fn Called each time there are events in event source.
+ * \param arg Function argument for fn.
+ * \param opts Extended event handler option.
+ *
+ * \return 0 on success, or -errno in case of failure.
+ */
+int spdk_nvme_poll_group_add_qpair_fd_ext(struct spdk_nvme_qpair *qpair, spdk_fd_fn fn, void *arg,
+		struct spdk_event_handler_opts *opts);
+
+/**
+ * Wait for events on the file descriptors of all the qpairs in this poll group.
+ *
+ * This function collectively wait for events on all the file descriptors for spdk_nvme_qpair
+ * within this poll group.
+ * It can either be called directly from an application that manages the nvme poll group, or
+ * can be a callback function for event source file descriptors, when the event source is
+ * registered to a specific fd_group, or
+ * can be a callback function for interrupt file descriptor, when spdk_interrupt is registered on
+ * the current thread.
+ * To accomodate the later use-cases the argument is kept as void *.
+ *
+ * \param arg must be a pointer to spdk_nvme_poll_group.
+ * \return number of events processed on success, or -errno in case of failure.
+ */
+int spdk_nvme_poll_group_wait(void *arg);
+
+/**
+ * Return the internal epoll_fd for the fd group of this poll group.
+ *
+ * \param group The poll group which contains the fd group.
+ *
+ * \return epoll_fd for the poll group, -EINVAL if there is no fd group for this poll group.
+ */
+int spdk_nvme_poll_group_get_fd(struct spdk_nvme_poll_group *group);
 
 /**
  * Destroy an empty poll group.
