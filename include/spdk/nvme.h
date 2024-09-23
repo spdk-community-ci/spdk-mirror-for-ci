@@ -20,6 +20,7 @@ extern "C" {
 
 #include "spdk/dma.h"
 #include "spdk/env.h"
+#include "spdk/fd_group.h"
 #include "spdk/keyring.h"
 #include "spdk/nvme_spec.h"
 #include "spdk/nvmf_spec.h"
@@ -3030,6 +3031,26 @@ int spdk_nvme_poll_group_add(struct spdk_nvme_poll_group *group, struct spdk_nvm
  * disconnected in the group, or -EPROTO on a protocol (transport) specific failure.
  */
 int spdk_nvme_poll_group_remove(struct spdk_nvme_poll_group *group, struct spdk_nvme_qpair *qpair);
+
+/**
+ * Wait for interrupt events on file descriptors of all the qpairs in this poll group.
+ *
+ * In interrupt mode all the file descriptors of qpairs are registered to the fd group within the
+ * poll group. This can collectively wait for interrupt events on all those file descriptors.
+ *
+ * \param group The poll group on which to wait for interrupt events.
+ * \return number of events processed on success, or -errno in case of failure.
+ */
+int spdk_nvme_poll_group_wait(struct spdk_nvme_poll_group *group);
+
+/**
+ * Return the internal epoll_fd for the fd group of this poll group.
+ *
+ * \param group The poll group which contains the fd group.
+ *
+ * \return epoll_fd for the poll group, -EINVAL if there is no fd group for this poll group.
+ */
+int spdk_nvme_poll_group_get_fd_group_fd(struct spdk_nvme_poll_group *group);
 
 /**
  * Destroy an empty poll group.

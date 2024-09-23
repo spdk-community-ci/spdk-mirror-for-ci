@@ -11,6 +11,9 @@ struct spdk_nvme_poll_group *
 spdk_nvme_poll_group_create(void *ctx, struct spdk_nvme_accel_fn_table *table)
 {
 	struct spdk_nvme_poll_group *group;
+#if defined(__linux__)
+	int rc;
+#endif
 
 	group = calloc(1, sizeof(*group));
 	if (group == NULL) {
@@ -57,10 +60,32 @@ spdk_nvme_poll_group_create(void *ctx, struct spdk_nvme_accel_fn_table *table)
 		return NULL;
 	}
 
+#if defined(__linux__)
+	/* If interrupt is enabled, this fd_group will be used to manage events triggerd on file
+	 * descriptors of all the qpairs in this poll group */
+	rc = spdk_fd_group_create(&group->fgrp);
+	if (rc) {
+		SPDK_ERRLOG("Cannot create fd group for the nvme poll group\n");
+		free(group);
+		return NULL;
+	}
+#endif
+
 	group->ctx = ctx;
 	STAILQ_INIT(&group->tgroups);
 
 	return group;
+}
+
+int
+spdk_nvme_poll_group_get_fd_group_fd(struct spdk_nvme_poll_group *group)
+{
+	if (!group->fgrp) {
+		SPDK_ERRLOG("No fd group present for the nvme poll group.\n");
+		return -EINVAL;
+	}
+
+	return spdk_fd_group_get_fd(group->fgrp);
 }
 
 struct spdk_nvme_poll_group *
@@ -127,16 +152,93 @@ spdk_nvme_poll_group_remove(struct spdk_nvme_poll_group *group, struct spdk_nvme
 	return -ENODEV;
 }
 
+static int
+nvme_poll_group_add_qpair_fd(struct spdk_nvme_qpair *qpair)
+{
+	struct spdk_nvme_poll_group *group;
+	struct spdk_event_handler_opts opts = {};
+	const struct spdk_nvme_transport_id *trid;
+	int fd;
+
+	if (!qpair->ctrlr->opts.enable_interrupts) {
+		return 0;
+	}
+
+	if (!qpair->opts.event_cb_fn) {
+		SPDK_ERRLOG("Event callback function not specified\n");
+		return -EINVAL;
+	}
+
+	spdk_fd_group_get_default_event_handler_opts(&opts, sizeof(opts));
+
+	trid = spdk_nvme_ctrlr_get_transport_id(qpair->ctrlr);
+	if (trid->trtype == SPDK_NVME_TRANSPORT_PCIE) {
+		opts.fd_type = SPDK_FD_TYPE_VFIO;
+	}
+
+	fd = spdk_nvme_ctrlr_qpair_get_fd(qpair);
+	if (fd < 0) {
+		SPDK_ERRLOG("Cannot get fd for the qpair: %d\n", fd);
+		return -EINVAL;
+	}
+
+	group = qpair->poll_group->group;
+
+	return SPDK_FD_GROUP_ADD_EXT(group->fgrp, fd, qpair->opts.event_cb_fn,
+				     qpair->opts.event_cb_arg, &opts);
+}
+
+static int
+nvme_poll_group_remove_qpair_fd(struct spdk_nvme_qpair *qpair)
+{
+	struct spdk_nvme_poll_group *group;
+	int fd;
+
+	if (!qpair->ctrlr->opts.enable_interrupts) {
+		return 0;
+	}
+
+	fd = spdk_nvme_ctrlr_qpair_get_fd(qpair);
+	if (fd < 0) {
+		SPDK_ERRLOG("Cannot get fd for the qpair: %d\n", fd);
+		return -EINVAL;
+	}
+
+	group = qpair->poll_group->group;
+	spdk_fd_group_remove(group->fgrp, fd);
+
+	return 0;
+}
+
 int
 nvme_poll_group_connect_qpair(struct spdk_nvme_qpair *qpair)
 {
-	return nvme_transport_poll_group_connect_qpair(qpair);
+	int rc;
+
+	rc = nvme_transport_poll_group_connect_qpair(qpair);
+
+	return rc ? rc : nvme_poll_group_add_qpair_fd(qpair);
 }
 
 int
 nvme_poll_group_disconnect_qpair(struct spdk_nvme_qpair *qpair)
 {
-	return nvme_transport_poll_group_disconnect_qpair(qpair);
+	int rc;
+
+	rc = nvme_poll_group_remove_qpair_fd(qpair);
+
+	return rc ? rc : nvme_transport_poll_group_disconnect_qpair(qpair);
+}
+
+int
+spdk_nvme_poll_group_wait(struct spdk_nvme_poll_group *group)
+{
+	int num_events;
+	int timeout = -1;
+
+	num_events = spdk_fd_group_wait(group->fgrp, timeout);
+
+	return num_events;
 }
 
 int64_t
@@ -219,6 +321,10 @@ spdk_nvme_poll_group_destroy(struct spdk_nvme_poll_group *group)
 			return -EBUSY;
 		}
 
+	}
+
+	if (group->fgrp) {
+		spdk_fd_group_destroy(group->fgrp);
 	}
 
 	free(group);

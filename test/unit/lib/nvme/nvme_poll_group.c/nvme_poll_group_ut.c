@@ -48,6 +48,10 @@ DEFINE_STUB(nvme_transport_get_trtype,
 	    (const struct spdk_nvme_transport *transport),
 	    SPDK_NVME_TRANSPORT_PCIE);
 
+DEFINE_STUB(spdk_nvme_ctrlr_qpair_get_fd, int, (struct spdk_nvme_qpair *qpair), 0);
+DEFINE_STUB(spdk_nvme_ctrlr_get_transport_id,
+	    const struct spdk_nvme_transport_id *,
+	    (struct spdk_nvme_ctrlr *ctrlr), NULL);
 int
 nvme_transport_poll_group_get_stats(struct spdk_nvme_transport_poll_group *tgroup,
 				    struct spdk_nvme_transport_poll_group_stat **stats)
@@ -375,9 +379,12 @@ test_spdk_nvme_poll_group_process_completions(void)
 	struct spdk_nvme_poll_group *group;
 	struct spdk_nvme_transport_poll_group *tgroup, *tmp_tgroup;
 	struct spdk_nvme_qpair qpair1_1 = {0};
+	struct spdk_nvme_ctrlr ctrlr = {};
 
 	group = spdk_nvme_poll_group_create(NULL, NULL);
 	SPDK_CU_ASSERT_FATAL(group != NULL);
+
+	qpair1_1.ctrlr = &ctrlr;
 
 	/* If we don't have any transport poll groups, we shouldn't get any completions. */
 	g_process_completions_return_value = 32;
