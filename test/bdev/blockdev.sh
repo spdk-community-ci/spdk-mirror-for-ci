@@ -51,7 +51,7 @@ function start_spdk_tgt() {
 
 function setup_bdev_conf() {
 	"$rpc_py" <<- RPC
-		iobuf_set_options --small-pool-count 10000 --large-pool-count 1100
+		iobuf_set_options --small-pool-count 10000 --large-pool-count 1200
 		framework_start_init
 		bdev_split_create Malloc1 2
 		bdev_split_create -s 4 Malloc2 8
@@ -65,12 +65,14 @@ function setup_bdev_conf() {
 		bdev_malloc_create -b Malloc7 32 512
 		bdev_malloc_create -b Malloc8 32 512
 		bdev_malloc_create -b Malloc9 32 512
+		bdev_malloc_create -b Malloc10 32 512
 		bdev_passthru_create -p TestPT -b Malloc3
 		bdev_raid_create -n raid0 -z 64 -r 0 -b "Malloc4 Malloc5"
 		bdev_raid_create -n concat0 -z 64 -r concat -b "Malloc6 Malloc7"
 		bdev_raid_create -n raid1 -r 1 -b "Malloc8 Malloc9"
 		bdev_set_qos_limit --rw_mbytes_per_sec 100 Malloc3
 		bdev_set_qos_limit --rw_ios_per_sec 20000 Malloc0
+		bdev_passthru_create -p TestPTStack -b Malloc10 --use-stack
 	RPC
 
 	dd if=/dev/zero of="$SPDK_TEST_STORAGE/aiofile" bs=2048 count=5000
