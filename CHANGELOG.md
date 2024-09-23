@@ -37,6 +37,21 @@ Added `event_cb_fn` and `event_cb_arg` fields to `spdk_nvme_io_qpair_opts`. The 
 function with `event_cb_arg` argument gets called every time an interrupt event is generated on the
 file descriptor of the io_qpair.
 
+`spdk_nvme_poll_group_create()` now creates a `spdk_fd_group` within the nvme poll group. During
+interrupt mode this fd_group will be used to manage interrupt events on all the file descriptors of
+`spdk_nvme_qpair` added to the nvme poll group.
+
+Two new APIs have been added to manage this fd_group.
+
+`spdk_nvme_poll_group_get_fd_group_fd()` retrieves internal epoll_fd of the fd group in poll group.
+
+`spdk_nvme_poll_group_wait()` waits for interrupt events on all the qpair file descriptors in the
+poll group. If an interrupt event is generated the `event_cb_fn` will be called with `event_cb_arg`
+as the argument. `event_cb_fn` must be specified in `spdk_nvme_io_qpair_opts` at the time of qpair
+creation, if application wants to register event source and use the poll group's fd_group
+utilities. `event_cb_arg` need not be specified if application wants `spdk_nvme_qpair` as the
+callback argument to the `event_cb_fn`.
+
 ### nvmf
 
 Added public API `spdk_nvmf_send_discovery_log_notice` to send discovery log page
