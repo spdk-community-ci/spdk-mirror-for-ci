@@ -10,14 +10,93 @@
 SPDK_LOG_DEPRECATION_REGISTER(nvme_accel_fn_submit_crc,
 			      "spdk_nvme_accel_fn_table.submit_accel_crc32c", "v25.01", 0);
 
+void
+spdk_nvme_poll_group_default_opts(struct spdk_nvme_poll_group_opts *opts,
+				  size_t opts_size)
+{
+	if (!opts) {
+		SPDK_ERRLOG("opts should not be NULL\n");
+		return;
+	}
+
+	if (!opts_size) {
+		SPDK_ERRLOG("opts_size should not be zero value\n");
+		return;
+	}
+
+	memset(opts, 0, opts_size);
+	opts->opts_size = opts_size;
+
+#define FIELD_OK(field) \
+        offsetof(struct spdk_nvme_poll_group_opts, field) + sizeof(opts->field) <= opts_size
+
+#define SET_FIELD(field, value) \
+        if (FIELD_OK(field)) { \
+                opts->field = value; \
+        } \
+
+	SET_FIELD(create_fd_group, false);
+
+#undef FIELD_OK
+#undef SET_FIELD
+}
+
+static void
+nvme_poll_group_opts_copy(const struct spdk_nvme_poll_group_opts *src,
+			  struct spdk_nvme_poll_group_opts *dst)
+{
+	if (!src->opts_size) {
+		SPDK_ERRLOG("opts_size should not be zero value\n");
+		assert(false);
+	}
+
+#define FIELD_OK(field) \
+        offsetof(struct spdk_nvme_poll_group_opts, field) + sizeof(src->field) <= src->opts_size
+
+#define SET_FIELD(field) \
+        if (FIELD_OK(field)) { \
+                dst->field = src->field; \
+        } \
+
+	SET_FIELD(create_fd_group);
+
+	dst->opts_size = src->opts_size;
+
+	/* You should not remove this statement, but need to update the assert statement
+	 * if you add a new field, and also add a corresponding SET_FIELD statement */
+	SPDK_STATIC_ASSERT(sizeof(struct spdk_nvme_poll_group_opts) == 16, "Incorrect size");
+
+#undef FIELD_OK
+#undef SET_FIELD
+}
+
 struct spdk_nvme_poll_group *
 spdk_nvme_poll_group_create(void *ctx, struct spdk_nvme_accel_fn_table *table)
 {
+	struct spdk_nvme_poll_group_opts opts = {};
+
+	spdk_nvme_poll_group_default_opts(&opts, sizeof(opts));
+	opts.create_fd_group = false;
+
+	return spdk_nvme_poll_group_create_ext(ctx, table, &opts);
+}
+
+struct spdk_nvme_poll_group *
+spdk_nvme_poll_group_create_ext(void *ctx, struct spdk_nvme_accel_fn_table *table,
+				struct spdk_nvme_poll_group_opts *opts)
+{
 	struct spdk_nvme_poll_group *group;
+	struct spdk_nvme_poll_group_opts local_opts = {};
+	int rc;
 
 	group = calloc(1, sizeof(*group));
 	if (group == NULL) {
 		return NULL;
+	}
+
+	spdk_nvme_poll_group_default_opts(&local_opts, sizeof(local_opts));
+	if (opts) {
+		nvme_poll_group_opts_copy(opts, &local_opts);
 	}
 
 	group->accel_fn_table.table_size = sizeof(struct spdk_nvme_accel_fn_table);
@@ -65,10 +144,30 @@ spdk_nvme_poll_group_create(void *ctx, struct spdk_nvme_accel_fn_table *table)
 		SPDK_LOG_DEPRECATED(nvme_accel_fn_submit_crc);
 	}
 
+	if (local_opts.create_fd_group) {
+		rc = spdk_fd_group_create(&group->fgrp);
+		if (rc) {
+			SPDK_ERRLOG("Cannot create fd group for the nvme poll group\n");
+			free(group);
+			return NULL;
+		}
+	}
+
 	group->ctx = ctx;
 	STAILQ_INIT(&group->tgroups);
 
 	return group;
+}
+
+int
+spdk_nvme_poll_group_get_fd_group_fd(struct spdk_nvme_poll_group *group)
+{
+	if (!group->fgrp) {
+		SPDK_ERRLOG("No fd group present for the nvme poll group.\n");
+		return -EINVAL;
+	}
+
+	return spdk_fd_group_get_fd(group->fgrp);
 }
 
 struct spdk_nvme_poll_group *
@@ -135,16 +234,99 @@ spdk_nvme_poll_group_remove(struct spdk_nvme_poll_group *group, struct spdk_nvme
 	return -ENODEV;
 }
 
+static int
+nvme_poll_group_add_qpair_fd(struct spdk_nvme_qpair *qpair)
+{
+	struct spdk_nvme_poll_group *group;
+	struct spdk_event_handler_opts opts = {};
+	const struct spdk_nvme_transport_id *trid;
+	int fd;
+
+	group = qpair->poll_group->group;
+	/* This will return 0 if fd group is not present in the poll group
+	 * for which this qpair is part of.
+	 */
+	if (!group->fgrp) {
+		return 0;
+	}
+
+	if (!qpair->opts.event_cb_fn || !qpair->opts.event_cb_arg) {
+		SPDK_ERRLOG("Event callback function and argument not specified\n");
+		return -EINVAL;
+	}
+
+	spdk_fd_group_get_default_event_handler_opts(&opts, sizeof(opts));
+
+	trid = spdk_nvme_ctrlr_get_transport_id(qpair->ctrlr);
+	if (trid->trtype == SPDK_NVME_TRANSPORT_PCIE) {
+		opts.fd_type = SPDK_FD_TYPE_VFIO;
+	}
+
+	fd = spdk_nvme_ctrlr_qpair_get_fd(qpair);
+	if (fd < 0) {
+		SPDK_ERRLOG("Cannot get fd for the qpair: %d\n", fd);
+		return -EINVAL;
+	}
+
+	return SPDK_FD_GROUP_ADD_EXT(group->fgrp, fd, qpair->opts.event_cb_fn,
+				     qpair->opts.event_cb_arg, &opts);
+}
+
+static int
+nvme_poll_group_remove_qpair_fd(struct spdk_nvme_qpair *qpair)
+{
+	struct spdk_nvme_poll_group *group;
+	int fd;
+
+	group = qpair->poll_group->group;
+	/* This will return 0 if fd group is not present in the poll group
+	 * for which this qpair is part of.
+	 */
+	if (!group->fgrp) {
+		return 0;
+	}
+
+	fd = spdk_nvme_ctrlr_qpair_get_fd(qpair);
+	if (fd < 0) {
+		SPDK_ERRLOG("Cannot get fd for the qpair: %d\n", fd);
+		return -EINVAL;
+	}
+
+	spdk_fd_group_remove(group->fgrp, fd);
+
+	return 0;
+}
+
 int
 nvme_poll_group_connect_qpair(struct spdk_nvme_qpair *qpair)
 {
-	return nvme_transport_poll_group_connect_qpair(qpair);
+	int rc;
+
+	rc = nvme_transport_poll_group_connect_qpair(qpair);
+
+	return rc ? rc : nvme_poll_group_add_qpair_fd(qpair);
 }
 
 int
 nvme_poll_group_disconnect_qpair(struct spdk_nvme_qpair *qpair)
 {
-	return nvme_transport_poll_group_disconnect_qpair(qpair);
+	int rc;
+
+	rc = nvme_poll_group_remove_qpair_fd(qpair);
+
+	return rc ? rc : nvme_transport_poll_group_disconnect_qpair(qpair);
+}
+
+int
+spdk_nvme_poll_group_wait(void *arg)
+{
+	struct spdk_nvme_poll_group *group = arg;
+	int num_events;
+	int timeout = -1;
+
+	num_events = spdk_fd_group_wait(group->fgrp, timeout);
+
+	return num_events;
 }
 
 int64_t
@@ -227,6 +409,10 @@ spdk_nvme_poll_group_destroy(struct spdk_nvme_poll_group *group)
 			return -EBUSY;
 		}
 
+	}
+
+	if (group->fgrp) {
+		spdk_fd_group_destroy(group->fgrp);
 	}
 
 	free(group);
