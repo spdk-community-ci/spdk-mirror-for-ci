@@ -602,6 +602,12 @@ function create_lvols() {
 	cleanup_lvol_cfg
 
 	nvme_bdevs=($($rpc_py bdev_get_bdevs | jq -r '.[].name'))
+	if ((${#nvme_bdevs[@]} == 0)); then
+		echo "ERROR: No NVMe devices available to create logical volumes."
+		stop_spdk_tgt
+		return 1
+	fi
+
 	for nvme_bdev in "${nvme_bdevs[@]}"; do
 		ls_guid=$($rpc_py bdev_lvol_create_lvstore $nvme_bdev lvs_0 --clear-method none)
 		echo "Created LVOL Store $ls_guid on Bdev $nvme_bdev"
