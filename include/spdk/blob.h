@@ -260,6 +260,7 @@ struct spdk_bs_dev {
 
 	uint64_t	blockcnt;
 	uint32_t	blocklen; /* In bytes */
+	uint32_t        phys_blocklen; /* In bytes */
 };
 
 struct spdk_bs_type {
