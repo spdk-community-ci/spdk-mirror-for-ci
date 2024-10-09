@@ -21,6 +21,15 @@ If multipathing shall be enabled for nvme bdev, `bdev_opts.multipath` shall be s
 Added public API `spdk_nvmf_send_discovery_log_notice` to send discovery log page
 change notice to client.
 
+## v1.0.0: AE4DMA user-space driver
+
+This release adds a user-space driver with support for the AMD EPYC 4th Generation
+DMA (AE4DMA) offload engine.
+
+- AE4DMA
+  - New user-space driver supporting DMA memory copy offload on AMD EYPC systems.
+  - Example program `ae4dma/perf`
+
 ## v24.09
 
 ### accel
