@@ -20,6 +20,7 @@ NVME_HOST=("--hostnqn=$NVME_HOSTNQN" "--hostid=$NVME_HOSTID")
 NVME_CONNECT="nvme connect"
 NET_TYPE=${NET_TYPE:-phy-fallback}
 NVME_SUBNQN=nqn.2016-06.io.spdk:testnqn
+IRDMA_ENA=${IRDMA_ENA:-1} # RoCEv2 is the default
 
 function build_nvmf_app_args() {
 	if [ $SPDK_RUN_NON_ROOT -eq 1 ]; then
@@ -396,14 +397,9 @@ function gather_supported_nvmf_pci_devs() {
 
 	# E810 cards also need irdma driver to be around.
 	if [[ $SPDK_TEST_NVMF_NICS == e810 && $TEST_TRANSPORT == rdma ]]; then
-		if [[ -e /sys/module/irdma/parameters/roce_ena ]]; then
-			# Our tests don't play well with iWARP protocol since CQ resize is not supported.
-			# This may affect some tests, especially those which target multiconnection setups.
-			# Considering all that, make sure we use RoCEv2 instead.
-			(($(< /sys/module/irdma/parameters/roce_ena) != 1)) && modprobe -r irdma
-		fi
-		modinfo irdma && modprobe irdma roce_ena=1
-	fi > /dev/null
+		[[ -e /sys/module/irdma ]] && modprobe -r irdma
+		modprobe irdma "roce_ena=$IRDMA_ENA"
+	fi
 
 	# All devices detected, kernel modules loaded. Now look under net class to see if there
 	# are any net devices bound to the controllers.
@@ -789,3 +785,27 @@ uuid2nguid() {
 
 ipts() { iptables "$@" -m comment --comment "SPDK_NVMF:$*"; }
 iptr() { iptables-save | grep -v SPDK_NVMF | iptables-restore; }
+
+calc_io_queues_for_cqe() {
+	local qd=${1:-128} cqe=${2:-4096} no_subsys=${3:-1} no_queues=${4:-1}
+
+	# FIXME: I have no idea what I am doing - this is roughly based on stuff
+	# from lib/nvmf/rdma.c lib/nvme/nvme_rdma.c and somewhat matches the
+	# final required_num_wr which seems to factor in if resize is requested
+	# or not. No idea where the extra bytes are coming from though.
+	while ((qd * no_subsys * no_queues - 2 > cqe)); do
+		((--no_queues))
+	done
+
+	((no_queues > 0)) || return 1
+	echo "$no_queues"
+}
+
+calc_io_queues_for_cqe_irdma() {
+	if [[ $SPDK_TEST_NVMF_NICS == e810 && $TEST_TRANSPORT == rdma ]] && ((ROCE_ENA == 0)); then
+		# iWARP is forced so we need to make sure number of requested io queues is sane since
+		# potential CQ resize is not supported. We simply override whatever might have been
+		# set so far.
+		NVME_CONNECT+=" -i $(calc_io_queues_for_cqe "$@")"
+	fi
+}
