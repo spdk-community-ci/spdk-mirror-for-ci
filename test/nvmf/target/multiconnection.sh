@@ -17,6 +17,7 @@ nvmftestinit
 nvmfappstart -m 0xF
 
 $rpc_py nvmf_create_transport $NVMF_TRANSPORT_OPTS -u 8192
+calc_io_queues_for_cqe_irdma 128 4096 "$NVMF_SUBSYS" "$(nproc)"
 
 for i in $(seq 1 $NVMF_SUBSYS); do
 	$rpc_py bdev_malloc_create $MALLOC_BDEV_SIZE $MALLOC_BLOCK_SIZE -b Malloc$i
