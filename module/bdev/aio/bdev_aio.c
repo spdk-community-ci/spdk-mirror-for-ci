@@ -485,10 +485,14 @@ bdev_aio_group_poll(void *arg)
 	struct bdev_aio_group_channel *group_ch = arg;
 	struct bdev_aio_io_channel *io_ch;
 	int nr = 0;
+	int ios_inflight = 0;
 
 	TAILQ_FOREACH(io_ch, &group_ch->io_ch_head, link) {
 		nr += bdev_aio_io_channel_poll(io_ch);
+		ios_inflight += io_ch->io_inflight;
 	}
+
+	spdk_poller_set_pending_work(group_ch->poller, ios_inflight != 0);
 
 	return nr > 0 ? SPDK_POLLER_BUSY : SPDK_POLLER_IDLE;
 }
@@ -869,6 +873,8 @@ bdev_aio_group_create_cb(void *io_device, void *ctx_buf)
 
 	ch->poller = SPDK_POLLER_REGISTER(bdev_aio_group_poll, ch, 0);
 	spdk_poller_register_interrupt(ch->poller, NULL, NULL);
+
+	spdk_poller_set_pending_work(ch->poller, false);
 
 	return 0;
 }
