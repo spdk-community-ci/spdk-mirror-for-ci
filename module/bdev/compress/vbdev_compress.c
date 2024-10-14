@@ -668,6 +668,8 @@ vbdev_compress_dump_info_json(void *ctx, struct spdk_json_write_ctx *w)
 	spdk_json_write_named_uint32(w, "comp_level", comp_bdev->params.comp_level);
 	spdk_json_write_named_uint32(w, "chunk_size", comp_bdev->params.chunk_size);
 	spdk_json_write_named_uint32(w, "backing_io_unit_size", comp_bdev->params.backing_io_unit_size);
+	spdk_json_write_named_uint64(w, "allocated_io_units",
+				     spdk_reduce_vol_get_allocated_io_units(comp_bdev->vol));
 	spdk_json_write_object_end(w);
 
 	return 0;
