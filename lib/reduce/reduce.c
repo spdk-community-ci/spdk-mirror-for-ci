@@ -136,6 +136,8 @@ struct spdk_reduce_vol {
 	/* Cache free chunks to speed up lookup of free chunk. */
 	struct reduce_queue			free_chunks_queue;
 	struct spdk_bit_array			*allocated_backing_io_units;
+	/* Statistics on the number of allocated io units */
+	uint64_t				allocated_io_units;
 	/* The starting position when looking for a block from allocated_backing_io_units */
 	uint64_t				find_block_offset;
 	/* Cache free blocks for backing bdev to speed up lookup of free backing blocks. */
@@ -463,6 +465,12 @@ _allocate_vol_requests(struct spdk_reduce_vol *vol)
 	return rc;
 }
 
+uint64_t
+spdk_reduce_vol_get_allocated_io_units(const struct spdk_reduce_vol *vol)
+{
+	return vol->allocated_io_units;
+}
+
 static void
 _init_load_cleanup(struct spdk_reduce_vol *vol, struct reduce_init_load_ctx *ctx)
 {
@@ -581,6 +589,7 @@ _allocate_bit_arrays(struct spdk_reduce_vol *vol)
 				vol->params.backing_io_unit_size;
 	for (i = 0; i < num_metadata_io_units; i++) {
 		spdk_bit_array_set(vol->allocated_backing_io_units, i);
+		vol->allocated_io_units++;
 	}
 
 	return 0;
@@ -865,6 +874,7 @@ _load_read_super_and_path_cpl(void *cb_arg, int reduce_errno)
 		for (j = 0; j < vol->backing_io_units_per_chunk; j++) {
 			if (chunk->io_unit_index[j] != REDUCE_EMPTY_MAP_ENTRY) {
 				spdk_bit_array_set(vol->allocated_backing_io_units, chunk->io_unit_index[j]);
+				vol->allocated_io_units++;
 			}
 		}
 	}
@@ -1150,6 +1160,7 @@ _reduce_vol_reset_chunk(struct spdk_reduce_vol *vol, uint64_t chunk_map_index)
 		assert(spdk_bit_array_get(vol->allocated_backing_io_units,
 					  index) == true);
 		spdk_bit_array_clear(vol->allocated_backing_io_units, index);
+		vol->allocated_io_units--;
 		success = queue_enqueue(&vol->free_backing_blocks_queue, index);
 		if (!success && index < vol->find_block_offset) {
 			vol->find_block_offset = index;
@@ -1415,6 +1426,7 @@ _reduce_vol_write_chunk(struct spdk_reduce_vol_request *req, reduce_request_fn n
 		 */
 		assert(req->chunk->io_unit_index[i] != UINT32_MAX);
 		spdk_bit_array_set(vol->allocated_backing_io_units, req->chunk->io_unit_index[i]);
+		vol->allocated_io_units++;
 	}
 
 	_issue_backing_ops(req, vol, next_fn, true /* write */);

@@ -278,6 +278,14 @@ void spdk_reduce_vol_print_info(struct spdk_reduce_vol *vol);
  */
 const char *spdk_reduce_vol_get_pm_path(const struct spdk_reduce_vol *vol);
 
+/**
+ * Get the number of allocated io units for a libreduce compressed volume.
+ *
+ * \param vol Previously loaded or initialized compressed volume.
+ * \return the number of allocated io units for the compressed volume.
+ */
+uint64_t spdk_reduce_vol_get_allocated_io_units(const struct spdk_reduce_vol *vol);
+
 #ifdef __cplusplus
 }
 #endif
