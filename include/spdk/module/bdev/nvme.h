@@ -112,7 +112,9 @@ SPDK_STATIC_ASSERT(sizeof(struct spdk_bdev_nvme_opts) == 128, "Incorrect size");
  * Connect to the NVMe controller and populate namespaces as bdevs.
  *
  * \param trid Transport ID for nvme controller.
- * \param base_name Base name for the nvme subsystem.
+ * \param base_name Base name for the nvme subsystem. This name must remain
+ *		    across multiple invocations of this function with same
+ *		    subsystem (same trid.subnqn).
  * \param names Pointer to string array to get bdev names.
  * \param count Maximum count of the string array 'names'. Restricts the length
  *		of 'names' array only, not the count of bdevs created.
