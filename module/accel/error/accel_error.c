@@ -74,11 +74,10 @@ accel_error_task_complete_cb(void *arg, int status)
 	cb_fn(cb_arg, status);
 }
 
-static int
-accel_error_submit_tasks(struct spdk_io_channel *ch, struct spdk_accel_task *task)
+static bool
+accel_error_should_inject(struct spdk_io_channel *ch, struct spdk_accel_task *task)
 {
 	struct accel_error_channel *errch = spdk_io_channel_get_ctx(ch);
-	struct accel_error_task *errtask = accel_error_get_task_ctx(task);
 	struct accel_error_inject_info *info = &errch->injects[task->op_code];
 
 	info->interval++;
@@ -87,16 +86,31 @@ accel_error_submit_tasks(struct spdk_io_channel *ch, struct spdk_accel_task *tas
 		info->count++;
 
 		if (info->count <= info->opts.count) {
-			errtask->ch = errch;
-			errtask->cb_fn = task->cb_fn;
-			errtask->cb_arg = task->cb_arg;
-			task->cb_fn = accel_error_task_complete_cb;
-			task->cb_arg = task;
+			return true;
 		} else {
 			info->opts.type = ACCEL_ERROR_INJECT_DISABLE;
 		}
 	}
 
+	return false;
+}
+
+static int
+accel_error_submit_tasks(struct spdk_io_channel *ch, struct spdk_accel_task *task)
+{
+	struct accel_error_channel *errch = spdk_io_channel_get_ctx(ch);
+	struct accel_error_task *errtask = accel_error_get_task_ctx(task);
+
+	if (!accel_error_should_inject(ch, task)) {
+		goto submit;
+	}
+
+	errtask->ch = errch;
+	errtask->cb_fn = task->cb_fn;
+	errtask->cb_arg = task->cb_arg;
+	task->cb_fn = accel_error_task_complete_cb;
+	task->cb_arg = task;
+submit:
 	return g_sw_module->submit_tasks(errch->swch, task);
 }
 
