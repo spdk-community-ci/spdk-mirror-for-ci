@@ -528,6 +528,12 @@ spdk_reactor_set_interrupt_mode(uint32_t lcore, bool new_in_interrupt,
 	return 0;
 }
 
+bool
+spdk_reactor_is_sleeping(struct spdk_reactor *reactor)
+{
+	return reactor->is_sleeping;
+}
+
 struct spdk_event *
 spdk_event_allocate(uint32_t lcore, spdk_event_fn fn, void *arg1, void *arg2)
 {
@@ -954,7 +960,7 @@ reactor_interrupt_run(struct spdk_reactor *reactor)
 {
 	int block_timeout = -1; /* _EPOLL_WAIT_FOREVER */
 
-	spdk_fd_group_wait(reactor->fgrp, block_timeout);
+	spdk_fd_group_wait(reactor->fgrp, block_timeout, &reactor->is_sleeping);
 }
 
 static void

@@ -419,7 +419,7 @@ spdk_fd_group_destroy(struct spdk_fd_group *fgrp)
 }
 
 int
-spdk_fd_group_wait(struct spdk_fd_group *fgrp, int timeout)
+spdk_fd_group_wait(struct spdk_fd_group *fgrp, int timeout, bool *entered_wait)
 {
 	int totalfds = fgrp->num_fds;
 	struct epoll_event events[totalfds];
@@ -438,7 +438,13 @@ spdk_fd_group_wait(struct spdk_fd_group *fgrp, int timeout)
 		}
 	}
 
+	if (entered_wait) {
+		*entered_wait = true;
+	}
 	nfds = epoll_wait(fgrp->epfd, events, totalfds, timeout);
+	if (entered_wait) {
+		*entered_wait = false;
+	}
 	if (nfds < 0) {
 		if (errno != EINTR) {
 			SPDK_ERRLOG("fgrp epoll_wait returns with fail. errno is %d\n", errno);
@@ -544,7 +550,7 @@ spdk_fd_group_destroy(struct spdk_fd_group *fgrp)
 }
 
 int
-spdk_fd_group_wait(struct spdk_fd_group *fgrp, int timeout)
+spdk_fd_group_wait(struct spdk_fd_group *fgrp, int timeout, bool *entered_wait)
 {
 	return -ENOTSUP;
 }

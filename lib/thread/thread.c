@@ -1203,7 +1203,7 @@ spdk_thread_poll(struct spdk_thread *thread, uint32_t max_msgs, uint64_t now)
 		}
 	} else {
 		/* Non-block wait on thread's fd_group */
-		rc = spdk_fd_group_wait(thread->fgrp, 0);
+		rc = spdk_fd_group_wait(thread->fgrp, 0, NULL);
 	}
 
 	thread_update_stats(thread, spdk_get_ticks(), now, rc);

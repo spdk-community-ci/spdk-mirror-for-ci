@@ -991,7 +991,7 @@ cuse_thread(void *unused)
 
 	do {
 		retry = false;
-		spdk_fd_group_wait(g_device_fdgrp, timeout_msecs);
+		spdk_fd_group_wait(g_device_fdgrp, timeout_msecs, NULL);
 		while (!TAILQ_EMPTY(&g_active_device_head)) {
 			TAILQ_FOREACH_SAFE(cuse_device, &g_active_device_head, cuse_thread_tailq, tmp) {
 				if (fuse_session_exited(cuse_device->session)) {
@@ -1005,7 +1005,7 @@ cuse_thread(void *unused)
 				}
 			}
 			/* Receive and process fuse event and new cuse device addition requests. */
-			spdk_fd_group_wait(g_device_fdgrp, timeout_msecs);
+			spdk_fd_group_wait(g_device_fdgrp, timeout_msecs, NULL);
 		}
 		pthread_mutex_lock(&g_cuse_mtx);
 		if (!TAILQ_EMPTY(&g_pending_device_head)) {

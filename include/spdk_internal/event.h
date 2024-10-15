@@ -74,6 +74,8 @@ struct spdk_reactor {
 	bool						new_in_interrupt;
 	spdk_reactor_set_interrupt_mode_cb		set_interrupt_mode_cb_fn;
 	void						*set_interrupt_mode_cb_arg;
+	/* Indicate whether this reactor currently is sleeping */
+	bool						is_sleeping;
 
 	struct spdk_fd_group				*fgrp;
 	int						resched_fd;
@@ -119,6 +121,22 @@ void spdk_for_each_reactor(spdk_event_fn fn, void *arg1, void *arg2, spdk_event_
  */
 int spdk_reactor_set_interrupt_mode(uint32_t lcore, bool new_in_interrupt,
 				    spdk_reactor_set_interrupt_mode_cb cb_fn, void *cb_arg);
+
+/**
+ * Check whether the reactor currently is in sleeping.
+ *
+ * This function is used when the reactor is in interrupt mode to check
+ * whether the reactor is blocked by epoll_wait() system call which makes
+ * core enter sleep mode.
+ *
+ * \param lcore CPU core index of specified reactor.
+ * \param new_in_interrupt Set interrupt mode for true, or poll mode for false.
+ * \param cb_fn This will be called on spdk application thread after setting interrupt mode.
+ * \param cb_arg Argument will be passed to cb_fn when called.
+ *
+ * \return true for sleeping state or false otherwise.
+ */
+bool spdk_reactor_is_sleeping(struct spdk_reactor *reactor);
 
 #ifdef __cplusplus
 }

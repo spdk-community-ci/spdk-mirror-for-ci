@@ -60,11 +60,14 @@ void spdk_fd_group_destroy(struct spdk_fd_group *fgrp);
  * \param fgrp The fgrp to wait and process.
  * \param timeout Specifies the number of milliseconds that will block.
  * -1 causes indefinitely blocking; 0 causes immediately return.
+ * \param entered_wait Filled by spdk_fd_group_wait(). True indicates the
+ * current caller is blocking by epoll_wait() system call; False indicates
+ * the current caller has been awakened.
  *
  * \return the number of processed events
  * or -errno if failed
  */
-int spdk_fd_group_wait(struct spdk_fd_group *fgrp, int timeout);
+int spdk_fd_group_wait(struct spdk_fd_group *fgrp, int timeout, bool *entered_wait);
 
 /**
  * Return the internal epoll_fd of specific fd_group
