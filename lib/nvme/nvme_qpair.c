@@ -857,7 +857,11 @@ nvme_qpair_init(struct spdk_nvme_qpair *qpair, uint16_t id,
 		uint32_t num_requests, bool async)
 {
 	struct nvme_request *req;
+	struct nvme_dma_buf_element *ele;
+	void *dma_buf;
 	size_t req_size_padded;
+	size_t buf_size_padded;
+	size_t element_size_padded;
 	uint32_t i;
 
 	qpair->id = id;
@@ -879,6 +883,7 @@ nvme_qpair_init(struct spdk_nvme_qpair *qpair, uint16_t id,
 	STAILQ_INIT(&qpair->aborting_queued_req);
 	TAILQ_INIT(&qpair->err_cmd_head);
 	STAILQ_INIT(&qpair->err_req_head);
+	STAILQ_INIT(&qpair->free_ele);
 
 	req_size_padded = (sizeof(struct nvme_request) + 63) & ~(size_t)63;
 
@@ -893,6 +898,25 @@ nvme_qpair_init(struct spdk_nvme_qpair *qpair, uint16_t id,
 		return -ENOMEM;
 	}
 
+	element_size_padded = (sizeof(struct nvme_dma_buf_element) + 63) & ~(size_t)63;
+	qpair->ele_buf = spdk_zmalloc(element_size_padded * num_requests, 64, NULL,
+				      SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_SHARE);
+	if (qpair->ele_buf == NULL) {
+		SPDK_ERRLOG("no memory to allocate qpair(cntlid:0x%x sqid:%d) ele_buf with %d request\n",
+			    ctrlr->cntlid, qpair->id, num_requests);
+		return -ENOMEM;
+	}
+
+	buf_size_padded = (SPDK_NVME_DATASET_MANAGEMENT_MAX_RANGES * sizeof(struct spdk_nvme_dsm_range) +
+			   4095) & ~(size_t)4095;
+	qpair->dma_buf = spdk_zmalloc(buf_size_padded * num_requests, 4096, NULL,
+				      SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
+	if (qpair->dma_buf == NULL) {
+		SPDK_ERRLOG("no memory to allocate qpair(cntlid:0x%x sqid:%d) dma_buf with %d request\n",
+			    ctrlr->cntlid, qpair->id, num_requests);
+		return -ENOMEM;
+	}
+
 	for (i = 0; i < num_requests; i++) {
 		req = (void *)((uintptr_t)qpair->req_buf + i * req_size_padded);
 
@@ -903,6 +927,16 @@ nvme_qpair_init(struct spdk_nvme_qpair *qpair, uint16_t id,
 			STAILQ_INSERT_HEAD(&qpair->free_req, req, stailq);
 		}
 	}
+
+	for (i = 0; i < num_requests; i++) {
+		ele = (void *)((uintptr_t)qpair->ele_buf + i * element_size_padded);
+		dma_buf = (void *)((uintptr_t)qpair->dma_buf + i * buf_size_padded);
+		ele->qpair = qpair;
+		ele->buf = dma_buf;
+		ele->buf_size = buf_size_padded;
+		STAILQ_INSERT_HEAD(&qpair->free_ele, ele, stailq);
+	}
+	qpair->ele_buf_size = buf_size_padded;
 
 	return 0;
 }
@@ -937,6 +971,8 @@ nvme_qpair_deinit(struct spdk_nvme_qpair *qpair)
 	}
 
 	spdk_free(qpair->req_buf);
+	spdk_free(qpair->dma_buf);
+	spdk_free(qpair->ele_buf);
 }
 
 static inline int

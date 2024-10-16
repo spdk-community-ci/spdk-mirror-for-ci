@@ -431,10 +431,22 @@ nvme_allocate_request_user_copy(struct spdk_nvme_qpair *qpair,
 {
 	struct nvme_request *req;
 	void *dma_buffer = NULL;
+	struct nvme_dma_buf_element *ele = NULL;
 
 	if (buffer && payload_size) {
-		dma_buffer = spdk_zmalloc(payload_size, 4096, NULL,
-					  SPDK_ENV_NUMA_ID_ANY, SPDK_MALLOC_DMA);
+		if (payload_size <= qpair->ele_buf_size) {
+			ele = STAILQ_FIRST(&qpair->free_ele);
+			if (ele != NULL) {
+				STAILQ_REMOVE_HEAD(&qpair->free_ele, stailq);
+				dma_buffer = ele->buf;
+			}
+		}
+
+		if (dma_buffer == NULL) {
+			dma_buffer = spdk_zmalloc(payload_size, 4096, NULL,
+						  SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
+		}
+
 		if (!dma_buffer) {
 			return NULL;
 		}
@@ -455,6 +467,7 @@ nvme_allocate_request_user_copy(struct spdk_nvme_qpair *qpair,
 	req->user_cb_arg = cb_arg;
 	req->user_buffer = buffer;
 	req->cb_arg = req;
+	req->dma_buf_ele = ele;
 
 	return req;
 }
