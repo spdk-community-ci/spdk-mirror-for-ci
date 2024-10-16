@@ -2039,6 +2039,8 @@ test_ctrlr_get_default_io_qpair_opts(void)
 	CU_ASSERT_EQUAL(opts.create_only, false);
 	CU_ASSERT_EQUAL(opts.async_mode, false);
 	CU_ASSERT_EQUAL(opts.disable_pcie_sgl_merge, false);
+	CU_ASSERT_EQUAL(opts.event_cb_fn, NULL);
+	CU_ASSERT_EQUAL(opts.event_cb_arg, NULL);
 	CU_ASSERT_EQUAL(opts.opts_size, sizeof(opts));
 }
 
