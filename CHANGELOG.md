@@ -31,6 +31,8 @@ Added APIs `spdk_nvme_qpair_get_fd()` and `spdk_nvme_ctrlr_get_admin_qp_fd()` to
 descriptor for an I/O queue pair and the admin queue pair of a given NVMe controller respectively.
 This is applicable only for the PCIe transport.
 
+Added `opts_size` in `spdk_nvme_io_qpair_opts` structure to align it with other opts structures.
+
 ### nvmf
 
 Added public API `spdk_nvmf_send_discovery_log_notice` to send discovery log page
