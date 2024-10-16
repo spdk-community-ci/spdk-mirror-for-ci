@@ -1701,6 +1701,18 @@ int spdk_nvme_ctrlr_get_discovery_log_page(struct spdk_nvme_ctrlr *ctrlr,
 		spdk_nvme_discovery_cb cb_fn, void *cb_arg);
 
 /**
+ * Signature for the callback function registered for the event source with the qpair file
+ * descriptor.
+ *
+ * \param cb_arg Argument passed to callback function.
+ *
+ * \return 0 to indicate that event notification took place but no events were found;
+ * positive to indicate that event notification took place and some events were processed;
+ * negative if no event information is provided.
+ */
+typedef int (*spdk_nvme_qpair_event_fn)(void *cb_arg);
+
+/**
  * NVMe I/O queue pair initialization options.
  *
  * These options may be passed to spdk_nvme_ctrlr_alloc_io_qpair() to configure queue pair
@@ -1814,8 +1826,23 @@ struct spdk_nvme_io_qpair_opts {
 	 * New added fields should be put at the end of the struct.
 	 */
 	size_t opts_size;
+
+	/**
+	 * Interrupt event function that gets called every time there is an event. The event source
+	 * is registered with the file descriptor of the I/O queue pair at the time of its creation.
+	 * This along with event_cb_arg can be specified to use the fd_group's file descriptor
+	 * utilities present in spdk_nvme_poll_group.
+	 */
+	spdk_nvme_qpair_event_fn event_cb_fn;
+
+	/**
+	 * Interrupt event callback function argument. If this is not specified when event_cb_fn is
+	 * specified, this gets set to the newly created I/O queue pair address. This is done for
+	 * the applications that require the I/O queue pair as the callback argument.
+	 */
+	void *event_cb_arg;
 };
-SPDK_STATIC_ASSERT(sizeof(struct spdk_nvme_io_qpair_opts) == 80, "Incorrect size");
+SPDK_STATIC_ASSERT(sizeof(struct spdk_nvme_io_qpair_opts) == 96, "Incorrect size");
 
 /**
  * Get the default options for I/O qpair creation for a specific NVMe controller.

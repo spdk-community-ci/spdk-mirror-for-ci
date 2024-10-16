@@ -529,6 +529,8 @@ struct spdk_nvme_qpair {
 
 	/* In-band authentication state */
 	struct nvme_auth			auth;
+
+	struct spdk_nvme_io_qpair_opts		opts;
 };
 
 struct spdk_nvme_poll_group {

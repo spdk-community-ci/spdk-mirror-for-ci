@@ -33,6 +33,10 @@ for the PCIe transport.
 
 Added `opts_size` in `spdk_nvme_io_qpair_opts` structure to align it with other opts structures.
 
+Added `event_cb_fn` and `event_cb_arg` fields to `spdk_nvme_io_qpair_opts`. The `event_cb_fn`
+function with `event_cb_arg` argument gets called every time an interrupt event is generated on the
+file descriptor of the io_qpair.
+
 ### nvmf
 
 Added public API `spdk_nvmf_send_discovery_log_notice` to send discovery log page
