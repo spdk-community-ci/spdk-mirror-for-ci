@@ -33,5 +33,6 @@ run_test "nvmf_zcopy" $rootdir/test/nvmf/target/zcopy.sh "${TEST_ARGS[@]}"
 run_test "nvmf_nmic" $rootdir/test/nvmf/target/nmic.sh "${TEST_ARGS[@]}"
 run_test "nvmf_fio_target" $rootdir/test/nvmf/target/fio.sh "${TEST_ARGS[@]}"
 run_test "nvmf_bdevio" $rootdir/test/nvmf/target/bdevio.sh "${TEST_ARGS[@]}"
+run_test "nvmf_target_tester" $rootdir/test/nvmf/target/nvmf_target_tester.sh "${TEST_ARGS[@]}"
 
 trap - SIGINT SIGTERM EXIT
