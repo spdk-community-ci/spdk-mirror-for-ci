@@ -330,6 +330,8 @@ spdk_nvme_ctrlr_get_default_io_qpair_opts(struct spdk_nvme_ctrlr *ctrlr,
 	SET_FIELD(create_only, false);
 	SET_FIELD(async_mode, false);
 	SET_FIELD(disable_pcie_sgl_merge, false);
+	SET_FIELD(event_cb_fn, NULL);
+	SET_FIELD(event_cb_arg, NULL);
 
 #undef FIELD_OK
 #undef SET_FIELD
@@ -365,12 +367,14 @@ nvme_ctrlr_io_qpair_opts_copy(const struct spdk_nvme_io_qpair_opts *src,
 	SET_FIELD(create_only);
 	SET_FIELD(async_mode);
 	SET_FIELD(disable_pcie_sgl_merge);
+	SET_FIELD(event_cb_fn);
+	SET_FIELD(event_cb_arg);
 
 	dst->opts_size = opts_size_src;
 
 	/* You should not remove this statement, but need to update the assert statement
 	 * if you add a new field, and also add a corresponding SET_FIELD statement */
-	SPDK_STATIC_ASSERT(sizeof(struct spdk_nvme_io_qpair_opts) == 80, "Incorrect size");
+	SPDK_STATIC_ASSERT(sizeof(struct spdk_nvme_io_qpair_opts) == 96, "Incorrect size");
 
 #undef FIELD_OK
 #undef SET_FIELD
@@ -418,6 +422,14 @@ nvme_ctrlr_create_io_qpair(struct spdk_nvme_ctrlr *ctrlr,
 		spdk_nvme_ctrlr_free_qid(ctrlr, qid);
 		nvme_ctrlr_unlock(ctrlr);
 		return NULL;
+	}
+
+	qpair->opts = *opts;
+	/* This is done for the applications that require the IO queue pair as the callback
+	 * argument.
+	 */
+	if (qpair->opts.event_cb_fn && !qpair->opts.event_cb_arg) {
+		qpair->opts.event_cb_arg = qpair;
 	}
 
 	TAILQ_INSERT_TAIL(&ctrlr->active_io_qpairs, qpair, tailq);
