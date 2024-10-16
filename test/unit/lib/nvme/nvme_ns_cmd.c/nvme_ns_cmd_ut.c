@@ -255,6 +255,8 @@ static void
 cleanup_after_test(struct spdk_nvme_qpair *qpair)
 {
 	free(qpair->req_buf);
+	free(qpair->ele_buf);
+	free(qpair->dma_buf);
 	g_ctrlr_quirks = 0;
 }
 
