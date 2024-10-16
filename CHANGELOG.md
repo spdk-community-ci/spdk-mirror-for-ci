@@ -31,6 +31,8 @@ Added APIs `spdk_nvme_ctrlr_qpair_get_fd()` and `spdk_nvme_ctrlr_get_admin_qp_fd
 fd for an I/O and admin qpair respectively for a given NVMe controller. This is applicable only
 for the PCIe transport.
 
+Added `opts_size` in `spdk_nvme_io_qpair_opts` structure to align it with other opts structures.
+
 ### nvmf
 
 Added public API `spdk_nvmf_send_discovery_log_notice` to send discovery log page
