@@ -375,9 +375,17 @@ struct nvme_request {
 	spdk_nvme_cmd_cb		user_cb_fn;
 	void				*user_cb_arg;
 	void				*user_buffer;
+	struct nvme_dma_buf_element	*dma_buf_ele;
 
 	/** Sequence of accel operations associated with this request */
 	void				*accel_sequence;
+};
+
+struct nvme_dma_buf_element {
+	struct spdk_nvme_qpair			*qpair;
+	void					*buf;
+	uint32_t				buf_size;
+	STAILQ_ENTRY(nvme_dma_buf_element)	stailq;
 };
 
 struct nvme_completion_poll_status {
@@ -495,6 +503,7 @@ struct spdk_nvme_qpair {
 
 	STAILQ_HEAD(, nvme_request)		free_req;
 	STAILQ_HEAD(, nvme_request)		queued_req;
+	STAILQ_HEAD(, nvme_dma_buf_element)	free_ele;
 
 	/* List entry for spdk_nvme_transport_poll_group::qpairs */
 	STAILQ_ENTRY(spdk_nvme_qpair)		poll_group_stailq;
@@ -525,6 +534,9 @@ struct spdk_nvme_qpair {
 	STAILQ_HEAD(, nvme_request)		aborting_queued_req;
 
 	void					*req_buf;
+	void					*dma_buf;
+	void					*ele_buf;
+	uint32_t				ele_buf_size;
 
 	/* In-band authentication state */
 	struct nvme_auth			auth;
@@ -1510,7 +1522,12 @@ static inline void
 nvme_cleanup_user_req(struct nvme_request *req)
 {
 	if (req->user_buffer && req->payload_size) {
-		spdk_free(req->payload.contig_or_cb_arg);
+		if (req->dma_buf_ele == NULL) {
+			spdk_free(req->payload.contig_or_cb_arg);
+		} else {
+			STAILQ_INSERT_TAIL(&req->qpair->free_ele, req->dma_buf_ele, stailq);
+			req->dma_buf_ele = NULL;
+		}
 		req->user_buffer = NULL;
 	}
 

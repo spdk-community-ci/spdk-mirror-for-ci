@@ -782,6 +782,8 @@ test_nvme_allocate_request_user_copy(void)
 
 	STAILQ_INIT(&qpair.free_req);
 	STAILQ_INIT(&qpair.queued_req);
+	STAILQ_INIT(&qpair.free_ele);
+	qpair.ele_buf_size = 0;
 
 	/* no buffer or valid payload size, early NULL return */
 	req = nvme_allocate_request_user_copy(&qpair, buffer, payload_size, cb_fn,

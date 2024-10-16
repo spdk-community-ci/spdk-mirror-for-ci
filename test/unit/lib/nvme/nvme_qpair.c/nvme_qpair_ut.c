@@ -69,6 +69,8 @@ static void
 cleanup_submit_request_test(struct spdk_nvme_qpair *qpair)
 {
 	free(qpair->req_buf);
+	free(qpair->ele_buf);
+	free(qpair->dma_buf);
 }
 
 static void
@@ -278,6 +280,10 @@ test_nvme_qpair_process_completions(void)
 
 	free(qpair.req_buf);
 	free(admin_qp.req_buf);
+	free(qpair.dma_buf);
+	free(admin_qp.dma_buf);
+	free(qpair.ele_buf);
+	free(admin_qp.ele_buf);
 }
 
 static void
