@@ -1429,6 +1429,10 @@ struct nvme_request *nvme_allocate_request_user_copy(struct spdk_nvme_qpair *qpa
 		void *buffer, uint32_t payload_size,
 		spdk_nvme_cmd_cb cb_fn, void *cb_arg, bool host_to_controller);
 
+struct nvme_request *nvme_allocate_request_no_copy(struct spdk_nvme_qpair *qpair,
+		void *buffer, uint32_t payload_size,
+		spdk_nvme_cmd_cb cb_fn, void *cb_arg);
+
 static inline void
 _nvme_free_request(struct nvme_request *req, struct spdk_nvme_qpair *qpair)
 {

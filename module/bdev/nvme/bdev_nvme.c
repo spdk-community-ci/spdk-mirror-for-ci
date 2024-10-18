@@ -3077,7 +3077,7 @@ bdev_nvme_failover_ctrlr(struct nvme_ctrlr *nvme_ctrlr)
 }
 
 static int bdev_nvme_unmap(struct nvme_bdev_io *bio, uint64_t offset_blocks,
-			   uint64_t num_blocks);
+			   uint64_t num_blocks, void *ranges_base);
 
 static int bdev_nvme_write_zeroes(struct nvme_bdev_io *bio, uint64_t offset_blocks,
 				  uint64_t num_blocks);
@@ -3091,7 +3091,7 @@ bdev_nvme_get_buf_cb(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_io,
 		     bool success)
 {
 	struct nvme_bdev_io *bio = (struct nvme_bdev_io *)bdev_io->driver_ctx;
-	int ret;
+	int ret = 0;
 
 	if (!success) {
 		ret = -EINVAL;
@@ -3103,16 +3103,25 @@ bdev_nvme_get_buf_cb(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_io,
 		goto exit;
 	}
 
-	ret = bdev_nvme_readv(bio,
-			      bdev_io->u.bdev.iovs,
-			      bdev_io->u.bdev.iovcnt,
-			      bdev_io->u.bdev.md_buf,
-			      bdev_io->u.bdev.num_blocks,
-			      bdev_io->u.bdev.offset_blocks,
-			      bdev_io->u.bdev.dif_check_flags,
-			      bdev_io->u.bdev.memory_domain,
-			      bdev_io->u.bdev.memory_domain_ctx,
-			      bdev_io->u.bdev.accel_sequence);
+	switch (bdev_io->type) {
+	case SPDK_BDEV_IO_TYPE_READ:
+		ret = bdev_nvme_readv(bio,
+				      bdev_io->u.bdev.iovs,
+				      bdev_io->u.bdev.iovcnt,
+				      bdev_io->u.bdev.md_buf,
+				      bdev_io->u.bdev.num_blocks,
+				      bdev_io->u.bdev.offset_blocks,
+				      bdev_io->u.bdev.dif_check_flags,
+				      bdev_io->u.bdev.memory_domain,
+				      bdev_io->u.bdev.memory_domain_ctx,
+				      bdev_io->u.bdev.accel_sequence);
+		break;
+	case SPDK_BDEV_IO_TYPE_UNMAP:
+		ret = bdev_nvme_unmap(bio,
+				      bdev_io->u.bdev.offset_blocks,
+				      bdev_io->u.bdev.num_blocks, bdev_io->u.bdev.iovs[0].iov_base);
+		break;
+	}
 
 exit:
 	if (spdk_unlikely(ret != 0)) {
@@ -3183,9 +3192,17 @@ _bdev_nvme_submit_request(struct nvme_bdev_channel *nbdev_ch, struct spdk_bdev_i
 						   bdev_io->u.bdev.dif_check_flags);
 		break;
 	case SPDK_BDEV_IO_TYPE_UNMAP:
-		rc = bdev_nvme_unmap(nbdev_io,
-				     bdev_io->u.bdev.offset_blocks,
-				     bdev_io->u.bdev.num_blocks);
+		if (bdev_io->u.bdev.iovs && bdev_io->u.bdev.iovs[0].iov_base) {
+			rc = bdev_nvme_unmap(nbdev_io,
+					     bdev_io->u.bdev.offset_blocks,
+					     bdev_io->u.bdev.num_blocks,
+					     bdev_io->u.bdev.iovs[0].iov_base);
+		} else {
+			spdk_bdev_io_get_buf(bdev_io, bdev_nvme_get_buf_cb,
+					     sizeof(struct spdk_nvme_dsm_range)
+					     *SPDK_NVME_DATASET_MANAGEMENT_MAX_RANGES);
+			rc = 0;
+		}
 		break;
 	case SPDK_BDEV_IO_TYPE_WRITE_ZEROES:
 		rc =  bdev_nvme_write_zeroes(nbdev_io,
@@ -8167,9 +8184,10 @@ bdev_nvme_comparev_and_writev(struct nvme_bdev_io *bio, struct iovec *cmp_iov, i
 }
 
 static int
-bdev_nvme_unmap(struct nvme_bdev_io *bio, uint64_t offset_blocks, uint64_t num_blocks)
+bdev_nvme_unmap(struct nvme_bdev_io *bio, uint64_t offset_blocks, uint64_t num_blocks,
+		void *ranges_base)
 {
-	struct spdk_nvme_dsm_range dsm_ranges[SPDK_NVME_DATASET_MANAGEMENT_MAX_RANGES];
+	struct spdk_nvme_dsm_range *dsm_ranges = ranges_base;
 	struct spdk_nvme_dsm_range *range;
 	uint64_t offset, remaining;
 	uint64_t num_ranges_u64;
@@ -8178,7 +8196,7 @@ bdev_nvme_unmap(struct nvme_bdev_io *bio, uint64_t offset_blocks, uint64_t num_b
 
 	num_ranges_u64 = (num_blocks + SPDK_NVME_DATASET_MANAGEMENT_RANGE_MAX_BLOCKS - 1) /
 			 SPDK_NVME_DATASET_MANAGEMENT_RANGE_MAX_BLOCKS;
-	if (num_ranges_u64 > SPDK_COUNTOF(dsm_ranges)) {
+	if (num_ranges_u64 > SPDK_NVME_DATASET_MANAGEMENT_MAX_RANGES) {
 		SPDK_ERRLOG("Unmap request for %" PRIu64 " blocks is too large\n", num_blocks);
 		return -EINVAL;
 	}

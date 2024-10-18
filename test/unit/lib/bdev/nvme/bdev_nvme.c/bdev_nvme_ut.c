@@ -18,6 +18,7 @@
 #include "bdev/nvme/bdev_mdns_client.c"
 
 static void *g_accel_p = (void *)0xdeadbeaf;
+static char g_buffer[4096];
 
 DEFINE_STUB(spdk_nvme_probe_async, struct spdk_nvme_probe_ctx *,
 	    (const struct spdk_nvme_transport_id *trid, void *cb_ctx,
@@ -579,8 +580,8 @@ ut_bdev_io_set_buf(struct spdk_bdev_io *bdev_io)
 	bdev_io->u.bdev.iovs = &bdev_io->iov;
 	bdev_io->u.bdev.iovcnt = 1;
 
-	bdev_io->iov.iov_base = (void *)0xFEEDBEEF;
-	bdev_io->iov.iov_len = 4096;
+	bdev_io->iov.iov_base = (void *)g_buffer;
+	bdev_io->iov.iov_len = sizeof(g_buffer);
 }
 
 static void

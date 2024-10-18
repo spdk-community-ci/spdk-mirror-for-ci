@@ -1267,9 +1267,9 @@ spdk_nvme_ns_cmd_dataset_management(struct spdk_nvme_ns *ns, struct spdk_nvme_qp
 		return -EINVAL;
 	}
 
-	req = nvme_allocate_request_user_copy(qpair, (void *)ranges,
-					      num_ranges * sizeof(struct spdk_nvme_dsm_range),
-					      cb_fn, cb_arg, true);
+	req = nvme_allocate_request_no_copy(qpair, (void *)ranges,
+					    num_ranges * sizeof(struct spdk_nvme_dsm_range),
+					    cb_fn, cb_arg);
 	if (req == NULL) {
 		return -ENOMEM;
 	}

@@ -418,6 +418,24 @@ nvme_user_copy_cmd_complete(void *arg, const struct spdk_nvme_cpl *cpl)
 
 }
 
+static void
+nvme_no_copy_cmd_complete(void *arg, const struct spdk_nvme_cpl *cpl)
+{
+	struct nvme_request *req = arg;
+	spdk_nvme_cmd_cb user_cb_fn;
+	void *user_cb_arg;
+
+	user_cb_fn = req->user_cb_fn;
+	user_cb_arg = req->user_cb_arg;
+
+	req->user_buffer = NULL;
+	req->user_cb_arg = NULL;
+	req->user_cb_fn = NULL;
+
+	/* Call the user's original callback */
+	user_cb_fn(user_cb_arg, cpl);
+}
+
 /**
  * Allocate a request as well as a DMA-capable buffer to copy to/from the user's buffer.
  *
@@ -448,6 +466,30 @@ nvme_allocate_request_user_copy(struct spdk_nvme_qpair *qpair,
 					   NULL);
 	if (!req) {
 		spdk_free(dma_buffer);
+		return NULL;
+	}
+
+	req->user_cb_fn = cb_fn;
+	req->user_cb_arg = cb_arg;
+	req->user_buffer = buffer;
+	req->cb_arg = req;
+
+	return req;
+}
+
+/**
+ * Allocate a request using the buffer passed by caller as the DMA-capable buffer.
+ * Caller should make sure the buffer is DMA-capable.
+ */
+struct nvme_request *nvme_allocate_request_no_copy(struct spdk_nvme_qpair *qpair,
+		void *buffer, uint32_t payload_size,
+		spdk_nvme_cmd_cb cb_fn, void *cb_arg)
+{
+	struct nvme_request *req;
+
+	req = nvme_allocate_request_contig(qpair, buffer, payload_size, nvme_no_copy_cmd_complete,
+					   NULL);
+	if (!req) {
 		return NULL;
 	}
 

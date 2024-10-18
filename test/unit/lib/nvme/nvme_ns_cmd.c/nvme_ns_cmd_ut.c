@@ -632,11 +632,14 @@ test_nvme_ns_cmd_dataset_management(void)
 	struct spdk_nvme_qpair	qpair;
 	spdk_nvme_cmd_cb	cb_fn = NULL;
 	void			*cb_arg = NULL;
-	struct spdk_nvme_dsm_range	ranges[256];
+	struct spdk_nvme_dsm_range	*ranges = NULL;
 	uint16_t			i;
 	int			rc = 0;
 
 	prepare_for_test(&ns, &ctrlr, &qpair, 512, 0, 128 * 1024, 0, false);
+
+	ranges = spdk_zmalloc(sizeof(struct spdk_nvme_dsm_range) * 256, 4096, NULL, -1, SPDK_MALLOC_DMA);
+	CU_ASSERT(ranges != NULL);
 
 	for (i = 0; i < 256; i++) {
 		ranges[i].starting_lba = i;
@@ -653,7 +656,6 @@ test_nvme_ns_cmd_dataset_management(void)
 	CU_ASSERT(g_request->cmd.nsid == ns.id);
 	CU_ASSERT(g_request->cmd.cdw10 == 0);
 	CU_ASSERT(g_request->cmd.cdw11_bits.dsm.ad == 1);
-	spdk_free(g_request->payload.contig_or_cb_arg);
 	nvme_free_request(g_request);
 
 	/* TRIM 256 LBAs */
@@ -665,12 +667,12 @@ test_nvme_ns_cmd_dataset_management(void)
 	CU_ASSERT(g_request->cmd.nsid == ns.id);
 	CU_ASSERT(g_request->cmd.cdw10 == 255u);
 	CU_ASSERT(g_request->cmd.cdw11_bits.dsm.ad == 1);
-	spdk_free(g_request->payload.contig_or_cb_arg);
 	nvme_free_request(g_request);
 
 	rc = spdk_nvme_ns_cmd_dataset_management(&ns, &qpair, SPDK_NVME_DSM_ATTR_DEALLOCATE,
 			NULL, 0, cb_fn, cb_arg);
 	CU_ASSERT(rc != 0);
+	spdk_free(ranges);
 	cleanup_after_test(&qpair);
 }
 
