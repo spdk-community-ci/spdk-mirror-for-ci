@@ -2946,19 +2946,21 @@ bdev_nvme_reset_io_continue(void *cb_arg, int rc)
 static int
 _bdev_nvme_reset_io(struct nvme_io_path *io_path, struct nvme_bdev_io *bio)
 {
+	struct nvme_ctrlr *nvme_ctrlr = io_path->qpair->ctrlr;
 	struct nvme_ctrlr_channel *ctrlr_ch;
 	int rc;
 
 	assert(bio->io_path == NULL);
 	bio->io_path = io_path;
 
-	rc = nvme_ctrlr_op(io_path->qpair->ctrlr, NVME_CTRLR_OP_RESET,
-			   bdev_nvme_reset_io_continue, bio);
-	if (rc != 0 && rc != -EBUSY) {
-		return rc;
-	}
+	rc = bdev_nvme_reset_ctrlr(nvme_ctrlr);
 
-	if (rc == -EBUSY) {
+	if (rc == 0) {
+		assert(nvme_ctrlr->ctrlr_op_cb_fn == NULL);
+		assert(nvme_ctrlr->ctrlr_op_cb_arg == NULL);
+		nvme_ctrlr->ctrlr_op_cb_fn = bdev_nvme_reset_io_continue;
+		nvme_ctrlr->ctrlr_op_cb_arg = bio;
+	} else if (rc == -EBUSY) {
 		ctrlr_ch = io_path->qpair->ctrlr_ch;
 		assert(ctrlr_ch != NULL);
 		/*
@@ -2967,9 +2969,11 @@ _bdev_nvme_reset_io(struct nvme_io_path *io_path, struct nvme_bdev_io *bio)
 		 * upper level. If they are in the middle of a reset, we won't try to schedule another one.
 		 */
 		TAILQ_INSERT_TAIL(&ctrlr_ch->pending_resets, bio, retry_link);
+
+		rc = 0;
 	}
 
-	return 0;
+	return rc;
 }
 
 static void
