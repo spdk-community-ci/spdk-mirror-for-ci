@@ -451,6 +451,7 @@ Example response:
     "accel_get_opc_assignments",
     "accel_error_inject_error",
     "ioat_scan_accel_module",
+    "ae4dma_scan_accel_module",
     "dsa_scan_accel_module",
     "dpdk_cryptodev_scan_accel_module",
     "dpdk_cryptodev_set_driver",
@@ -2304,6 +2305,36 @@ Example request:
 {
   "jsonrpc": "2.0",
   "method": "ioat_scan_accel_module",
+  "id": 1
+}
+~~~
+
+Example response:
+
+~~~json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": true
+}
+~~~
+
+### ae4dma_scan_accel_module {#rpc_ae4dma_scan_accel_module}
+
+Enable ae4dma accel module offload.
+
+#### Parameters
+
+None
+
+#### Example
+
+Example request:
+
+~~~json
+{
+  "jsonrpc": "2.0",
+  "method": "ae4dma_scan_accel_module",
   "id": 1
 }
 ~~~
