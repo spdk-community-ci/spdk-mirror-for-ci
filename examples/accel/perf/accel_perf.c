@@ -370,8 +370,12 @@ _get_task_data_bufs(struct ap_task *task)
 
 	/* For dualcast, the DSA HW requires 4K alignment on destination addresses but
 	 * we do this for all modules to keep it simple.
+	 *
+	 * For copy, the AE4DMA HW requires 4K alignment on both source, destination
+	 * addresses.
 	 */
-	if (g_workload_selection == SPDK_ACCEL_OPC_DUALCAST) {
+	if (g_workload_selection == SPDK_ACCEL_OPC_DUALCAST ||
+	    g_workload_selection == SPDK_ACCEL_OPC_COPY)  {
 		align = ALIGN_4K;
 	}
 
@@ -559,7 +563,7 @@ _get_task_data_bufs(struct ap_task *task)
 			memset(task->sources[i], DATA_PATTERN, g_xfer_size_bytes);
 		}
 	} else {
-		task->src = spdk_dma_zmalloc(g_xfer_size_bytes, 0, NULL);
+		task->src = spdk_dma_zmalloc(g_xfer_size_bytes, align, NULL);
 		if (task->src == NULL) {
 			fprintf(stderr, "Unable to alloc src buffer\n");
 			return -ENOMEM;
