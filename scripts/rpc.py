@@ -3347,6 +3347,14 @@ Format: 'user:u1 secret:s1 muser:mu1 msecret:ms1,user:u2 secret:s2 muser:mu2 mse
                               help='Enable IOAT accel module offload.')
     p.set_defaults(func=ioat_scan_accel_module)
 
+    # ae4dma
+    def ae4dma_scan_accel_module(args):
+        rpc.ae4dma.ae4dma_scan_accel_module(args.client)
+
+    p = subparsers.add_parser('ae4dma_scan_accel_module', aliases=['ae4dma_scan_accel_engine'],
+                              help='Enable AE4DMA accel module offload.')
+    p.set_defaults(func=ae4dma_scan_accel_module)
+
     # dpdk compressdev
     def compressdev_scan_accel_module(args):
         rpc.compressdev.compressdev_scan_accel_module(args.client, pmd=args.pmd)
