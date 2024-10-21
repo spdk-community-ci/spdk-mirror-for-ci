@@ -20,6 +20,7 @@ DEPDIRS-rte_vhost :=
 DEPDIRS-env_dpdk := log util
 
 DEPDIRS-ioat := log
+DEPDIRS-ae4dma := log
 DEPDIRS-idxd := log util
 DEPDIRS-sock := log $(JSON_LIBS) trace
 DEPDIRS-util := log
@@ -108,6 +109,7 @@ DEPDIRS-blobfs_bdev := $(BDEV_DEPS_THREAD) blob_bdev blobfs
 
 # module/accel
 DEPDIRS-accel_ioat := log ioat thread $(JSON_LIBS) accel
+DEPDIRS-accel_ae4dma := log ae4dma thread $(JSON_LIBS) accel
 DEPDIRS-accel_dsa := log util idxd thread $(JSON_LIBS) accel trace
 DEPDIRS-accel_iaa := log util idxd thread $(JSON_LIBS) accel trace
 DEPDIRS-accel_dpdk_cryptodev := log thread $(JSON_LIBS) accel util
