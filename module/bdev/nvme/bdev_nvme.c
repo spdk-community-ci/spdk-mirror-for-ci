@@ -1974,26 +1974,17 @@ err:
 static void bdev_nvme_reset_io_continue(void *cb_arg, int rc);
 
 static void
-bdev_nvme_complete_pending_resets(struct nvme_ctrlr_channel_iter *i,
-				  struct nvme_ctrlr *nvme_ctrlr,
-				  struct nvme_ctrlr_channel *ctrlr_ch,
-				  void *ctx)
+bdev_nvme_complete_pending_resets(struct nvme_ctrlr *nvme_ctrlr, bool success)
 {
-	int rc = 0;
+	int rc = success ? 0 : -1;
 	struct nvme_bdev_io *bio;
 
-	if (ctx != NULL) {
-		rc = -1;
-	}
-
-	while (!TAILQ_EMPTY(&ctrlr_ch->pending_resets)) {
-		bio = TAILQ_FIRST(&ctrlr_ch->pending_resets);
-		TAILQ_REMOVE(&ctrlr_ch->pending_resets, bio, retry_link);
+	while (!TAILQ_EMPTY(&nvme_ctrlr->pending_resets)) {
+		bio = TAILQ_FIRST(&nvme_ctrlr->pending_resets);
+		TAILQ_REMOVE(&nvme_ctrlr->pending_resets, bio, retry_link);
 
 		bdev_nvme_reset_io_continue(bio, rc);
 	}
-
-	nvme_ctrlr_for_each_channel_continue(i, 0);
 }
 
 /* This function marks the current trid as failed by storing the current ticks
@@ -2218,17 +2209,37 @@ bdev_nvme_start_reconnect_delay_timer(struct nvme_ctrlr *nvme_ctrlr)
 static void remove_discovery_entry(struct nvme_ctrlr *nvme_ctrlr);
 
 static void
-_bdev_nvme_reset_ctrlr_complete(struct nvme_ctrlr *nvme_ctrlr, void *ctx, int status)
+bdev_nvme_reset_ctrlr_complete(struct nvme_ctrlr *nvme_ctrlr, bool success)
 {
-	bool success = (ctx == NULL);
 	bdev_nvme_ctrlr_op_cb ctrlr_op_cb_fn = nvme_ctrlr->ctrlr_op_cb_fn;
 	void *ctrlr_op_cb_arg = nvme_ctrlr->ctrlr_op_cb_arg;
 	enum bdev_nvme_op_after_reset op_after_reset;
 
 	assert(nvme_ctrlr->thread == spdk_get_thread());
 
-	nvme_ctrlr->ctrlr_op_cb_fn = NULL;
-	nvme_ctrlr->ctrlr_op_cb_arg = NULL;
+	pthread_mutex_lock(&nvme_ctrlr->mutex);
+	if (!success) {
+		/* Connecting the active trid failed. Set the next alternate trid to the
+		 * active trid if it exists.
+		 */
+		if (bdev_nvme_failover_trid(nvme_ctrlr, false, false)) {
+			/* The next alternate trid exists and is ready to try. Try it now. */
+			pthread_mutex_unlock(&nvme_ctrlr->mutex);
+
+			nvme_ctrlr_disconnect(nvme_ctrlr, bdev_nvme_reconnect_ctrlr);
+			return;
+		}
+
+		/* We came here if there is no alternate trid or if the next trid exists but
+		 * is not ready to try. We will try the active trid after reconnect_delay_sec
+		 * seconds if it is non-zero or at the next reset call otherwise.
+		 */
+	} else {
+		/* Connecting the active trid succeeded. Clear the last failed time because it
+		 * means the trid is failed if its last failed time is non-zero.
+		 */
+		nvme_ctrlr->active_path_id->last_failed_tsc = 0;
+	}
 
 	if (!success) {
 		NVME_CTRLR_ERRLOG(nvme_ctrlr, "Resetting controller failed.\n");
@@ -2236,10 +2247,17 @@ _bdev_nvme_reset_ctrlr_complete(struct nvme_ctrlr *nvme_ctrlr, void *ctx, int st
 		NVME_CTRLR_NOTICELOG(nvme_ctrlr, "Resetting controller successful.\n");
 	}
 
-	pthread_mutex_lock(&nvme_ctrlr->mutex);
 	nvme_ctrlr->resetting = false;
 	nvme_ctrlr->dont_retry = false;
 	nvme_ctrlr->in_failover = false;
+
+	nvme_ctrlr->ctrlr_op_cb_fn = NULL;
+	nvme_ctrlr->ctrlr_op_cb_arg = NULL;
+
+	NVME_CTRLR_INFOLOG(nvme_ctrlr, "Clear pending resets.\n");
+
+	/* Make sure we clear any pending resets before returning. */
+	bdev_nvme_complete_pending_resets(nvme_ctrlr, success);
 
 	op_after_reset = bdev_nvme_check_op_after_reset(nvme_ctrlr, success);
 	pthread_mutex_unlock(&nvme_ctrlr->mutex);
@@ -2268,47 +2286,6 @@ _bdev_nvme_reset_ctrlr_complete(struct nvme_ctrlr *nvme_ctrlr, void *ctx, int st
 	default:
 		break;
 	}
-}
-
-static void
-bdev_nvme_reset_ctrlr_complete(struct nvme_ctrlr *nvme_ctrlr, bool success)
-{
-	pthread_mutex_lock(&nvme_ctrlr->mutex);
-	if (!success) {
-		/* Connecting the active trid failed. Set the next alternate trid to the
-		 * active trid if it exists.
-		 */
-		if (bdev_nvme_failover_trid(nvme_ctrlr, false, false)) {
-			/* The next alternate trid exists and is ready to try. Try it now. */
-			pthread_mutex_unlock(&nvme_ctrlr->mutex);
-
-			NVME_CTRLR_INFOLOG(nvme_ctrlr, "Try the next alternate trid %s:%s now.\n",
-					   nvme_ctrlr->active_path_id->trid.traddr,
-					   nvme_ctrlr->active_path_id->trid.trsvcid);
-
-			nvme_ctrlr_disconnect(nvme_ctrlr, bdev_nvme_reconnect_ctrlr);
-			return;
-		}
-
-		/* We came here if there is no alternate trid or if the next trid exists but
-		 * is not ready to try. We will try the active trid after reconnect_delay_sec
-		 * seconds if it is non-zero or at the next reset call otherwise.
-		 */
-	} else {
-		/* Connecting the active trid succeeded. Clear the last failed time because it
-		 * means the trid is failed if its last failed time is non-zero.
-		 */
-		nvme_ctrlr->active_path_id->last_failed_tsc = 0;
-	}
-	pthread_mutex_unlock(&nvme_ctrlr->mutex);
-
-	NVME_CTRLR_INFOLOG(nvme_ctrlr, "Clear pending resets.\n");
-
-	/* Make sure we clear any pending resets before returning. */
-	nvme_ctrlr_for_each_channel(nvme_ctrlr,
-				    bdev_nvme_complete_pending_resets,
-				    success ? NULL : (void *)0x1,
-				    _bdev_nvme_reset_ctrlr_complete);
 }
 
 static void
@@ -2653,7 +2630,7 @@ bdev_nvme_enable_ctrlr(struct nvme_ctrlr *nvme_ctrlr)
 }
 
 static void
-_bdev_nvme_disable_ctrlr_complete(struct nvme_ctrlr *nvme_ctrlr, void *ctx, int status)
+bdev_nvme_disable_ctrlr_complete(struct nvme_ctrlr *nvme_ctrlr)
 {
 	bdev_nvme_ctrlr_op_cb ctrlr_op_cb_fn = nvme_ctrlr->ctrlr_op_cb_fn;
 	void *ctrlr_op_cb_arg = nvme_ctrlr->ctrlr_op_cb_arg;
@@ -2674,6 +2651,9 @@ _bdev_nvme_disable_ctrlr_complete(struct nvme_ctrlr *nvme_ctrlr, void *ctx, int 
 	nvme_ctrlr->disabled = true;
 	spdk_poller_pause(nvme_ctrlr->adminq_timer_poller);
 
+	/* Make sure we clear any pending resets before returning. */
+	bdev_nvme_complete_pending_resets(nvme_ctrlr, true);
+
 	pthread_mutex_unlock(&nvme_ctrlr->mutex);
 
 	if (ctrlr_op_cb_fn) {
@@ -2687,17 +2667,6 @@ _bdev_nvme_disable_ctrlr_complete(struct nvme_ctrlr *nvme_ctrlr, void *ctx, int 
 	default:
 		break;
 	}
-
-}
-
-static void
-bdev_nvme_disable_ctrlr_complete(struct nvme_ctrlr *nvme_ctrlr)
-{
-	/* Make sure we clear any pending resets before returning. */
-	nvme_ctrlr_for_each_channel(nvme_ctrlr,
-				    bdev_nvme_complete_pending_resets,
-				    NULL,
-				    _bdev_nvme_disable_ctrlr_complete);
 }
 
 static void
@@ -3057,7 +3026,6 @@ _bdev_nvme_reset_io(struct nvme_io_path *io_path, struct nvme_bdev_io *bio)
 	struct nvme_bdev *nbdev = (struct nvme_bdev *)bdev_io->bdev->ctxt;
 	struct nvme_ctrlr *nvme_ctrlr = io_path->qpair->ctrlr;
 	spdk_msg_fn msg_fn;
-	struct nvme_ctrlr_channel *ctrlr_ch;
 	int rc;
 
 	assert(bio->io_path == NULL);
@@ -3065,6 +3033,14 @@ _bdev_nvme_reset_io(struct nvme_io_path *io_path, struct nvme_bdev_io *bio)
 
 	pthread_mutex_lock(&nvme_ctrlr->mutex);
 	rc = bdev_nvme_reset_ctrlr_unsafe(nvme_ctrlr, &msg_fn);
+	if (rc == -EBUSY) {
+		/*
+		 * Reset call is queued only if it is from the app framework. This is on purpose so that
+		 * we don't interfere with the app framework reset strategy. i.e. we are deferring to the
+		 * upper level. If they are in the middle of a reset, we won't try to schedule another one.
+		 */
+		TAILQ_INSERT_TAIL(&nvme_ctrlr->pending_resets, bio, retry_link);
+	}
 	pthread_mutex_unlock(&nvme_ctrlr->mutex);
 
 	if (rc == 0) {
@@ -3078,15 +3054,6 @@ _bdev_nvme_reset_io(struct nvme_io_path *io_path, struct nvme_bdev_io *bio)
 		NVME_BDEV_INFOLOG(nbdev, "reset_io %p started resetting ctrlr [%s, %u].\n",
 				  bio, CTRLR_STRING(nvme_ctrlr), CTRLR_ID(nvme_ctrlr));
 	} else if (rc == -EBUSY) {
-		ctrlr_ch = io_path->qpair->ctrlr_ch;
-		assert(ctrlr_ch != NULL);
-		/*
-		 * Reset call is queued only if it is from the app framework. This is on purpose so that
-		 * we don't interfere with the app framework reset strategy. i.e. we are deferring to the
-		 * upper level. If they are in the middle of a reset, we won't try to schedule another one.
-		 */
-		TAILQ_INSERT_TAIL(&ctrlr_ch->pending_resets, bio, retry_link);
-
 		rc = 0;
 
 		NVME_BDEV_INFOLOG(nbdev, "reset_io %p was queued to ctrlr [%s, %u].\n",
@@ -3608,8 +3575,6 @@ bdev_nvme_create_ctrlr_channel_cb(void *io_device, void *ctx_buf)
 {
 	struct nvme_ctrlr *nvme_ctrlr = io_device;
 	struct nvme_ctrlr_channel *ctrlr_ch = ctx_buf;
-
-	TAILQ_INIT(&ctrlr_ch->pending_resets);
 
 	return nvme_qpair_create(nvme_ctrlr, ctrlr_ch);
 }
@@ -5800,6 +5765,7 @@ nvme_ctrlr_create(struct spdk_nvme_ctrlr *ctrlr,
 	}
 
 	TAILQ_INIT(&nvme_ctrlr->trids);
+	TAILQ_INIT(&nvme_ctrlr->pending_resets);
 	RB_INIT(&nvme_ctrlr->namespaces);
 
 	/* Get another reference to the key, so the first one can be released from probe_ctx */
