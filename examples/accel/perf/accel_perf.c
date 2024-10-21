@@ -18,6 +18,7 @@
 
 #define DATA_PATTERN 0x5a
 #define ALIGN_4K 0x1000
+#define AE4DMA_QUEUE_DEPTH 28
 #define COMP_BUF_PAD_PERCENTAGE 1.1L
 
 static uint64_t	g_tsc_rate;
@@ -367,11 +368,20 @@ _get_task_data_bufs(struct ap_task *task)
 	struct spdk_dif_ctx_init_ext_opts dif_opts;
 	uint32_t num_blocks, transfer_size_with_md;
 	int rc;
+	const char *module_name = NULL;
 
 	/* For dualcast, the DSA HW requires 4K alignment on destination addresses but
 	 * we do this for all modules to keep it simple.
 	 */
 	if (g_workload_selection == SPDK_ACCEL_OPC_DUALCAST) {
+		align = ALIGN_4K;
+	}
+
+	/* For AE4DMA copy operation, the HW requires 4K alignment on both source, destination
+	 * addresses.
+	 */
+	rc = spdk_accel_get_opc_module_name(g_workload_selection, &module_name);
+	if ((rc == 0) && (!strcmp(module_name, "ae4dma"))) {
 		align = ALIGN_4K;
 	}
 
@@ -559,7 +569,7 @@ _get_task_data_bufs(struct ap_task *task)
 			memset(task->sources[i], DATA_PATTERN, g_xfer_size_bytes);
 		}
 	} else {
-		task->src = spdk_dma_zmalloc(g_xfer_size_bytes, 0, NULL);
+		task->src = spdk_dma_zmalloc(g_xfer_size_bytes, align, NULL);
 		if (task->src == NULL) {
 			fprintf(stderr, "Unable to alloc src buffer\n");
 			return -ENOMEM;
@@ -1397,6 +1407,11 @@ accel_perf_prep(void *arg1)
 			rc = -EINVAL;
 			goto error_end;
 		}
+	}
+
+	rc = spdk_accel_get_opc_module_name(g_workload_selection, &module_name);
+	if ((rc == 0) && (!strcmp(module_name, "ae4dma") & (g_queue_depth > AE4DMA_QUEUE_DEPTH))) {
+		g_queue_depth = AE4DMA_QUEUE_DEPTH;
 	}
 
 	if (g_workload_selection != SPDK_ACCEL_OPC_COMPRESS &&
