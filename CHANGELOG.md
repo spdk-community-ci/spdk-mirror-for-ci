@@ -65,6 +65,22 @@ This is to prevent any further expansion of `spdk_interrupt_register()` API.
 Added `spdk_fd_group_add_ext()` API which can receive `spdk_event_handler_opts` structure. This is
 to prevent any further expansion of `spdk_fd_group_add()` API.
 
+### AE4DMA user-space driver
+
+This release adds a user-space driver with support for the AMD EPYC 4th Generation
+DMA (AE4DMA) offload engine.
+
+- AE4DMA
+  - New user-space driver supporting DMA memory copy offload on AMD EYPC 9004 and 8004
+    systems (Genoa and Siena processors).
+  - Integrated AE4DMA in Accel framework.
+  - Added new RPC 'ae4dma_scan_accel_module' to enable the accel module.
+
+### rpc
+
+Integrated AE4DMA in accel framework. New RPC `ae4dma_scan_accel_module` has
+been added to enable this accel module.
+
 ## v24.09
 
 ### accel

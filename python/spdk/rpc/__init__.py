@@ -18,6 +18,7 @@ from . import env_dpdk
 from . import dsa
 from . import iaa
 from . import ioat
+from . import ae4dma
 from . import iscsi
 from . import keyring
 from . import log
