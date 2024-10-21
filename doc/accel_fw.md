@@ -68,6 +68,11 @@ the complete implementation of the acceleration component. A module must be
 selected via startup RPC when the application is started. Otherwise, if no startup
 RPC is provided, the framework is available and will use the software plug-in module.
 
+### AE4DMA Module {#accel_ae4dma}
+
+The AE4DMA module enables SPDK applications to offload memory to memory copy operations to the DMA engines on AMD EYPC systems.
+To use the AE4DMA module, use the RPC [`ae4dma_scan_accel_module`](https://spdk.io/doc/jsonrpc.html) before starting the application.
+
 ### IOAT Module {#accel_ioat}
 
 To use the IOAT module, use the RPC [`ioat_scan_accel_module`](https://spdk.io/doc/jsonrpc.html) before starting the application.

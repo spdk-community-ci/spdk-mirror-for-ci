@@ -25,6 +25,20 @@ change notice to client.
 
 Add `spdk_reduce_vol_get_info()` to get the information for the compressed volume.
 
+### AE4DMA user-space driver
+
+This release adds a user-space driver with support for the AMD EPYC 4th Generation
+DMA (AE4DMA) offload engine.
+
+- AE4DMA
+  - New user-space driver supporting DMA memory copy offload on AMD EYPC systems.
+  - Example program `ae4dma/perf`
+
+### rpc
+
+Integrated AE4DMA in accel framework. New RPC `ae4dma_scan_accel_module` has
+been added to enable this accel module.
+
 ## v24.09
 
 ### accel
