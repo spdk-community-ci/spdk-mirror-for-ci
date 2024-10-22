@@ -112,6 +112,29 @@ histogram_merge(void)
 	spdk_histogram_data_free(h2);
 }
 
+#define TEST_MIN_RANGE 6
+#define TEST_MAX_RANGE 30
+#define TEST_RANGES_COUNT (TEST_MAX_RANGE - TEST_MIN_RANGE + 1)
+
+static void
+histogram_min_max_range_test(void)
+{
+	struct spdk_histogram_data *h;
+	int ranges[TEST_RANGES_COUNT] = {0};
+
+	h = spdk_histogram_data_alloc_sized_ext(SPDK_HISTOGRAM_BUCKET_SHIFT_DEFAULT, TEST_MIN_RANGE,
+						TEST_MAX_RANGE);
+	for (int i = 0; i < 64; i++) {
+		ranges[__spdk_histogram_data_get_bucket_range(h, 1ULL << i)]++;
+	}
+
+	CU_ASSERT(ranges[0] == SPDK_HISTOGRAM_BUCKET_SHIFT_DEFAULT + TEST_MIN_RANGE);
+	for (int i = 1; i < TEST_RANGES_COUNT - 2; i++) {
+		CU_ASSERT(ranges[i] == 1);
+	}
+	CU_ASSERT(ranges[TEST_RANGES_COUNT - 1] == SDPK_HISTOGRAM_MAX_RANGE_DEFAULT - TEST_MAX_RANGE + 1);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -130,7 +153,8 @@ main(int argc, char **argv)
 
 	if (
 		CU_add_test(suite, "histogram_test", histogram_test) == NULL ||
-		CU_add_test(suite, "histogram_merge", histogram_merge) == NULL
+		CU_add_test(suite, "histogram_merge", histogram_merge) == NULL ||
+		CU_add_test(suite, "histogram_ext_test", histogram_min_max_range_test) == NULL
 	) {
 		CU_cleanup_registry();
 		return CU_get_error();
