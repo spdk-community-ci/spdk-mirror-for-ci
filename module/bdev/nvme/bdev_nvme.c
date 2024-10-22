@@ -5407,6 +5407,7 @@ free_nvme_async_probe_ctx(struct nvme_async_probe_ctx *ctx)
 	spdk_keyring_put_key(ctx->drv_opts.tls_psk);
 	spdk_keyring_put_key(ctx->drv_opts.dhchap_key);
 	spdk_keyring_put_key(ctx->drv_opts.dhchap_ctrlr_key);
+	free(ctx->base_name);
 	free(ctx);
 }
 
@@ -6355,7 +6356,10 @@ spdk_bdev_nvme_create(struct spdk_nvme_transport_id *trid,
 	if (!ctx) {
 		return -ENOMEM;
 	}
-	ctx->base_name = base_name;
+	ctx->base_name = strdup(base_name);
+	if (!ctx->base_name) {
+		return -ENOMEM;
+	}
 	ctx->names = names;
 	ctx->max_bdevs = count;
 	ctx->cb_fn = cb_fn;
