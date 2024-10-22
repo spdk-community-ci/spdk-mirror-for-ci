@@ -18,11 +18,13 @@ extern "C" {
 #endif
 
 #define SPDK_HISTOGRAM_BUCKET_SHIFT_DEFAULT	7
+#define SPDK_HISTOGRAM_MIN_RANGE_DEFAULT 0
+#define SDPK_HISTOGRAM_MAX_RANGE_DEFAULT (64 - SPDK_HISTOGRAM_BUCKET_SHIFT_DEFAULT)
 #define SPDK_HISTOGRAM_BUCKET_SHIFT(h)		h->bucket_shift
-#define SPDK_HISTOGRAM_BUCKET_LSB(h)		(64 - SPDK_HISTOGRAM_BUCKET_SHIFT(h))
+#define SPDK_HISTOGRAM_BUCKET_LSB(h)		(64 - SPDK_HISTOGRAM_BUCKET_SHIFT(h) - h->min_range)
 #define SPDK_HISTOGRAM_NUM_BUCKETS_PER_RANGE(h)	(1ULL << SPDK_HISTOGRAM_BUCKET_SHIFT(h))
 #define SPDK_HISTOGRAM_BUCKET_MASK(h)		(SPDK_HISTOGRAM_NUM_BUCKETS_PER_RANGE(h) - 1)
-#define SPDK_HISTOGRAM_NUM_BUCKET_RANGES(h)	(SPDK_HISTOGRAM_BUCKET_LSB(h) + 1)
+#define SPDK_HISTOGRAM_NUM_BUCKET_RANGES(h)	(h->max_range - h->min_range + 1)
 #define SPDK_HISTOGRAM_NUM_BUCKETS(h)		(SPDK_HISTOGRAM_NUM_BUCKETS_PER_RANGE(h) * \
 						 SPDK_HISTOGRAM_NUM_BUCKET_RANGES(h))
 
@@ -54,11 +56,15 @@ extern "C" {
  *
  * Buckets can be made more granular by increasing SPDK_HISTOGRAM_BUCKET_SHIFT.  This
  * comes at the cost of additional storage per namespace context to store the bucket data.
+ * In order to lower number of ranges to shrink unnecessary low and high ranges
+ * min_range and max_range can be specified during histogram creation.
  */
 
 struct spdk_histogram_data {
 
 	uint32_t	bucket_shift;
+	uint32_t	min_range;
+	uint32_t	max_range;
 	uint64_t	*bucket;
 
 };
@@ -99,6 +105,9 @@ __spdk_histogram_data_get_bucket_range(struct spdk_histogram_data *h, uint64_t d
 
 	if (clz <= SPDK_HISTOGRAM_BUCKET_LSB(h)) {
 		range = SPDK_HISTOGRAM_BUCKET_LSB(h) - clz;
+		if (range > SPDK_HISTOGRAM_NUM_BUCKET_RANGES(h) - 1) {
+			range = SPDK_HISTOGRAM_NUM_BUCKET_RANGES(h) - 1;
+		}
 	} else {
 		range = 0;
 	}
@@ -201,9 +210,13 @@ spdk_histogram_data_merge(const struct spdk_histogram_data *dst,
 }
 
 static inline struct spdk_histogram_data *
-spdk_histogram_data_alloc_sized(uint32_t bucket_shift)
+spdk_histogram_data_alloc_sized_ext(uint32_t bucket_shift, uint32_t min_range, uint32_t max_range)
 {
 	struct spdk_histogram_data *h;
+
+	if (min_range > max_range || max_range > 64 - bucket_shift) {
+		return NULL;
+	}
 
 	h = (struct spdk_histogram_data *)calloc(1, sizeof(*h));
 	if (h == NULL) {
@@ -211,6 +224,8 @@ spdk_histogram_data_alloc_sized(uint32_t bucket_shift)
 	}
 
 	h->bucket_shift = bucket_shift;
+	h->min_range = min_range;
+	h->max_range = max_range;
 	h->bucket = (uint64_t *)calloc(SPDK_HISTOGRAM_NUM_BUCKETS(h), sizeof(uint64_t));
 	if (h->bucket == NULL) {
 		free(h);
@@ -221,9 +236,17 @@ spdk_histogram_data_alloc_sized(uint32_t bucket_shift)
 }
 
 static inline struct spdk_histogram_data *
+spdk_histogram_data_alloc_sized(uint32_t bucket_shift)
+{
+	return spdk_histogram_data_alloc_sized_ext(bucket_shift, SPDK_HISTOGRAM_MIN_RANGE_DEFAULT,
+			SDPK_HISTOGRAM_MAX_RANGE_DEFAULT);
+}
+
+static inline struct spdk_histogram_data *
 spdk_histogram_data_alloc(void)
 {
-	return spdk_histogram_data_alloc_sized(SPDK_HISTOGRAM_BUCKET_SHIFT_DEFAULT);
+	return spdk_histogram_data_alloc_sized_ext(SPDK_HISTOGRAM_BUCKET_SHIFT_DEFAULT,
+			SPDK_HISTOGRAM_MIN_RANGE_DEFAULT, SDPK_HISTOGRAM_MAX_RANGE_DEFAULT);
 }
 
 static inline void
