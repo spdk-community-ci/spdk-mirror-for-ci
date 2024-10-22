@@ -6828,7 +6828,7 @@ blob_create_snapshot_power_failure(void)
 	}
 }
 
-#define IO_UT_BLOCKS_PER_CLUSTER 32
+#define IO_UT_BLOCKS_PER_CLUSTER 64
 
 static void
 test_io_write(struct spdk_bs_dev *dev, struct spdk_blob *blob, struct spdk_io_channel *channel)
@@ -10040,6 +10040,17 @@ ut_setup_config_nocopy_extent(void)
 }
 
 static int
+ut_setup_config_nocopy_extent_16k_phys(void)
+{
+	g_dev_copy_enabled = false;
+	g_use_extent_table = true;
+	g_phys_blocklen = 16384;
+
+	return 0;
+}
+
+
+static int
 ut_setup_config_copy_noextent(void)
 {
 	g_dev_copy_enabled = true;
@@ -10074,6 +10085,7 @@ main(int argc, char **argv)
 	struct ut_config	configs[] = {
 		{"nocopy_noextent", ut_setup_config_nocopy_noextent},
 		{"nocopy_extent", ut_setup_config_nocopy_extent},
+		{"nocopy_extent_16k_phys", ut_setup_config_nocopy_extent_16k_phys},
 		{"copy_noextent", ut_setup_config_copy_noextent},
 		{"copy_extent", ut_setup_config_copy_extent},
 	};
