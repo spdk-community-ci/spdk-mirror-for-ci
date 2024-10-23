@@ -50,7 +50,7 @@ declare -A xnvme_filename=(
 
 declare -A xnvme_conserve_cpu=(
 	["libaio"]=false
-	["io_uring"]=false
+	["io_uring"]=true
 	["io_uring_cmd"]=true
 )
 
