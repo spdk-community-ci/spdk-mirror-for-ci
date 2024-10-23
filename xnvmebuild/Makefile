@@ -6,12 +6,17 @@
 SPDK_ROOT_DIR := $(abspath $(CURDIR)/..)
 include $(SPDK_ROOT_DIR)/mk/spdk.common.mk
 
+XNVME_BUILD_TYPE =
+ifeq ($(CONFIG_DEBUG), y)
+XNVME_BUILD_TYPE = --buildtype=debug
+endif
+
 .PHONY: all clean install uninstall
 
 all:
 	(cd $(SPDK_ROOT_DIR)/xnvme && \
 		export PKG_CONFIG_PATH=$$PKG_CONFIG_PATH:/usr/lib/pkgconfig:/usr/lib64/pkgconfig && \
-		meson setup builddir \
+		meson setup builddir $(XNVME_BUILD_TYPE) \
 		-Dwith-libaio=enabled \
 		-Dwith-liburing=enabled \
 		-Dwith-libvfn=disabled \
