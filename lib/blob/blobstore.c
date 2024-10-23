@@ -3923,11 +3923,7 @@ bs_alloc(struct spdk_bs_dev *dev, struct spdk_bs_opts *opts, struct spdk_blob_st
 	TAILQ_INIT(&bs->snapshots);
 	bs->dev = dev;
 
-	if (dev->phys_blocklen < SPDK_BS_PAGE_SIZE) {
-		bs->md_page_size = SPDK_BS_PAGE_SIZE;
-	} else {
-		bs->md_page_size = dev->phys_blocklen;
-	}
+	bs->md_page_size = fmax(fmax(dev->phys_blocklen, SPDK_BS_PAGE_SIZE), opts->md_page_size);
 
 	bs->md_thread = spdk_get_thread();
 	assert(bs->md_thread != NULL);
@@ -4995,7 +4991,7 @@ bs_opts_copy(struct spdk_bs_opts *src, struct spdk_bs_opts *dst)
 	SET_FIELD(max_md_ops);
 	SET_FIELD(max_channel_ops);
 	SET_FIELD(clear_method);
-
+	SET_FIELD(md_page_size);
 	if (FIELD_OK(bstype)) {
 		memcpy(&dst->bstype, &src->bstype, sizeof(dst->bstype));
 	}

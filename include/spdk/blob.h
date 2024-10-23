@@ -286,8 +286,8 @@ struct spdk_bs_opts {
 	/** Blobstore type */
 	struct spdk_bs_type bstype;
 
-	/* Hole at bytes 36-39. */
-	uint8_t reserved36[4];
+	/** Metadata page size */
+	uint32_t md_page_size;
 
 	/** Callback function to invoke for each blob. */
 	spdk_blob_op_with_handle_complete iter_cb_fn;
