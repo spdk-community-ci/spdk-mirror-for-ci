@@ -61,6 +61,7 @@ xnvme_bdevperf() {
 
 	xnvme_io+=(libaio)
 	xnvme_io+=(io_uring)
+	xnvme_io+=(io_uring_cmd)
 
 	xnvme0_dev=/dev/nullb0
 
@@ -94,6 +95,7 @@ xnvme_fio_plugin() {
 
 	xnvme_io+=(libaio)
 	xnvme_io+=(io_uring)
+	xnvme_io+=(io_uring_cmd)
 
 	xnvme0_dev=/dev/nullb0
 
@@ -172,7 +174,9 @@ rpc_xnvme() {
 trap 'killprocess "$spdk_tgt"' EXIT
 
 # Prep global refs for io_pattern supported per io_mechanism
-libaio=(randread randwrite) io_uring=(randread randwrite)
+libaio=(randread randwrite)
+io_uring=(randread randwrite)
+io_uring_cmd=(randread randwrite unmap write_zeroes)
 
 run_test "xnvme_rpc" xnvme_rpc
 run_test "xnvme_to_malloc_dd_copy" malloc_to_xnvme_copy
