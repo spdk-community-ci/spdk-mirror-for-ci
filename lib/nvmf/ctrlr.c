@@ -2892,6 +2892,7 @@ spdk_nvmf_ctrlr_identify_ns_ext(struct spdk_nvmf_request *req)
 		return SPDK_NVMF_REQUEST_EXEC_STATUS_COMPLETE;
 	}
 
+	cmd->nsid = spdk_bdev_get_nsid(bdev);
 	return spdk_nvmf_bdev_ctrlr_nvme_passthru_admin(bdev, desc, ch, req, identify_ns_passthru_cb);
 }
 
@@ -5008,6 +5009,8 @@ nvmf_passthru_admin_cmd_for_bdev_nsid(struct spdk_nvmf_request *req, uint32_t bd
 
 	if (ns->passthrough_nsid) {
 		req->cmd->nvme_cmd.nsid = ns->passthrough_nsid;
+	} else {
+		req->cmd->nvme_cmd.nsid = spdk_bdev_get_nsid(bdev);
 	}
 
 	return spdk_nvmf_bdev_ctrlr_nvme_passthru_admin(bdev, desc, ch, req, NULL);
