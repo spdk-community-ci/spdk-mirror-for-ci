@@ -2586,6 +2586,21 @@ spdk_accel_sequence_reverse(struct spdk_accel_sequence *seq)
 	}
 }
 
+bool
+spdk_accel_sequence_has_task(struct spdk_accel_sequence *seq,
+			     enum spdk_accel_opcode opcode)
+{
+	struct spdk_accel_task *task;
+
+	TAILQ_FOREACH(task, &seq->tasks, seq_link) {
+		if (task->op_code == opcode) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
 void
 spdk_accel_sequence_abort(struct spdk_accel_sequence *seq)
 {
