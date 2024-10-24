@@ -5645,8 +5645,8 @@ bdev_readv_blocks_with_md(struct spdk_bdev_desc *desc, struct spdk_io_channel *c
 
 	if (seq != NULL) {
 		bdev_io->internal.f.has_accel_sequence = true;
-		bdev_io->internal.accel_sequence = seq;
 	}
+	bdev_io->internal.accel_sequence = seq;
 
 	if (domain != NULL) {
 		bdev_io->internal.f.has_memory_domain = true;
@@ -5878,8 +5878,8 @@ bdev_writev_blocks_with_md(struct spdk_bdev_desc *desc, struct spdk_io_channel *
 	bdev_io_init(bdev_io, bdev, cb_arg, cb);
 	if (seq != NULL) {
 		bdev_io->internal.f.has_accel_sequence = true;
-		bdev_io->internal.accel_sequence = seq;
 	}
+	bdev_io->internal.accel_sequence = seq;
 
 	if (domain != NULL) {
 		bdev_io->internal.f.has_memory_domain = true;
