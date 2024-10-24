@@ -2826,6 +2826,22 @@ spdk_nvmf_ctrlr_identify_ns(struct spdk_nvmf_ctrlr *ctrlr,
 	return SPDK_NVMF_REQUEST_EXEC_STATUS_COMPLETE;
 }
 
+static uint32_t
+nvmf_ctrlr_nsid_from_bdev_nsid(struct spdk_nvmf_ctrlr *ctrlr, uint32_t bdev_nsid)
+{
+	struct spdk_nvmf_subsystem *subsystem = ctrlr->subsys;
+	struct spdk_nvmf_ns *ns;
+
+	for (ns = spdk_nvmf_subsystem_get_first_ns(subsystem); ns != NULL;
+	     ns = spdk_nvmf_subsystem_get_next_ns(subsystem, ns)) {
+		if (bdev_nsid == spdk_bdev_get_nsid(ns->bdev)) {
+			return ns->nsid;
+		}
+	}
+
+	return 0;
+}
+
 static void
 identify_ns_passthru_cb(struct spdk_nvmf_request *req)
 {
@@ -2839,8 +2855,8 @@ identify_ns_passthru_cb(struct spdk_nvmf_request *req)
 	/* This is the identify data from the NVMe drive */
 	datalen = spdk_nvmf_request_copy_to_buf(req, &nvme_nsdata,
 						sizeof(nvme_nsdata));
-
-	nvmf_ctrlr_identify_ns(ctrlr, cmd, rsp, &nvmf_nsdata, cmd->nsid);
+	nvmf_ctrlr_identify_ns(ctrlr, cmd, rsp, &nvmf_nsdata,
+			       nvmf_ctrlr_nsid_from_bdev_nsid(ctrlr, cmd->nsid));
 
 	/* Update fabric's namespace according to SSD's namespace */
 	if (nvme_nsdata.nsfeat.optperf) {
@@ -2893,6 +2909,7 @@ spdk_nvmf_ctrlr_identify_ns_ext(struct spdk_nvmf_request *req)
 		return SPDK_NVMF_REQUEST_EXEC_STATUS_COMPLETE;
 	}
 
+	cmd->nsid = spdk_bdev_get_nsid(bdev);
 	return spdk_nvmf_bdev_ctrlr_nvme_passthru_admin(bdev, desc, ch, req, identify_ns_passthru_cb);
 }
 
@@ -5009,6 +5026,8 @@ nvmf_passthru_admin_cmd_for_bdev_nsid(struct spdk_nvmf_request *req, uint32_t bd
 
 	if (ns->passthrough_nsid) {
 		req->cmd->nvme_cmd.nsid = ns->passthrough_nsid;
+	} else {
+		req->cmd->nvme_cmd.nsid = spdk_bdev_get_nsid(bdev);
 	}
 
 	return spdk_nvmf_bdev_ctrlr_nvme_passthru_admin(bdev, desc, ch, req, NULL);

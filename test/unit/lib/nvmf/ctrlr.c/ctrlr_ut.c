@@ -227,6 +227,7 @@ DEFINE_STUB(spdk_nvmf_subsystem_get_nqn, const char *,
 
 DEFINE_STUB(spdk_bdev_io_type_supported, bool,
 	    (struct spdk_bdev *bdev, enum spdk_bdev_io_type io_type), false);
+DEFINE_STUB(spdk_bdev_get_nsid, uint32_t, (struct spdk_bdev *b), 0);
 
 void
 nvmf_qpair_set_state(struct spdk_nvmf_qpair *qpair, enum spdk_nvmf_qpair_state state)

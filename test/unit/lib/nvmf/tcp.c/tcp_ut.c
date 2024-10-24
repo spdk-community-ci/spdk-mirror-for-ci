@@ -267,6 +267,8 @@ DEFINE_STUB(nvmf_auth_request_exec, int, (struct spdk_nvmf_request *r),
 DEFINE_STUB(nvmf_request_get_buffers_abort, bool, (struct spdk_nvmf_request *r), false);
 DEFINE_STUB(spdk_bdev_io_type_supported, bool,
 	    (struct spdk_bdev *bdev, enum spdk_bdev_io_type io_type), false);
+DEFINE_STUB(spdk_bdev_get_nsid, uint32_t, (struct spdk_bdev *b), 0);
+
 struct spdk_io_channel *
 spdk_accel_get_io_channel(void)
 {
