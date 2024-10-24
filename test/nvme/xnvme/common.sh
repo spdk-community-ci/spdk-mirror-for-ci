@@ -50,7 +50,7 @@ declare -A xnvme_filename=(
 
 declare -A xnvme_conserve_cpu=(
 	["libaio"]=false
-	["io_uring"]=true
+	["io_uring"]=false
 	["io_uring_cmd"]=true
 )
 
@@ -65,6 +65,16 @@ rpc_xnvme() {
 	rpc_cmd framework_get_config bdev \
 		| jq -r ".[] | select(.method == \"bdev_xnvme_create\").params.${1:-name}"
 }
+
+prep_nvme() {
+	"$rootdir/scripts/setup.sh" reset
+
+	# Make sure io_poll gets enabled
+	modprobe -r nvme
+	modprobe nvme poll_queues=$(nproc)
+}
+
+prep_nvme
 
 for dev in "${xnvme_filename[@]}"; do
 	[[ -e $dev ]]
