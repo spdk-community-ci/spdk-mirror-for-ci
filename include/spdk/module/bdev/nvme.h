@@ -95,6 +95,16 @@ void spdk_bdev_nvme_set_multipath_policy(const char *name,
  */
 void spdk_bdev_nvme_get_default_ctrlr_opts(struct spdk_bdev_nvme_ctrlr_opts *opts);
 
+typedef void (*spdk_bdev_get_ctrlr_for_each_subsystem_fn)(struct spdk_nvme_ctrlr *ctrlr, void *ctx);
+
+/* Iterate over all the subsystems and return all the controllers attached by invoking fn for each of them.
+ *
+ * \param spdk_bdev_get_ctrlr_for_each_subsystem_fn Callback function to be called for each controller.
+ * \param ctx Context to pass to fn.
+ */
+void spdk_bdev_get_ctrlr_for_each_subsystem(spdk_bdev_get_ctrlr_for_each_subsystem_fn fn,
+		void *ctx);
+
 #ifdef __cplusplus
 }
 #endif
