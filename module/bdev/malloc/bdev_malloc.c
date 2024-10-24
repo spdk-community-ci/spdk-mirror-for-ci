@@ -184,7 +184,18 @@ malloc_done(void *ref, int status)
 	    task->status == SPDK_BDEV_IO_STATUS_SUCCESS) {
 		switch (bdev_io->type) {
 		case SPDK_BDEV_IO_TYPE_READ:
-			rc = malloc_verify_pi(bdev_io);
+			if (!spdk_bdev_io_has_no_metadata(bdev_io)) {
+				rc = malloc_verify_pi(bdev_io);
+			} else {
+				rc = 0;
+			}
+			break;
+		case SPDK_BDEV_IO_TYPE_WRITE:
+			if (!spdk_bdev_io_has_no_metadata(bdev_io)) {
+				rc = 0;
+			} else {
+				rc = malloc_verify_pi(bdev_io);
+			}
 			break;
 		case SPDK_BDEV_IO_TYPE_UNMAP:
 		case SPDK_BDEV_IO_TYPE_WRITE_ZEROES:
@@ -484,11 +495,21 @@ _bdev_malloc_submit_request(struct malloc_channel *mch, struct spdk_bdev_io *bde
 			return 0;
 		}
 
+		if (bdev_io->bdev->dif_type != SPDK_DIF_DISABLE &&
+		    spdk_bdev_io_has_no_metadata(bdev_io)) {
+			rc = malloc_verify_pi(bdev_io);
+			if (rc != 0) {
+				malloc_complete_task(task, mch, SPDK_BDEV_IO_STATUS_FAILED);
+				return 0;
+			}
+		}
+
 		bdev_malloc_readv(disk, mch->accel_channel, task, bdev_io);
 		return 0;
 
 	case SPDK_BDEV_IO_TYPE_WRITE:
-		if (bdev_io->bdev->dif_type != SPDK_DIF_DISABLE) {
+		if (bdev_io->bdev->dif_type != SPDK_DIF_DISABLE &&
+		    !spdk_bdev_io_has_no_metadata(bdev_io)) {
 			rc = malloc_verify_pi(bdev_io);
 			if (rc != 0) {
 				malloc_complete_task(task, mch, SPDK_BDEV_IO_STATUS_FAILED);
@@ -636,12 +657,6 @@ bdev_malloc_get_memory_domains(void *ctx, struct spdk_memory_domain **domains, i
 static bool
 bdev_malloc_accel_sequence_supported(void *ctx, enum spdk_bdev_io_type type)
 {
-	struct malloc_disk *malloc_disk = ctx;
-
-	if (malloc_disk->disk.dif_type != SPDK_DIF_DISABLE) {
-		return false;
-	}
-
 	switch (type) {
 	case SPDK_BDEV_IO_TYPE_READ:
 	case SPDK_BDEV_IO_TYPE_WRITE:
