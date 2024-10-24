@@ -1035,6 +1035,17 @@ void spdk_accel_sequence_reverse(struct spdk_accel_sequence *seq);
 void spdk_accel_sequence_abort(struct spdk_accel_sequence *seq);
 
 /**
+ * Return whether the specified sequence has a task whose opcode matches.
+ *
+ * \param seq Sequence to check.
+ * \param opcode Accel Framework Opcode enum value.
+ *
+ * \return true if the sequence has a task whose opcode matches, false otherwise.
+ */
+bool spdk_accel_sequence_has_task(struct spdk_accel_sequence *seq,
+				  enum spdk_accel_opcode opcode);
+
+/**
  * Allocate a buffer from accel domain.  These buffers can be only used with operations appended to
  * a sequence.  The actual data buffer won't be allocated immediately, but only when it's necessary
  * to execute a given operation.  In some cases, this might even mean that a data buffer won't be
