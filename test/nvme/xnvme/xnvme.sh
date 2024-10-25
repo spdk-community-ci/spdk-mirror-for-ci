@@ -75,13 +75,18 @@ trap 'killprocess "$spdk_tgt"' EXIT
 for io in "${xnvme_io[@]}"; do
 	method_bdev_xnvme_create_0["io_mechanism"]=$io
 	method_bdev_xnvme_create_0["filename"]=${xnvme_filename["$io"]}
-	method_bdev_xnvme_create_0["conserve_cpu"]=${xnvme_conserve_cpu["$io"]}
 
 	filename=${method_bdev_xnvme_create_0["filename"]}
-	conserve_cpu=${method_bdev_xnvme_create_0["conserve_cpu"]}
 	name=${method_bdev_xnvme_create_0["name"]}
 
-	run_test "xnvme_rpc" xnvme_rpc
-	run_test "xnvme_bdevperf" xnvme_bdevperf
-	run_test "xnvme_fio_plugin" xnvme_fio_plugin
+	declare -n conserve_cpus=${xnvme_conserve_cpu["$io"]}
+
+	for cc in "${conserve_cpus[@]}"; do
+		method_bdev_xnvme_create_0["conserve_cpu"]=$cc
+		conserve_cpu=${method_bdev_xnvme_create_0["conserve_cpu"]}
+
+		run_test "xnvme_rpc" xnvme_rpc
+		run_test "xnvme_bdevperf" xnvme_bdevperf
+		run_test "xnvme_fio_plugin" xnvme_fio_plugin
+	done
 done
