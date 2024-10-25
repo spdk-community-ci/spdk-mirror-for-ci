@@ -43,6 +43,8 @@ pip3 install grpcio-tools
 pip3 install pyyaml
 pip3 install Jinja2
 pip3 install tabulate
+# pygerrit2 is a lib that helps interact with Gerrit API , used for CI
+pip3 install pygerrit2
 # Additional dependencies for SPDK CLI
 apt-get install -y python3-configshell-fb python3-pexpect
 
