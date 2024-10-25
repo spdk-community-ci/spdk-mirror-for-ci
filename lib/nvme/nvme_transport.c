@@ -483,6 +483,7 @@ nvme_transport_ctrlr_connect_qpair(struct spdk_nvme_ctrlr *ctrlr, struct spdk_nv
 {
 	const struct spdk_nvme_transport *transport = nvme_get_transport(ctrlr->trid.trstring);
 	int rc;
+	uint64_t timeout_tsc;
 
 	assert(transport != NULL);
 	if (!nvme_qpair_is_admin_queue(qpair) && qpair->transport == NULL) {
@@ -506,6 +507,9 @@ nvme_transport_ctrlr_connect_qpair(struct spdk_nvme_ctrlr *ctrlr, struct spdk_nv
 	}
 
 	if (!qpair->async) {
+		timeout_tsc = spdk_get_ticks() + ctrlr->opts.admin_timeout_ms * 1000
+			* spdk_get_ticks_hz() / SPDK_SEC_TO_USEC;
+
 		/* Busy wait until the qpair exits the connecting state */
 		while (nvme_qpair_get_state(qpair) == NVME_QPAIR_CONNECTING) {
 			if (qpair->poll_group && spdk_nvme_ctrlr_is_fabrics(ctrlr)) {
@@ -517,6 +521,11 @@ nvme_transport_ctrlr_connect_qpair(struct spdk_nvme_ctrlr *ctrlr, struct spdk_nv
 			}
 
 			if (rc < 0) {
+				goto err;
+			}
+
+			if (spdk_get_ticks() > timeout_tsc) {
+				SPDK_ERRLOG("Timeout waiting for qpair to connect\n");
 				goto err;
 			}
 		}

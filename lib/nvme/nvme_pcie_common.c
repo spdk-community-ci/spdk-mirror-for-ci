@@ -1078,6 +1078,7 @@ nvme_pcie_ctrlr_delete_io_qpair(struct spdk_nvme_ctrlr *ctrlr, struct spdk_nvme_
 	struct nvme_pcie_qpair *pqpair = nvme_pcie_qpair(qpair);
 	struct nvme_completion_poll_status *status;
 	int rc;
+	uint64_t timeout_tsc;
 
 	assert(ctrlr != NULL);
 
@@ -1095,12 +1096,20 @@ nvme_pcie_ctrlr_delete_io_qpair(struct spdk_nvme_ctrlr *ctrlr, struct spdk_nvme_
 	/* If attempting to delete a qpair that's still being connected, we have to wait until it's
 	 * finished, so that we don't free it while it's waiting for the create cq/sq callbacks.
 	 */
+	timeout_tsc = spdk_get_ticks() + ctrlr->opts.admin_timeout_ms * 1000
+		* spdk_get_ticks_hz() / SPDK_SEC_TO_USEC;
+
 	while (pqpair->pcie_state == NVME_PCIE_QPAIR_WAIT_FOR_CQ ||
 	       pqpair->pcie_state == NVME_PCIE_QPAIR_WAIT_FOR_SQ) {
 		rc = spdk_nvme_qpair_process_completions(ctrlr->adminq, 0);
-		if (rc < 0) {
+		if (rc < 0 || spdk_get_ticks() > timeout_tsc) {
 			break;
 		}
+	}
+
+	if (spdk_get_ticks() > timeout_tsc) {
+		SPDK_ERRLOG("Timeout waiting for qpair to finish connecting\n");
+		goto free;
 	}
 
 	status = calloc(1, sizeof(*status));
