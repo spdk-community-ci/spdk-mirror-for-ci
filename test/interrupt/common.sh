@@ -6,6 +6,45 @@ function cleanup() {
 	rm -f "$SPDK_TEST_STORAGE/aiofile"
 }
 
+function reactor_cpu_rate() {
+	local pid=$1
+	local idx=$2
+	local duration=$3
+	local mode=$4
+	local busy_threshold=${BUSY_THRESHOLD:-50}
+	local cpu_rate
+	local cpu_total
+
+	if [[ $mode != "poll" ]] && [[ $mode != "intr" ]]; then
+		return 1
+	fi
+
+	if ! hash top; then
+		# Fail this test if top is missing from system.
+		return 1
+	fi
+
+	for ((j = $((duration)); j != 0; j--)); do
+		top_reactor=$(top -bHn 1 -p $pid -w 256 | grep reactor_$idx)
+		cpu_rate=$(echo $top_reactor | sed -e 's/^\s*//g' | awk '{print $9}')
+		cpu_rate=${cpu_rate%.*}
+		cpu_total=$((cpu_total + cpu_rate))
+		sleep 1
+	done
+
+	cpu_rate=$((cpu_total / duration))
+
+	if [[ $mode = "poll" ]] && ((cpu_rate < busy_threshold)); then
+		return 1
+	elif [[ $mode = "intr" ]] && ((cpu_rate > busy_threshold)); then
+		return 1
+	fi
+
+	echo $cpu_rate
+
+	return 0
+}
+
 function reactor_is_busy_or_idle() {
 	local pid=$1
 	local idx=$2
