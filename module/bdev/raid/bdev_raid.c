@@ -3217,13 +3217,14 @@ raid_bdev_configure_base_bdev_check_sb_cb(const struct raid_bdev_superblock *sb,
 		void *ctx)
 {
 	struct raid_base_bdev_info *base_info = ctx;
+	struct raid_bdev *raid_bdev = base_info->raid_bdev;
 	raid_base_bdev_cb configure_cb = base_info->configure_cb;
 
 	switch (status) {
 	case 0:
 		/* valid superblock found */
 		base_info->configure_cb = NULL;
-		if (spdk_uuid_compare(&base_info->raid_bdev->bdev.uuid, &sb->uuid) == 0) {
+		if (raid_bdev->sb != NULL && spdk_uuid_compare(&raid_bdev->bdev.uuid, &sb->uuid) == 0) {
 			struct spdk_bdev *bdev = spdk_bdev_desc_get_bdev(base_info->desc);
 
 			raid_bdev_free_base_bdev_resource(base_info);
