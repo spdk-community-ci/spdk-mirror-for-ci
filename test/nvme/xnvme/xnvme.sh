@@ -8,6 +8,27 @@ testdir=$(readlink -f "$(dirname "$0")")
 rootdir=$(readlink -f "$testdir/../../../")
 source "$testdir/common.sh"
 
+: <<- __test_mapper
+	run_test xnvme_bdevperf_io_uring_cmd_false
+	run_test xnvme_bdevperf_io_uring_cmd_true
+	run_test xnvme_bdevperf_io_uring_false
+	run_test xnvme_bdevperf_io_uring_true
+	run_test xnvme_bdevperf_libaio_false
+	run_test xnvme_bdevperf_libaio_true
+	run_test xnvme_fio_plugin_io_uring_cmd_false
+	run_test xnvme_fio_plugin_io_uring_cmd_true
+	run_test xnvme_fio_plugin_io_uring_false
+	run_test xnvme_fio_plugin_io_uring_true
+	run_test xnvme_fio_plugin_libaio_false
+	run_test xnvme_fio_plugin_libaio_true
+	run_test xnvme_rpc_io_uring_cmd_false
+	run_test xnvme_rpc_io_uring_cmd_true
+	run_test xnvme_rpc_io_uring_false
+	run_test xnvme_rpc_io_uring_true
+	run_test xnvme_rpc_libaio_false
+	run_test xnvme_rpc_libaio_true
+__test_mapper
+
 xnvme_bdevperf() {
 	local io_pattern
 	local -n io_pattern_ref=$io
@@ -83,8 +104,8 @@ for io in "${xnvme_io[@]}"; do
 		method_bdev_xnvme_create_0["conserve_cpu"]=$cc
 		conserve_cpu=${method_bdev_xnvme_create_0["conserve_cpu"]}
 
-		run_test "xnvme_rpc" xnvme_rpc
-		run_test "xnvme_bdevperf" xnvme_bdevperf
-		run_test "xnvme_fio_plugin" xnvme_fio_plugin
+		run_test "xnvme_rpc_${io}_${cc}" xnvme_rpc               # __test_mapper
+		run_test "xnvme_bdevperf_${io}_${cc}" xnvme_bdevperf     # __test_mapper
+		run_test "xnvme_fio_plugin_${io}_${cc}" xnvme_fio_plugin # __test_mapper
 	done
 done
