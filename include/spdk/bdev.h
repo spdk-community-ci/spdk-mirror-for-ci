@@ -133,8 +133,11 @@ struct spdk_bdev_enable_histogram_opts {
 	size_t size;
 
 	uint8_t io_type;
+	uint32_t bucket_shift;
+	uint32_t min_range;
+	uint32_t max_range;
 } __attribute__((packed));
-SPDK_STATIC_ASSERT(sizeof(struct spdk_bdev_enable_histogram_opts) == 9, "Incorrect size");
+SPDK_STATIC_ASSERT(sizeof(struct spdk_bdev_enable_histogram_opts) == 21, "Incorrect size");
 
 /** bdev QoS rate limit type */
 enum spdk_bdev_qos_rate_limit_type {
