@@ -1295,7 +1295,8 @@ if __name__ == "__main__":
     p.set_defaults(func=bdev_reset_iostat)
 
     def bdev_enable_histogram(args):
-        rpc.bdev.bdev_enable_histogram(args.client, name=args.name, enable=args.enable, opc=args.opc)
+        rpc.bdev.bdev_enable_histogram(args.client, name=args.name, enable=args.enable, opc=args.opc,
+                                       bucket_shift=args.bucket_shift, min_range=args.min_range, max_range=args.max_range)
 
     p = subparsers.add_parser('bdev_enable_histogram',
                               help='Enable or disable histogram for specified bdev')
@@ -1303,6 +1304,9 @@ if __name__ == "__main__":
     p.add_argument('-d', '--disable', dest='enable', action='store_false', help='Disable histograms on specified device')
     p.add_argument('-o', '--opc', help='Enable histogram for specified io type. Defaults to all io types if not specified.'
                    ' Refer to bdev_get_bdevs RPC for the list of io types.')
+    p.add_argument('--bucket-shift', help='Histogram bucket granularity.', type=int)
+    p.add_argument('--min-range', help='Histogram min range.', type=int)
+    p.add_argument('--max-range', help='Histogram max range.', type=int)
     p.add_argument('name', help='bdev name')
     p.set_defaults(func=bdev_enable_histogram)
 

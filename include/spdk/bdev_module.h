@@ -762,9 +762,12 @@ struct spdk_bdev {
 		bool	qd_poll_in_progress;
 
 		/** histogram enabled on this bdev */
-		bool	histogram_enabled;
-		bool	histogram_in_progress;
-		uint8_t	histogram_io_type;
+		bool	 histogram_enabled;
+		bool	 histogram_in_progress;
+		uint8_t	 histogram_io_type;
+		uint32_t histogram_bucket_shift;
+		uint32_t histogram_min_range;
+		uint32_t histogram_max_range;
 
 		/** Currently locked ranges for this bdev.  Used to populate new channels. */
 		lba_range_tailq_t locked_ranges;
