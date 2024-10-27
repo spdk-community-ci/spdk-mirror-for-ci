@@ -2813,6 +2813,9 @@ Name                    | Optional | Type        | Description
 name                    | Required | string      | Block device name
 enable                  | Required | boolean     | Enable or disable histogram on specified device
 opc                     | Optional | string      | IO type name
+bucket_shift            | Optional | number      | Histogram bucket granularity. Default: SPDK_HISTOGRAM_BUCKET_SHIFT_DEFAULT
+min_range               | Optional | number      | Histogram min range. Default: SPDK_HISTOGRAM_MIN_RANGE_DEFAULT
+max_range               | Optional | number      | Histogram max range. Default: SDPK_HISTOGRAM_MAX_RANGE_DEFAULT
 
 #### Example
 
@@ -2824,9 +2827,12 @@ Example request:
   "id": 1,
   "method": "bdev_enable_histogram",
   "params": {
-    "name": "Nvme0n1"
-    "enable": true
-    "opc": "read"
+    "name": "Nvme0n1",
+    "enable": true,
+    "opc": "read",
+    "bucket_shift": 7,
+    "min_range": 6,
+    "max_range": 30,
   }
 }
 ~~~
