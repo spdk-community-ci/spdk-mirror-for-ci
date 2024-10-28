@@ -588,6 +588,10 @@ nvme_transport_ctrlr_disconnect_qpair_done(struct spdk_nvme_qpair *qpair)
 		nvme_qpair_abort_all_queued_reqs(qpair);
 	}
 	nvme_qpair_set_state(qpair, NVME_QPAIR_DISCONNECTED);
+
+	if (spdk_likely(!nvme_qpair_is_admin_queue(qpair))) {
+		nvme_poll_group_write_disconnect_qpair_fd(qpair);
+	}
 }
 
 int
