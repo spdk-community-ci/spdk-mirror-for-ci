@@ -750,7 +750,7 @@ function timing_finish() {
 
 function create_test_list() {
 	xtrace_disable
-	git grep -Ih "run_test " $(git ls-files '*.sh' ':!:*autotest_common.sh') \
+	git grep -Ih "run_test " $(git ls-files '*.sh' '*.tests' ':!:*autotest_common.sh') \
 		| grep -v "#" \
 		| sed 's/^.*run_test/run_test/' | awk '{print $2}' \
 		| sed 's/\"//g' | sort > $output_dir/all_tests.txt || true
