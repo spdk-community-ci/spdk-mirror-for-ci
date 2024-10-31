@@ -157,7 +157,7 @@ bdev_rbd_put_cluster(rados_t **cluster)
 	}
 
 	pthread_mutex_unlock(&g_map_bdev_rbd_cluster_mutex);
-	SPDK_ERRLOG("Cannot find the entry for cluster=%p\n", cluster);
+	SPDK_ERRLOG("Cannot find the entry for cluster %p\n", cluster);
 }
 
 static void
@@ -345,7 +345,7 @@ bdev_rbd_cluster_handle(void *arg)
 	rc = bdev_rados_cluster_init(rbd->user_id, (const char *const *)rbd->config,
 				     &rbd->cluster);
 	if (rc < 0) {
-		SPDK_ERRLOG("Failed to create rados cluster for user_id=%s and rbd_pool=%s\n",
+		SPDK_ERRLOG("Failed to create rados cluster for user_id %s and rbd_pool %s\n",
 			    rbd->user_id ? rbd->user_id : "admin (the default)", rbd->pool_name);
 		ret = NULL;
 	}
@@ -356,12 +356,13 @@ bdev_rbd_cluster_handle(void *arg)
 static int
 bdev_rbd_get_pool_ctx(rados_t *cluster_p, const char *name,  struct bdev_rbd_pool_ctx **ctx)
 {
-	struct bdev_rbd_pool_ctx *entry;
+	int rc = 0;
+	struct bdev_rbd_pool_ctx *entry = NULL;
 
 	assert(spdk_get_thread() == spdk_thread_get_app_thread());
 
 	if (name == NULL || ctx == NULL) {
-		return -1;
+		return -EINVAL;
 	}
 
 	STAILQ_FOREACH(entry, &g_map_bdev_rbd_pool_ctx, link) {
@@ -374,18 +375,20 @@ bdev_rbd_get_pool_ctx(rados_t *cluster_p, const char *name,  struct bdev_rbd_poo
 
 	entry = calloc(1, sizeof(*entry));
 	if (!entry) {
-		SPDK_ERRLOG("Cannot allocate an entry for name=%s\n", name);
-		return -1;
+		SPDK_ERRLOG("Cannot allocate an entry for name %s\n", name);
+		return -ENOMEM;
 	}
 
 	entry->name = strdup(name);
 	if (entry->name == NULL) {
-		SPDK_ERRLOG("Failed to allocate the name =%s space on entry =%p\n", name, entry);
+		SPDK_ERRLOG("Failed to allocate the name %s space on entry %p\n", name, entry);
+		rc = -ENOMEM;
 		goto err_handle;
 	}
 
-	if (rados_ioctx_create(*cluster_p, name, &entry->io_ctx) < 0) {
-		goto err_handle1;
+	rc = rados_ioctx_create(*cluster_p, name, &entry->io_ctx);
+	if (rc < 0) {
+		goto err_handle;
 	}
 
 	entry->cluster_p = cluster_p;
@@ -395,12 +398,11 @@ bdev_rbd_get_pool_ctx(rados_t *cluster_p, const char *name,  struct bdev_rbd_poo
 
 	return 0;
 
-err_handle1:
-	free(entry->name);
 err_handle:
+	free(entry->name);
 	free(entry);
 
-	return -1;
+	return rc;
 }
 
 static void *
@@ -411,15 +413,17 @@ bdev_rbd_init_context(void *arg)
 	rados_ioctx_t *io_ctx = NULL;
 
 	if (rbd->cluster_name) {
-		if (bdev_rbd_get_pool_ctx(rbd->cluster_p, rbd->pool_name, &rbd->rados_ctx.ctx) < 0) {
-			SPDK_ERRLOG("Failed to create ioctx on rbd=%p with cluster_name=%s\n",
-				    rbd, rbd->cluster_name);
+		rc = bdev_rbd_get_pool_ctx(rbd->cluster_p, rbd->pool_name, &rbd->rados_ctx.ctx);
+		if (rc < 0) {
+			SPDK_ERRLOG("Failed to create ioctx on rbd=%s with cluster_name %s, rc %d\n",
+				    rbd->rbd_name, rbd->cluster_name, rc);
 			return NULL;
 		}
 		io_ctx = &rbd->rados_ctx.ctx->io_ctx;
 	} else {
-		if (rados_ioctx_create(*(rbd->cluster_p), rbd->pool_name, &rbd->rados_ctx.io_ctx) < 0) {
-			SPDK_ERRLOG("Failed to create ioctx on rbd=%p\n", rbd);
+		rc = rados_ioctx_create(*(rbd->cluster_p), rbd->pool_name, &rbd->rados_ctx.io_ctx);
+		if (rc < 0) {
+			SPDK_ERRLOG("Failed to create ioctx on rbd %s, rc %d\n", rbd->rbd_name, rc);
 			return NULL;
 		}
 		io_ctx = &rbd->rados_ctx.io_ctx;
@@ -428,18 +432,18 @@ bdev_rbd_init_context(void *arg)
 	assert(io_ctx != NULL);
 	rc = rbd_open(*io_ctx, rbd->rbd_name, &rbd->image, NULL);
 	if (rc < 0) {
-		SPDK_ERRLOG("Failed to open specified rbd device\n");
+		SPDK_ERRLOG("Failed to open rbd %s, rc %d\n", rbd->rbd_name, rc);
 		return NULL;
 	}
 
 	rc = rbd_update_watch(rbd->image, &rbd->rbd_watch_handle, rbd_update_callback, (void *)rbd);
 	if (rc < 0) {
-		SPDK_ERRLOG("Failed to set up watch %d\n", rc);
+		SPDK_ERRLOG("Failed to set up watch on rbd %s, rc %d\n", rbd->rbd_name, rc);
 	}
 
 	rc = rbd_stat(rbd->image, &rbd->info, sizeof(rbd->info));
 	if (rc < 0) {
-		SPDK_ERRLOG("Failed to stat specified rbd device\n");
+		SPDK_ERRLOG("Failed to stat rbd %s, rc %d\n", rbd->rbd_name, rc);
 		return NULL;
 	}
 
@@ -456,20 +460,20 @@ bdev_rbd_init(struct bdev_rbd *rbd)
 		/* Cluster should be created in non-SPDK thread to avoid conflict between
 		 * Rados and SPDK thread */
 		if (spdk_call_unaffinitized(bdev_rbd_cluster_handle, rbd) == NULL) {
-			SPDK_ERRLOG("Cannot create the rados object on rbd=%p\n", rbd);
+			SPDK_ERRLOG("Cannot create the rados object on rbd %s\n", rbd->rbd_name);
 			return -1;
 		}
 	} else {
 		ret = bdev_rbd_shared_cluster_init(rbd->cluster_name, &rbd->cluster_p);
 		if (ret < 0) {
-			SPDK_ERRLOG("Failed to create rados object for rbd =%p on cluster_name=%s\n",
-				    rbd, rbd->cluster_name);
+			SPDK_ERRLOG("Failed to create rados object for rbd %s on cluster_name %s\n",
+				    rbd->rbd_name, rbd->cluster_name);
 			return -1;
 		}
 	}
 
 	if (spdk_call_unaffinitized(bdev_rbd_init_context, rbd) == NULL) {
-		SPDK_ERRLOG("Cannot init rbd context for rbd=%p\n", rbd);
+		SPDK_ERRLOG("Cannot init rbd context for rbd %s\n", rbd->rbd_name);
 		return -1;
 	}
 
@@ -1080,7 +1084,7 @@ rbd_register_cluster(const char *name, const char *user_id, const char *const *c
 	pthread_mutex_lock(&g_map_bdev_rbd_cluster_mutex);
 	STAILQ_FOREACH(entry, &g_map_bdev_rbd_cluster, link) {
 		if (strcmp(name, entry->name) == 0) {
-			SPDK_ERRLOG("Cluster name=%s already exists\n", name);
+			SPDK_ERRLOG("Cluster name %s already exists\n", name);
 			pthread_mutex_unlock(&g_map_bdev_rbd_cluster_mutex);
 			return -1;
 		}
@@ -1088,21 +1092,21 @@ rbd_register_cluster(const char *name, const char *user_id, const char *const *c
 
 	entry = calloc(1, sizeof(*entry));
 	if (!entry) {
-		SPDK_ERRLOG("Cannot allocate an entry for name=%s\n", name);
+		SPDK_ERRLOG("Cannot allocate an entry for cluster %s\n", name);
 		pthread_mutex_unlock(&g_map_bdev_rbd_cluster_mutex);
 		return -1;
 	}
 
 	entry->name = strdup(name);
 	if (entry->name == NULL) {
-		SPDK_ERRLOG("Failed to save the name =%s on entry =%p\n", name, entry);
+		SPDK_ERRLOG("Failed to save the name %s on cluster %p\n", name, entry);
 		goto err_handle;
 	}
 
 	if (user_id) {
 		entry->user_id = strdup(user_id);
 		if (entry->user_id == NULL) {
-			SPDK_ERRLOG("Failed to save the str =%s on entry =%p\n", user_id, entry);
+			SPDK_ERRLOG("Failed to save the user_id %s on cluster %s\n", user_id, entry->name);
 			goto err_handle;
 		}
 	}
@@ -1111,7 +1115,7 @@ rbd_register_cluster(const char *name, const char *user_id, const char *const *c
 	if (config_param) {
 		entry->config_param = bdev_rbd_dup_config(config_param);
 		if (entry->config_param == NULL) {
-			SPDK_ERRLOG("Failed to save the config_param=%p on entry = %p\n", config_param, entry);
+			SPDK_ERRLOG("Failed to save the config_param on cluster %s\n", entry->name);
 			goto err_handle;
 		}
 	}
@@ -1119,7 +1123,7 @@ rbd_register_cluster(const char *name, const char *user_id, const char *const *c
 	if (config_file) {
 		entry->config_file = strdup(config_file);
 		if (entry->config_file == NULL) {
-			SPDK_ERRLOG("Failed to save the config_file=%s on entry = %p\n", config_file, entry);
+			SPDK_ERRLOG("Failed to save the config_file %s on cluster %s\n", config_file, entry->name);
 			goto err_handle;
 		}
 	}
@@ -1127,7 +1131,7 @@ rbd_register_cluster(const char *name, const char *user_id, const char *const *c
 	if (key_file) {
 		entry->key_file = strdup(key_file);
 		if (entry->key_file == NULL) {
-			SPDK_ERRLOG("Failed to save the key_file=%s on entry = %p\n", key_file, entry);
+			SPDK_ERRLOG("Failed to save the key_file %s on cluster %s\n", key_file, entry->name);
 			goto err_handle;
 		}
 	}
@@ -1135,17 +1139,17 @@ rbd_register_cluster(const char *name, const char *user_id, const char *const *c
 	if (core_mask) {
 		entry->core_mask = strdup(core_mask);
 		if (entry->core_mask == NULL) {
-			SPDK_ERRLOG("Core_mask=%s allocation failed on entry = %p\n", core_mask, entry);
+			SPDK_ERRLOG("Core_mask %s allocation failed on cluster %s\n", core_mask, entry->name);
 			goto err_handle;
 		}
 
 		if (spdk_cpuset_parse(&rbd_core_mask, entry->core_mask) < 0) {
-			SPDK_ERRLOG("Invalid cpumask=%s on entry = %p\n", entry->core_mask, entry);
+			SPDK_ERRLOG("Invalid cpumask %s on cluster %s\n", entry->core_mask, entry->name);
 			goto err_handle;
 		}
 
 		if (rbd_thread_set_cpumask(&rbd_core_mask) < 0) {
-			SPDK_ERRLOG("Failed to change rbd threads to core_mask %s on entry = %p\n", core_mask, entry);
+			SPDK_ERRLOG("Failed to change rbd threads to core_mask %s on cluster %s\n", core_mask, entry->name);
 			goto err_handle;
 		}
 	}
@@ -1157,14 +1161,14 @@ rbd_register_cluster(const char *name, const char *user_id, const char *const *c
 	 * and when we leave the spdk_call_unaffinitized context. */
 	rc = rados_create(&entry->cluster, user_id);
 	if (rc < 0) {
-		SPDK_ERRLOG("Failed to create rados_t struct\n");
+		SPDK_ERRLOG("Failed to create rados_t struct on cluster %s\n", entry->name);
 		goto err_handle;
 	}
 
 	/* Try default location when entry->config_file is NULL, but ignore failure when it is NULL */
 	rc = rados_conf_read_file(entry->cluster, entry->config_file);
 	if (entry->config_file && rc < 0) {
-		SPDK_ERRLOG("Failed to read conf file %s\n", entry->config_file);
+		SPDK_ERRLOG("Failed to read conf file %s on cluster %s\n", entry->config_file, entry->name);
 		rados_shutdown(entry->cluster);
 		goto err_handle;
 	}
@@ -1174,7 +1178,7 @@ rbd_register_cluster(const char *name, const char *user_id, const char *const *c
 		while (*config_entry) {
 			rc = rados_conf_set(entry->cluster, config_entry[0], config_entry[1]);
 			if (rc < 0) {
-				SPDK_ERRLOG("Failed to set %s = %s\n", config_entry[0], config_entry[1]);
+				SPDK_ERRLOG("Failed to set %s = %s on cluster %s\n", config_entry[0], config_entry[1], entry->name);
 				rados_shutdown(entry->cluster);
 				goto err_handle;
 			}
@@ -1185,7 +1189,7 @@ rbd_register_cluster(const char *name, const char *user_id, const char *const *c
 	if (key_file) {
 		rc = rados_conf_set(entry->cluster, "keyring", key_file);
 		if (rc < 0) {
-			SPDK_ERRLOG("Failed to set keyring = %s\n", key_file);
+			SPDK_ERRLOG("Failed to set keyring %s on cluster %s\n", key_file, entry->name);
 			rados_shutdown(entry->cluster);
 			goto err_handle;
 		}
@@ -1193,7 +1197,7 @@ rbd_register_cluster(const char *name, const char *user_id, const char *const *c
 
 	rc = rados_connect(entry->cluster);
 	if (rc < 0) {
-		SPDK_ERRLOG("Failed to connect to rbd_pool on cluster=%p\n", entry->cluster);
+		SPDK_ERRLOG("Failed to connect to rbd_pool on cluster %s\n", entry->name);
 		rados_shutdown(entry->cluster);
 		goto err_handle;
 	}
@@ -1227,7 +1231,7 @@ bdev_rbd_unregister_cluster(const char *name)
 				rados_shutdown(entry->cluster);
 				bdev_rbd_cluster_free(entry);
 			} else {
-				SPDK_ERRLOG("Cluster with name=%p is still used and we cannot delete it\n",
+				SPDK_ERRLOG("Cluster with name %s is still used and we cannot delete it\n",
 					    entry->name);
 				rc = -1;
 			}
@@ -1239,7 +1243,7 @@ bdev_rbd_unregister_cluster(const char *name)
 
 	pthread_mutex_unlock(&g_map_bdev_rbd_cluster_mutex);
 
-	SPDK_ERRLOG("Could not find the cluster name =%p\n", name);
+	SPDK_ERRLOG("Could not find the cluster name %s\n", name);
 
 	return -1;
 }
@@ -1332,7 +1336,7 @@ bdev_rbd_create(struct spdk_bdev **bdev, const char *name, const char *user_id,
 	ret = bdev_rbd_init(rbd);
 	if (ret < 0) {
 		bdev_rbd_free(rbd);
-		SPDK_ERRLOG("Failed to init rbd device\n");
+		SPDK_ERRLOG("Failed to init rbd device %s\n", rbd_name);
 		return ret;
 	}
 
@@ -1414,7 +1418,7 @@ bdev_rbd_resize(const char *name, const uint64_t new_size_in_mb)
 
 	current_size_in_mb = bdev->blocklen * bdev->blockcnt / (1024 * 1024);
 	if (current_size_in_mb > new_size_in_mb) {
-		SPDK_ERRLOG("The new bdev size must be larger than current bdev size.\n");
+		SPDK_ERRLOG("The new bdev %s size must be larger than current size.\n", name);
 		rc = -EINVAL;
 		goto exit;
 	}
@@ -1423,13 +1427,13 @@ bdev_rbd_resize(const char *name, const uint64_t new_size_in_mb)
 	new_size_in_byte = new_size_in_mb * 1024 * 1024;
 	rc = rbd_resize(rbd->image, new_size_in_byte);
 	if (rc != 0) {
-		SPDK_ERRLOG("failed to resize the ceph bdev.\n");
+		SPDK_ERRLOG("failed to resize the ceph bdev %s.\n", name);
 		goto exit;
 	}
 
 	rc = spdk_bdev_notify_blockcnt_change(bdev, new_size_in_byte / bdev->blocklen);
 	if (rc != 0) {
-		SPDK_ERRLOG("failed to notify block cnt change.\n");
+		SPDK_ERRLOG("failed to notify block cnt change on bdev %s.\n", name);
 	}
 
 exit:
