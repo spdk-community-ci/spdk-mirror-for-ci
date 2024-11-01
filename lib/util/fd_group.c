@@ -179,9 +179,75 @@ recover:
 	return ret;
 }
 
+static struct spdk_fd_group *
+fd_group_get_root(struct spdk_fd_group *fgrp)
+{
+	while (fgrp->parent != NULL) {
+		fgrp = fgrp->parent;
+	}
+
+	return fgrp;
+}
+
+static int
+fd_group_change_parent(struct spdk_fd_group *fgrp, struct spdk_fd_group *old,
+		       struct spdk_fd_group *new)
+{
+	struct spdk_fd_group *child, *tmp;
+	int rc, ret;
+
+	TAILQ_FOREACH(child, &fgrp->children, link) {
+		ret = fd_group_change_parent(child, old, new);
+		if (ret != 0) {
+			goto recover_children;
+		}
+	}
+
+	ret = _fd_group_del_all(old->epfd, fgrp);
+	if (ret < 0) {
+		goto recover_children;
+	}
+
+	assert(old->num_fds >= (uint32_t)ret);
+	old->num_fds -= ret;
+
+	ret = _fd_group_add_all(new->epfd, fgrp);
+	if (ret < 0) {
+		goto recover_epfd;
+	}
+
+	new->num_fds += ret;
+	return 0;
+
+recover_epfd:
+	if (ret == -ENOTRECOVERABLE) {
+		goto recover_children;
+	}
+	rc = _fd_group_add_all(old->epfd, fgrp);
+	if (rc >= 0) {
+		old->num_fds += rc;
+	} else {
+		SPDK_ERRLOG("Failed to recover epfd\n");
+		ret = -ENOTRECOVERABLE;
+	}
+recover_children:
+	TAILQ_FOREACH(tmp, &fgrp->children, link) {
+		if (tmp == child) {
+			break;
+		}
+		rc = fd_group_change_parent(tmp, new, old);
+		if (rc != 0) {
+			SPDK_ERRLOG("Failed to recover fd_group_change_parent\n");
+			ret = -ENOTRECOVERABLE;
+		}
+	}
+	return ret;
+}
+
 int
 spdk_fd_group_unnest(struct spdk_fd_group *parent, struct spdk_fd_group *child)
 {
+	struct spdk_fd_group *root;
 	int rc;
 
 	if (parent == NULL || child == NULL) {
@@ -192,23 +258,16 @@ spdk_fd_group_unnest(struct spdk_fd_group *parent, struct spdk_fd_group *child)
 		return -EINVAL;
 	}
 
-	rc = _fd_group_del_all(parent->epfd, child);
-	if (rc < 0) {
+	root = fd_group_get_root(parent);
+	assert(root == parent || parent->num_fds == 0);
+
+	rc = fd_group_change_parent(child, root, child);
+	if (rc != 0) {
 		return rc;
-	} else {
-		assert(parent->num_fds >= (uint32_t)rc);
-		parent->num_fds -= rc;
 	}
 
 	child->parent = NULL;
 	TAILQ_REMOVE(&parent->children, child, link);
-
-	rc = _fd_group_add_all(child->epfd, child);
-	if (rc < 0) {
-		return rc;
-	} else {
-		child->num_fds += rc;
-	}
 
 	return 0;
 }
@@ -216,6 +275,7 @@ spdk_fd_group_unnest(struct spdk_fd_group *parent, struct spdk_fd_group *child)
 int
 spdk_fd_group_nest(struct spdk_fd_group *parent, struct spdk_fd_group *child)
 {
+	struct spdk_fd_group *root;
 	int rc;
 
 	if (parent == NULL || child == NULL) {
@@ -226,25 +286,12 @@ spdk_fd_group_nest(struct spdk_fd_group *parent, struct spdk_fd_group *child)
 		return -EINVAL;
 	}
 
-	if (parent->parent) {
-		/* More than one layer of nesting is currently not supported */
-		assert(false);
-		return -ENOTSUP;
-	}
+	root = fd_group_get_root(parent);
+	assert(root == parent || parent->num_fds == 0);
 
-	rc = _fd_group_del_all(child->epfd, child);
-	if (rc < 0) {
+	rc = fd_group_change_parent(child, child, root);
+	if (rc != 0) {
 		return rc;
-	} else {
-		assert(child->num_fds >= (uint32_t)rc);
-		child->num_fds -= rc;
-	}
-
-	rc =  _fd_group_add_all(parent->epfd, child);
-	if (rc < 0) {
-		return rc;
-	} else {
-		parent->num_fds += rc;
 	}
 
 	child->parent = parent;
@@ -342,6 +389,7 @@ spdk_fd_group_add_ext(struct spdk_fd_group *fgrp, int efd, spdk_fd_fn fn, void *
 	struct event_handler *ehdlr = NULL;
 	struct epoll_event epevent = {0};
 	struct spdk_event_handler_opts eh_opts = {};
+	struct spdk_fd_group *root = NULL;
 	int rc;
 	int epfd;
 
@@ -377,7 +425,8 @@ spdk_fd_group_add_ext(struct spdk_fd_group *fgrp, int efd, spdk_fd_fn fn, void *
 	snprintf(ehdlr->name, sizeof(ehdlr->name), "%s", name);
 
 	if (fgrp->parent) {
-		epfd = fgrp->parent->epfd;
+		root = fd_group_get_root(fgrp->parent);
+		epfd = root->epfd;
 	} else {
 		epfd = fgrp->epfd;
 	}
@@ -393,8 +442,8 @@ spdk_fd_group_add_ext(struct spdk_fd_group *fgrp, int efd, spdk_fd_fn fn, void *
 	}
 
 	TAILQ_INSERT_TAIL(&fgrp->event_handlers, ehdlr, next);
-	if (fgrp->parent) {
-		fgrp->parent->num_fds++;
+	if (root != NULL) {
+		root->num_fds++;
 	} else {
 		fgrp->num_fds++;
 	}
@@ -406,6 +455,7 @@ void
 spdk_fd_group_remove(struct spdk_fd_group *fgrp, int efd)
 {
 	struct event_handler *ehdlr;
+	struct spdk_fd_group *root = NULL;
 	int rc;
 	int epfd;
 
@@ -430,7 +480,8 @@ spdk_fd_group_remove(struct spdk_fd_group *fgrp, int efd)
 	assert(ehdlr->state != EVENT_HANDLER_STATE_REMOVED);
 
 	if (fgrp->parent) {
-		epfd = fgrp->parent->epfd;
+		root = fd_group_get_root(fgrp->parent);
+		epfd = root->epfd;
 	} else {
 		epfd = fgrp->epfd;
 	}
@@ -442,9 +493,9 @@ spdk_fd_group_remove(struct spdk_fd_group *fgrp, int efd)
 		return;
 	}
 
-	if (fgrp->parent) {
-		assert(fgrp->parent->num_fds > 0);
-		fgrp->parent->num_fds--;
+	if (root) {
+		assert(root->num_fds > 0);
+		root->num_fds--;
 	} else {
 		assert(fgrp->num_fds > 0);
 		fgrp->num_fds--;
@@ -465,6 +516,7 @@ spdk_fd_group_event_modify(struct spdk_fd_group *fgrp,
 {
 	struct epoll_event epevent;
 	struct event_handler *ehdlr;
+	struct spdk_fd_group *root = NULL;
 	int epfd;
 
 	if (fgrp == NULL || efd < 0) {
@@ -486,7 +538,8 @@ spdk_fd_group_event_modify(struct spdk_fd_group *fgrp,
 	ehdlr->events = event_types;
 
 	if (fgrp->parent) {
-		epfd = fgrp->parent->epfd;
+		root = fd_group_get_root(fgrp->parent);
+		epfd = root->epfd;
 	} else {
 		epfd = fgrp->epfd;
 	}
