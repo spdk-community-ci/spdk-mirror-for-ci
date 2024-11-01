@@ -2587,7 +2587,8 @@ handle_sq_tdbl_write(struct nvmf_vfio_user_ctrlr *ctrlr, const uint32_t new_tail
 			 * sq head is advanced only for consumed commands.
 			 */
 			if (in_interrupt_mode(ctrlr->transport)) {
-				eventfd_write(ctrlr->intr_fd, 1);
+				struct nvmf_vfio_user_poll_group *vu_group = sq_to_poll_group(sq);
+				eventfd_write(vu_group->intr_fd, 1);
 			}
 			break;
 		}
