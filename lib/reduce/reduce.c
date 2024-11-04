@@ -77,6 +77,7 @@ struct spdk_reduce_vol_request {
 	 */
 	uint8_t					*decomp_buf;
 	struct iovec				*decomp_buf_iov;
+	struct reduce_vol_chunk_data		*chunk_data;
 
 	/**
 	 * These are used to construct the iovecs that are sent to
@@ -152,6 +153,8 @@ struct spdk_reduce_vol {
 	struct iovec				*buf_iov_mem;
 	/* Single contiguous buffer used for backing io buffers for this volume. */
 	uint8_t					*buf_backing_io_mem;
+	/* Cache for recently used chunk data blocks. */
+	struct reduce_vol_chunk_data_cache	*chunk_data_cache;
 };
 
 static void _start_readv_request(struct spdk_reduce_vol_request *req);
@@ -166,6 +169,86 @@ static int g_vol_count = 0;
  *  in-flight writes since reduce never writes data in place.
  */
 #define REDUCE_NUM_EXTRA_CHUNKS 128
+
+struct reduce_vol_chunk_data {
+	/* Index of chunk data blocks on a logical block device. */
+	uint64_t				idx;
+	/* A reference pointing to uncompressed chunk data in memory. */
+	uint8_t					*buf;
+	RB_ENTRY(reduce_vol_chunk_data)		node;
+	TAILQ_ENTRY(reduce_vol_chunk_data)	tailq;
+};
+
+RB_HEAD(chunk_data_tree, reduce_vol_chunk_data);
+
+TAILQ_HEAD(chunk_data_list, reduce_vol_chunk_data);
+
+/* Cache recently used chunk data that has not been compressed */
+struct reduce_vol_chunk_data_cache {
+	uint8_t				*buf_mem;
+	struct reduce_vol_chunk_data	*chunk_data_mem;
+	struct chunk_data_tree		tree_chunks;
+	struct chunk_data_list		lru_chunks;
+};
+
+static int
+chunk_data_cmp(struct reduce_vol_chunk_data *chk1, struct reduce_vol_chunk_data *chk2)
+{
+	return (chk1->idx < chk2->idx ? -1 : chk1->idx > chk2->idx);
+}
+
+RB_GENERATE_STATIC(chunk_data_tree, reduce_vol_chunk_data, node, chunk_data_cmp);
+
+static struct reduce_vol_chunk_data *
+chunk_cache_find_chunk(struct reduce_vol_chunk_data_cache *chunk_cache, uint64_t index)
+{
+	struct reduce_vol_chunk_data *chunk_data;
+	struct reduce_vol_chunk_data tmp;
+
+	tmp.idx = index;
+	chunk_data = RB_FIND(chunk_data_tree, &chunk_cache->tree_chunks, &tmp);
+	if (chunk_data == NULL) {
+		return NULL;
+	}
+	RB_REMOVE(chunk_data_tree, &chunk_cache->tree_chunks, chunk_data);
+
+	TAILQ_REMOVE(&chunk_cache->lru_chunks, chunk_data, tailq);
+
+	return chunk_data;
+}
+
+static struct reduce_vol_chunk_data *
+chunk_cache_get_free(struct reduce_vol_chunk_data_cache *chunk_cache)
+{
+	struct reduce_vol_chunk_data *chunk_data;
+
+	if (TAILQ_EMPTY(&chunk_cache->lru_chunks)) {
+		return NULL;
+	}
+
+	chunk_data = TAILQ_LAST(&chunk_cache->lru_chunks, chunk_data_list);
+	assert(chunk_data != NULL);
+
+	TAILQ_REMOVE(&chunk_cache->lru_chunks, chunk_data, tailq);
+	RB_REMOVE(chunk_data_tree, &chunk_cache->tree_chunks, chunk_data);
+
+	return chunk_data;
+}
+
+static void
+chunk_cache_put_free(struct reduce_vol_chunk_data_cache *chunk_cache,
+		     struct reduce_vol_chunk_data *chunk_data)
+{
+	TAILQ_INSERT_TAIL(&chunk_cache->lru_chunks, chunk_data, tailq);
+}
+
+static void
+chunk_cache_put(struct reduce_vol_chunk_data_cache *chunk_cache,
+		struct reduce_vol_chunk_data *chunk_data)
+{
+	TAILQ_INSERT_HEAD(&chunk_cache->lru_chunks, chunk_data, tailq);
+	RB_INSERT(chunk_data_tree, &chunk_cache->tree_chunks, chunk_data);
+}
 
 static void
 _reduce_persist(struct spdk_reduce_vol *vol, const void *addr, size_t len)
@@ -365,6 +448,83 @@ _set_buffer(uint8_t **vol_buffer, uint8_t **_addr, uint8_t *addr_range, size_t b
 	return 0;
 }
 
+static void
+chunk_data_cache_free(struct reduce_vol_chunk_data_cache *chunk_cache)
+{
+	if (chunk_cache != NULL) {
+		spdk_free(chunk_cache->buf_mem);
+		free(chunk_cache->chunk_data_mem);
+		free(chunk_cache);
+	}
+}
+
+static int
+_init_vol_chunk_data_cache(struct spdk_reduce_vol *vol)
+{
+	struct reduce_vol_chunk_data *chunk_data;
+	struct reduce_vol_chunk_data_cache *chunk_cache;
+	uint32_t reqs_in_2mb_page, huge_pages_needed;
+	uint8_t *buffer, *buffer_end;
+	int i = 0;
+	int rc = 0;
+
+	chunk_cache = calloc(1, sizeof(struct reduce_vol_chunk_data_cache));
+	if (chunk_cache == NULL) {
+		return -ENOMEM;
+	}
+
+	RB_INIT(&chunk_cache->tree_chunks);
+	TAILQ_INIT(&chunk_cache->lru_chunks);
+
+	/* It is needed to allocate comp and decomp buffers so that they do not cross physical
+	* page boundaries. Assume that the system uses default 2MiB pages and chunk_size is not
+	* necessarily power of 2
+	* Allocate 1x request decomp_buf since we need buffers for both read/write and compress/decompress
+	* intermediate buffers. */
+	reqs_in_2mb_page = VALUE_2MB / vol->params.chunk_size;
+	if (!reqs_in_2mb_page) {
+		free(chunk_cache);
+		return -EINVAL;
+	}
+	huge_pages_needed = SPDK_CEIL_DIV(REDUCE_NUM_VOL_REQUESTS, reqs_in_2mb_page);
+
+	chunk_cache->buf_mem = spdk_dma_malloc(VALUE_2MB * huge_pages_needed, VALUE_2MB, NULL);
+	if (chunk_cache->buf_mem == NULL) {
+		free(chunk_cache);
+		return -ENOMEM;
+	}
+
+	chunk_cache->chunk_data_mem = calloc(REDUCE_NUM_VOL_REQUESTS, sizeof(*chunk_data));
+	if (chunk_cache->chunk_data_mem == NULL) {
+		spdk_free(chunk_cache->buf_mem);
+		chunk_cache->buf_mem = NULL;
+		free(chunk_cache);
+		return -ENOMEM;
+	}
+
+	buffer = chunk_cache->buf_mem;
+	buffer_end = buffer + VALUE_2MB * huge_pages_needed;
+
+	for (i = 0; i < REDUCE_NUM_VOL_REQUESTS; i++) {
+		chunk_data = &chunk_cache->chunk_data_mem[i];
+		TAILQ_INSERT_TAIL(&chunk_cache->lru_chunks, chunk_data, tailq);
+		rc = _set_buffer(&chunk_data->buf, &buffer, buffer_end, vol->params.chunk_size);
+		if (rc) {
+			SPDK_ERRLOG("Failed to set buffer for chunk_data idx %u, addr %p, start %p, end %p\n", i, buffer,
+				    chunk_cache->buf_mem, buffer_end);
+			break;
+		}
+	}
+
+	if (rc) {
+		chunk_data_cache_free(vol->chunk_data_cache);
+	} else {
+		vol->chunk_data_cache = chunk_cache;
+	}
+
+	return rc;
+}
+
 static int
 _allocate_vol_requests(struct spdk_reduce_vol *vol)
 {
@@ -378,9 +538,9 @@ _allocate_vol_requests(struct spdk_reduce_vol *vol)
 	/* It is needed to allocate comp and decomp buffers so that they do not cross physical
 	* page boundaries. Assume that the system uses default 2MiB pages and chunk_size is not
 	* necessarily power of 2
-	* Allocate 2x since we need buffers for both read/write and compress/decompress
+	* Allocate 1x request comp_buf since we need buffers for both read/write and compress/decompress
 	* intermediate buffers. */
-	reqs_in_2mb_page = VALUE_2MB / (vol->params.chunk_size * 2);
+	reqs_in_2mb_page = VALUE_2MB / vol->params.chunk_size;
 	if (!reqs_in_2mb_page) {
 		return -EINVAL;
 	}
@@ -442,12 +602,6 @@ _allocate_vol_requests(struct spdk_reduce_vol *vol)
 				    vol->buf_mem, buffer_end);
 			break;
 		}
-		rc = _set_buffer(&req->decomp_buf, &buffer, buffer_end, vol->params.chunk_size);
-		if (rc) {
-			SPDK_ERRLOG("Failed to set decomp buffer for req idx %u, addr %p, start %p, end %p\n", i, buffer,
-				    vol->buf_mem, buffer_end);
-			break;
-		}
 	}
 
 	if (rc) {
@@ -482,6 +636,11 @@ _init_load_cleanup(struct spdk_reduce_vol *vol, struct reduce_init_load_ctx *ctx
 	if (vol != NULL) {
 		if (vol->pm_file.pm_buf != NULL) {
 			pmem_unmap(vol->pm_file.pm_buf, vol->pm_file.size);
+		}
+
+		if (vol->chunk_data_cache != NULL) {
+			chunk_data_cache_free(vol->chunk_data_cache);
+			vol->chunk_data_cache = NULL;
 		}
 
 		spdk_free(vol->backing_super);
@@ -528,6 +687,11 @@ _init_write_super_cpl(void *cb_arg, int reduce_errno)
 	}
 
 	rc = _allocate_vol_requests(init_ctx->vol);
+	if (rc != 0) {
+		goto err;
+	}
+
+	rc = _init_vol_chunk_data_cache(init_ctx->vol);
 	if (rc != 0) {
 		goto err;
 	}
@@ -876,6 +1040,11 @@ _load_read_super_and_path_cpl(void *cb_arg, int reduce_errno)
 		goto error;
 	}
 
+	rc = _init_vol_chunk_data_cache(vol);
+	if (rc != 0) {
+		goto error;
+	}
+
 	_initialize_vol_pm_pointers(vol);
 
 	num_chunks = vol->params.vol_size / vol->params.chunk_size;
@@ -1140,6 +1309,24 @@ _reduce_vol_complete_req(struct spdk_reduce_vol_request *req, int reduce_errno)
 	req->cb_fn(req->cb_arg, reduce_errno);
 	RB_REMOVE(executing_req_tree, &vol->executing_requests, req);
 
+	switch (req->type) {
+	case REDUCE_IO_READV:
+	case REDUCE_IO_WRITEV:
+		if (reduce_errno != 0) {
+			chunk_cache_put_free(vol->chunk_data_cache, req->chunk_data);
+		} else {
+			chunk_cache_put(vol->chunk_data_cache, req->chunk_data);
+		}
+		break;
+	case REDUCE_IO_UNMAP:
+		if (req->chunk_data != NULL) {
+			chunk_cache_put_free(vol->chunk_data_cache, req->chunk_data);
+		}
+		break;
+	default:
+		assert(false);
+	}
+
 	TAILQ_FOREACH(next_req, &vol->queued_requests, tailq) {
 		if (next_req->logical_map_index == req->logical_map_index) {
 			TAILQ_REMOVE(&vol->queued_requests, next_req, tailq);
@@ -1372,10 +1559,8 @@ _reduce_vol_write_chunk(struct spdk_reduce_vol_request *req, reduce_request_fn n
 {
 	struct spdk_reduce_vol *vol = req->vol;
 	uint32_t i;
-	uint64_t chunk_offset, remainder, free_index, total_len = 0;
-	uint8_t *buf;
+	uint64_t free_index;
 	bool success;
-	int j;
 
 	success = queue_dequeue(&vol->free_chunks_queue, &free_index);
 	if (success) {
@@ -1398,34 +1583,6 @@ _reduce_vol_write_chunk(struct spdk_reduce_vol_request *req, reduce_request_fn n
 	req->chunk_is_compressed = (req->num_io_units != vol->backing_io_units_per_chunk);
 	req->chunk->compressed_size =
 		req->chunk_is_compressed ? compressed_size : vol->params.chunk_size;
-
-	/* if the chunk is uncompressed we need to copy the data from the host buffers. */
-	if (req->chunk_is_compressed == false) {
-		chunk_offset = req->offset % vol->logical_blocks_per_chunk;
-		buf = req->decomp_buf;
-		total_len = chunk_offset * vol->params.logical_block_size;
-
-		/* zero any offset into chunk */
-		if (req->rmw == false && chunk_offset) {
-			memset(buf, 0, total_len);
-		}
-		buf += total_len;
-
-		/* copy the data */
-		for (j = 0; j < req->iovcnt; j++) {
-			memcpy(buf, req->iov[j].iov_base, req->iov[j].iov_len);
-			buf += req->iov[j].iov_len;
-			total_len += req->iov[j].iov_len;
-		}
-
-		/* zero any remainder */
-		remainder = vol->params.chunk_size - total_len;
-		total_len += remainder;
-		if (req->rmw == false && remainder) {
-			memset(buf, 0, remainder);
-		}
-		assert(total_len == vol->params.chunk_size);
-	}
 
 	for (i = 0; i < req->num_io_units; i++) {
 		success = queue_dequeue(&vol->free_backing_blocks_queue, &free_index);
@@ -1615,6 +1772,7 @@ _prepare_compress_chunk(struct spdk_reduce_vol_request *req, bool zero_paddings)
 	uint64_t chunk_offset, ttl_len = 0;
 	uint64_t remainder = 0;
 	uint32_t lbsize = vol->params.logical_block_size;
+	uint8_t *copy_offset = req->decomp_buf;
 	size_t iov_len;
 	int i;
 
@@ -1639,6 +1797,10 @@ _prepare_compress_chunk(struct spdk_reduce_vol_request *req, bool zero_paddings)
 		req->decomp_iov[0].iov_base = padding_buffer;
 		req->decomp_iov[0].iov_len = ttl_len;
 		req->decomp_iovcnt = 1;
+		if (zero_paddings) {
+			memset(copy_offset, 0, ttl_len);
+		}
+		copy_offset += ttl_len;
 	}
 
 	/* now the user data iov, direct from the user buffer */
@@ -1646,6 +1808,8 @@ _prepare_compress_chunk(struct spdk_reduce_vol_request *req, bool zero_paddings)
 		req->decomp_iov[i + req->decomp_iovcnt].iov_base = req->iov[i].iov_base;
 		req->decomp_iov[i + req->decomp_iovcnt].iov_len = req->iov[i].iov_len;
 		ttl_len += req->iov[i].iov_len;
+		memcpy(copy_offset, req->iov[i].iov_base, req->iov[i].iov_len);
+		copy_offset += req->iov[i].iov_len;
 	}
 	req->decomp_iovcnt += req->iovcnt;
 
@@ -1654,8 +1818,13 @@ _prepare_compress_chunk(struct spdk_reduce_vol_request *req, bool zero_paddings)
 		req->decomp_iov[req->decomp_iovcnt].iov_base = padding_buffer + ttl_len;
 		req->decomp_iov[req->decomp_iovcnt].iov_len = remainder;
 		req->decomp_iovcnt++;
+		if (zero_paddings) {
+			memset(copy_offset, 0, remainder);
+		}
 		ttl_len += remainder;
+		copy_offset += remainder;
 	}
+	assert(copy_offset == req->decomp_buf + ttl_len);
 	assert(ttl_len == req->vol->params.chunk_size);
 }
 
@@ -1686,6 +1855,7 @@ static void
 _write_read_done(void *_req, int reduce_errno)
 {
 	struct spdk_reduce_vol_request *req = _req;
+	struct spdk_reduce_vol *vol = req->vol;
 
 	if (reduce_errno != 0) {
 		req->reduce_errno = reduce_errno;
@@ -1704,8 +1874,7 @@ _write_read_done(void *_req, int reduce_errno)
 	if (req->chunk_is_compressed) {
 		_reduce_vol_decompress_chunk_scratch(req, _write_decompress_done);
 	} else {
-		req->backing_cb_args.output_size = req->chunk->compressed_size;
-
+		req->backing_cb_args.output_size = vol->params.chunk_size;
 		_write_decompress_done(req, 0);
 	}
 }
@@ -1715,6 +1884,9 @@ _read_decompress_done(void *_req, int reduce_errno)
 {
 	struct spdk_reduce_vol_request *req = _req;
 	struct spdk_reduce_vol *vol = req->vol;
+	uint64_t chunk_offset;
+	uint8_t *decomp_buffer;
+	int i;
 
 	/* Negative reduce_errno indicates failure for compression operations. */
 	if (reduce_errno < 0) {
@@ -1730,15 +1902,20 @@ _read_decompress_done(void *_req, int reduce_errno)
 		return;
 	}
 
+	chunk_offset = req->offset % vol->logical_blocks_per_chunk;
+	decomp_buffer = req->decomp_buf + chunk_offset * vol->params.logical_block_size;
 	if (req->copy_after_decompress) {
-		uint64_t chunk_offset = req->offset % vol->logical_blocks_per_chunk;
-		char *decomp_buffer = (char *)req->decomp_buf + chunk_offset * vol->params.logical_block_size;
-		int i;
-
 		for (i = 0; i < req->iovcnt; i++) {
 			memcpy(req->iov[i].iov_base, decomp_buffer, req->iov[i].iov_len);
 			decomp_buffer += req->iov[i].iov_len;
-			assert(decomp_buffer <= (char *)req->decomp_buf + vol->params.chunk_size);
+			assert(decomp_buffer <= req->decomp_buf + vol->params.chunk_size);
+		}
+	} else {
+		/* Copy data to decomp_buf from host buffer, cache it in chunk data buffer. */
+		for (i = 0; i < req->iovcnt; i++) {
+			memcpy(decomp_buffer, req->iov[i].iov_base, req->iov[i].iov_len);
+			decomp_buffer += req->iov[i].iov_len;
+			assert(decomp_buffer <= req->decomp_buf + vol->params.chunk_size);
 		}
 	}
 
@@ -1749,6 +1926,7 @@ static void
 _read_read_done(void *_req, int reduce_errno)
 {
 	struct spdk_reduce_vol_request *req = _req;
+	struct spdk_reduce_vol *vol = req->vol;
 
 	if (reduce_errno != 0) {
 		req->reduce_errno = reduce_errno;
@@ -1767,13 +1945,12 @@ _read_read_done(void *_req, int reduce_errno)
 	if (req->chunk_is_compressed) {
 		_reduce_vol_decompress_chunk(req, _read_decompress_done);
 	} else {
-
 		/* If the chunk was compressed, the data would have been sent to the
 		 *  host buffers by the decompression operation, if not we need to memcpy
 		 *  from req->decomp_buf.
 		 */
 		req->copy_after_decompress = true;
-		req->backing_cb_args.output_size = req->chunk->compressed_size;
+		req->backing_cb_args.output_size = vol->params.chunk_size;
 
 		_read_decompress_done(req, 0);
 	}
@@ -1783,6 +1960,24 @@ static void
 _reduce_vol_read_chunk(struct spdk_reduce_vol_request *req, reduce_request_fn next_fn)
 {
 	struct spdk_reduce_vol *vol = req->vol;
+	struct reduce_vol_chunk_data *chunk_data;
+
+	chunk_data = chunk_cache_find_chunk(vol->chunk_data_cache, req->logical_map_index);
+	if (chunk_data != NULL) {
+		req->num_backing_ops = 1;
+		req->chunk_data = chunk_data;
+		req->decomp_buf = chunk_data->buf;
+		req->chunk_is_compressed = false;
+		req->copy_after_decompress = true;
+		next_fn(req, 0);
+		return;
+	}
+
+	chunk_data = chunk_cache_get_free(vol->chunk_data_cache);
+	assert(chunk_data != NULL);
+	chunk_data->idx = req->logical_map_index;
+	req->chunk_data = chunk_data;
+	req->decomp_buf = chunk_data->buf;
 
 	req->chunk_map_index = vol->pm_logical_map[req->logical_map_index];
 	assert(req->chunk_map_index != UINT32_MAX);
@@ -1901,6 +2096,7 @@ static void
 _start_writev_request(struct spdk_reduce_vol_request *req)
 {
 	struct spdk_reduce_vol *vol = req->vol;
+	struct reduce_vol_chunk_data *chunk_data;
 
 	RB_INSERT(executing_req_tree, &req->vol->executing_requests, req);
 	if (vol->pm_logical_map[req->logical_map_index] != REDUCE_EMPTY_MAP_ENTRY) {
@@ -1915,6 +2111,16 @@ _start_writev_request(struct spdk_reduce_vol_request *req)
 	}
 
 	req->rmw = false;
+
+	chunk_data = chunk_cache_find_chunk(vol->chunk_data_cache, req->logical_map_index);
+	if (chunk_data == NULL) {
+		chunk_data = chunk_cache_get_free(vol->chunk_data_cache);
+	}
+	assert(chunk_data != NULL);
+
+	req->chunk_data = chunk_data;
+	req->chunk_data->idx = req->logical_map_index;
+	req->decomp_buf = chunk_data->buf;
 
 	_prepare_compress_chunk(req, true);
 	_reduce_vol_compress_chunk(req, _write_compress_done);
@@ -1978,9 +2184,13 @@ _start_unmap_request_full_chunk(void *ctx)
 {
 	struct spdk_reduce_vol_request *req = ctx;
 	struct spdk_reduce_vol *vol = req->vol;
+	struct reduce_vol_chunk_data *chunk_data;
 	uint64_t chunk_map_index;
 
 	RB_INSERT(executing_req_tree, &req->vol->executing_requests, req);
+
+	chunk_data = chunk_cache_find_chunk(vol->chunk_data_cache, req->logical_map_index);
+	req->chunk_data = chunk_data;
 
 	chunk_map_index = vol->pm_logical_map[req->logical_map_index];
 	if (chunk_map_index != REDUCE_EMPTY_MAP_ENTRY) {
