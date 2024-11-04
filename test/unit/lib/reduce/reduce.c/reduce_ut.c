@@ -1411,6 +1411,7 @@ test_prepare_compress_chunk(void)
 	struct spdk_reduce_vol vol = {};
 	struct spdk_reduce_backing_dev backing_dev = {};
 	struct spdk_reduce_vol_request req = {};
+	struct reduce_vol_chunk_data chunk_data = {};
 	void *buf;
 	char *buffer_end, *aligned_user_buffer, *unaligned_user_buffer;
 	char decomp_buffer[16 * 1024] = {};
@@ -1438,6 +1439,8 @@ test_prepare_compress_chunk(void)
 	memset(unaligned_user_buffer, 0xc, vol.params.chunk_size);
 
 	req.vol = &vol;
+	req.chunk_data = &chunk_data;
+	req.chunk_data->buf = decomp_buffer;
 	req.decomp_buf = decomp_buffer;
 	req.comp_buf = comp_buffer;
 	req.iov = user_iov;
@@ -1702,6 +1705,7 @@ test_reduce_decompress_chunk(void)
 	struct spdk_reduce_vol vol = {};
 	struct spdk_reduce_backing_dev backing_dev = {};
 	struct spdk_reduce_vol_request req = {};
+	struct reduce_vol_chunk_data chunk_data = {};
 	void *buf;
 	char *buffer_end, *aligned_user_buffer, *unaligned_user_buffer;
 	char decomp_buffer[16 * 1024] = {};
@@ -1724,6 +1728,7 @@ test_reduce_decompress_chunk(void)
 	RB_INIT(&vol.executing_requests);
 	TAILQ_INIT(&vol.queued_requests);
 	TAILQ_INIT(&vol.free_requests);
+	SPDK_CU_ASSERT_FATAL(_init_vol_chunk_data_cache(&vol) == 0);
 
 	/* Allocate 1 extra byte to test a case when buffer crosses huge page boundary */
 	SPDK_CU_ASSERT_FATAL(posix_memalign(&buf, VALUE_2MB, VALUE_2MB + 1) == 0);
@@ -1734,6 +1739,9 @@ test_reduce_decompress_chunk(void)
 	chunk.compressed_size = user_buffer_iov_len / 2;
 	req.chunk = &chunk;
 	req.vol = &vol;
+	req.chunk_data = &chunk_data;
+	req.chunk_data->buf = decomp_buffer;
+	req.type = REDUCE_IO_READV;
 	req.decomp_buf = decomp_buffer;
 	req.comp_buf = comp_buffer;
 	req.comp_buf_iov = &comp_buf_iov;
