@@ -765,12 +765,16 @@ get_spdk_proc_time() {
 	local interval=$1 cpu=$2
 	local thread thread_to_time stats
 	local _time time _stime stime _utime utime
+	local _cpu _affinity
 
 	[[ -e /proc/$spdk_pid/status ]] || return 1
 
 	# Find SPDK thread pinned to given cpu
 	for thread in "/proc/$spdk_pid/task/"*; do
-		((cpu == $(get_proc_cpu_affinity "$thread/status"))) && thread_to_time=$thread && break
+		affinity=($(get_proc_cpu_affinity "$thread/status"))
+		for _cpu in "${affinity[@]}"; do
+			((_cpu == cpu)) && thread_to_time=$thread && break 2
+		done
 	done
 
 	[[ -e $thread_to_time/stat ]] || return 1
