@@ -1411,6 +1411,7 @@ test_prepare_compress_chunk(void)
 	struct spdk_reduce_vol vol = {};
 	struct spdk_reduce_backing_dev backing_dev = {};
 	struct spdk_reduce_vol_request req = {};
+	struct reduce_vol_chunk_data chunk_data = {};
 	void *buf;
 	char *buffer_end, *aligned_user_buffer, *unaligned_user_buffer;
 	char decomp_buffer[16 * 1024] = {};
@@ -1438,6 +1439,8 @@ test_prepare_compress_chunk(void)
 	memset(unaligned_user_buffer, 0xc, vol.params.chunk_size);
 
 	req.vol = &vol;
+	req.chunk_data = &chunk_data;
+	req.chunk_data->buf = decomp_buffer;
 	req.decomp_buf = decomp_buffer;
 	req.comp_buf = comp_buffer;
 	req.iov = user_iov;
@@ -1702,9 +1705,9 @@ test_reduce_decompress_chunk(void)
 	struct spdk_reduce_vol vol = {};
 	struct spdk_reduce_backing_dev backing_dev = {};
 	struct spdk_reduce_vol_request req = {};
+	struct reduce_vol_chunk_data *chunk_data;
 	void *buf;
 	char *buffer_end, *aligned_user_buffer, *unaligned_user_buffer;
-	char decomp_buffer[16 * 1024] = {};
 	char comp_buffer[16 * 1024] = {};
 	struct iovec user_iov[2] = {};
 	struct iovec comp_buf_iov = {};
@@ -1725,6 +1728,8 @@ test_reduce_decompress_chunk(void)
 	TAILQ_INIT(&vol.queued_requests);
 	TAILQ_INIT(&vol.free_requests);
 
+	SPDK_CU_ASSERT_FATAL(_init_vol_chunk_data_cache(&vol) == 0);
+
 	/* Allocate 1 extra byte to test a case when buffer crosses huge page boundary */
 	SPDK_CU_ASSERT_FATAL(posix_memalign(&buf, VALUE_2MB, VALUE_2MB + 1) == 0);
 	buffer_end = (char *)buf + VALUE_2MB + 1;
@@ -1734,13 +1739,19 @@ test_reduce_decompress_chunk(void)
 	chunk.compressed_size = user_buffer_iov_len / 2;
 	req.chunk = &chunk;
 	req.vol = &vol;
-	req.decomp_buf = decomp_buffer;
+	req.type = REDUCE_IO_READV;
 	req.comp_buf = comp_buffer;
 	req.comp_buf_iov = &comp_buf_iov;
 	req.iov = user_iov;
 	req.iovcnt = 2;
 	req.offset = 0;
 	req.cb_fn = _reduce_vol_op_complete;
+	chunk_data = chunk_cache_get_free(vol.chunk_data_cache);
+	SPDK_CU_ASSERT_FATAL(chunk_data != NULL);
+	req.chunk_data = chunk_data;
+	chunk_data->idx = req.offset / vol.logical_blocks_per_chunk;
+	req.decomp_buf = req.chunk_data->buf;
+
 
 	/* Part 1 - backing dev supports sgl_out */
 	/* Test 1 - user's buffers length equals to chunk_size */
@@ -1755,6 +1766,9 @@ test_reduce_decompress_chunk(void)
 
 	_reduce_vol_decompress_chunk(&req, _read_decompress_done);
 	CU_ASSERT(g_reduce_errno == 0);
+	chunk_data = chunk_cache_find_chunk(vol.chunk_data_cache,
+					    req.offset / vol.logical_blocks_per_chunk);
+	CU_ASSERT(chunk_data != NULL);
 	CU_ASSERT(req.copy_after_decompress == false);
 	CU_ASSERT(req.decomp_iovcnt == 2);
 	for (i = 0; i < 2; i++) {
@@ -1777,6 +1791,9 @@ test_reduce_decompress_chunk(void)
 
 	_reduce_vol_decompress_chunk(&req, _read_decompress_done);
 	CU_ASSERT(g_reduce_errno == 0);
+	chunk_data = chunk_cache_find_chunk(vol.chunk_data_cache,
+					    req.offset / vol.logical_blocks_per_chunk);
+	CU_ASSERT(chunk_data != NULL);
 	CU_ASSERT(req.copy_after_decompress == false);
 	CU_ASSERT(req.decomp_iovcnt == 3);
 	for (i = 0; i < 2; i++) {
@@ -1790,6 +1807,7 @@ test_reduce_decompress_chunk(void)
 
 	/* Test 3 - user's buffer less than chunk_size, non zero offset */
 	req.offset = 3;
+	chunk_data->idx = req.offset / vol.logical_blocks_per_chunk;
 	offset_bytes = req.offset * vol.params.logical_block_size;
 	remainder_bytes = vol.params.chunk_size - offset_bytes - user_buffer_iov_len * 2;
 	RB_INSERT(executing_req_tree, &vol.executing_requests, &req);
@@ -1797,6 +1815,9 @@ test_reduce_decompress_chunk(void)
 
 	_reduce_vol_decompress_chunk(&req, _read_decompress_done);
 	CU_ASSERT(g_reduce_errno == 0);
+	chunk_data = chunk_cache_find_chunk(vol.chunk_data_cache,
+					    req.offset / vol.logical_blocks_per_chunk);
+	CU_ASSERT(chunk_data != NULL);
 	CU_ASSERT(req.copy_after_decompress == false);
 	CU_ASSERT(req.decomp_iovcnt == 4);
 	CU_ASSERT(req.decomp_iov[0].iov_base == req.decomp_buf);
@@ -1815,6 +1836,7 @@ test_reduce_decompress_chunk(void)
 	 * user's buffers are copied */
 	vol.backing_dev->sgl_out = false;
 	req.offset = 0;
+	chunk_data->idx = req.offset / vol.logical_blocks_per_chunk;
 	user_buffer_iov_len = 8192;
 
 	memset(req.decomp_buf, 0xa, vol.params.chunk_size);
@@ -1828,6 +1850,9 @@ test_reduce_decompress_chunk(void)
 
 	_reduce_vol_decompress_chunk(&req, _read_decompress_done);
 	CU_ASSERT(g_reduce_errno == 0);
+	chunk_data = chunk_cache_find_chunk(vol.chunk_data_cache,
+					    req.offset / vol.logical_blocks_per_chunk);
+	CU_ASSERT(chunk_data != NULL);
 	CU_ASSERT(req.copy_after_decompress == true);
 	CU_ASSERT(req.decomp_iovcnt == 1);
 	CU_ASSERT(req.decomp_iov[0].iov_base == req.decomp_buf);
@@ -1850,6 +1875,9 @@ test_reduce_decompress_chunk(void)
 
 	_reduce_vol_decompress_chunk(&req, _read_decompress_done);
 	CU_ASSERT(g_reduce_errno == 0);
+	chunk_data = chunk_cache_find_chunk(vol.chunk_data_cache,
+					    req.offset / vol.logical_blocks_per_chunk);
+	CU_ASSERT(chunk_data != NULL);
 	CU_ASSERT(req.copy_after_decompress == true);
 	CU_ASSERT(req.decomp_iovcnt == 1);
 	CU_ASSERT(req.decomp_iov[0].iov_base == req.decomp_buf);
@@ -1868,6 +1896,9 @@ test_reduce_decompress_chunk(void)
 
 	_reduce_vol_decompress_chunk(&req, _read_decompress_done);
 	CU_ASSERT(g_reduce_errno == 0);
+	chunk_data = chunk_cache_find_chunk(vol.chunk_data_cache,
+					    req.offset / vol.logical_blocks_per_chunk);
+	CU_ASSERT(chunk_data != NULL);
 	CU_ASSERT(req.copy_after_decompress == false);
 	CU_ASSERT(req.decomp_iovcnt == 1);
 	CU_ASSERT(req.decomp_iov[0].iov_base == req.iov[0].iov_base);
@@ -1890,6 +1921,9 @@ test_reduce_decompress_chunk(void)
 
 	_reduce_vol_decompress_chunk(&req, _read_decompress_done);
 	CU_ASSERT(g_reduce_errno == 0);
+	chunk_data = chunk_cache_find_chunk(vol.chunk_data_cache,
+					    req.offset / vol.logical_blocks_per_chunk);
+	CU_ASSERT(chunk_data != NULL);
 	CU_ASSERT(req.copy_after_decompress == true);
 	CU_ASSERT(req.decomp_iovcnt == 1);
 	CU_ASSERT(req.decomp_iov[0].iov_base == req.decomp_buf);
@@ -1904,6 +1938,7 @@ test_reduce_decompress_chunk(void)
 	/* Test 5 - user's buffer less than chunk_size, non zero offset
 	* user's buffers are copied */
 	req.offset = 3;
+	chunk_data->idx = req.offset / vol.logical_blocks_per_chunk;
 	offset_bytes = req.offset * vol.params.logical_block_size;
 	remainder_bytes = vol.params.chunk_size - offset_bytes - user_buffer_iov_len * 2;
 
@@ -1920,6 +1955,9 @@ test_reduce_decompress_chunk(void)
 	_prepare_compress_chunk(&req, false);
 	_reduce_vol_decompress_chunk(&req, _read_decompress_done);
 	CU_ASSERT(g_reduce_errno == 0);
+	chunk_data = chunk_cache_find_chunk(vol.chunk_data_cache,
+					    req.offset / vol.logical_blocks_per_chunk);
+	CU_ASSERT(chunk_data != NULL);
 	CU_ASSERT(req.copy_after_decompress == true);
 	CU_ASSERT(req.decomp_iovcnt == 1);
 	CU_ASSERT(req.decomp_iov[0].iov_base == req.decomp_buf);
@@ -1932,6 +1970,8 @@ test_reduce_decompress_chunk(void)
 	CU_ASSERT(RB_EMPTY(&vol.executing_requests));
 	CU_ASSERT(TAILQ_FIRST(&vol.free_requests) == &req);
 
+	chunk_data_cache_free(vol.chunk_data_cache);
+	vol.chunk_data_cache = NULL;
 	free(buf);
 }
 
