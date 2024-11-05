@@ -232,12 +232,14 @@ get_proc_cpu_affinity() {
 		return 1
 	fi
 
+	mapfile -t status_file < "$status_file"
+
 	while IFS=":"$'\t' read -r status val; do
 		if [[ $status == Cpus_allowed_list ]]; then
 			parse_cpu_list <(echo "$val")
 			return 0
 		fi
-	done < "$status_file"
+	done < <(printf '%s\n' "${status_file[@]}")
 
 	xtrace_restore
 }
