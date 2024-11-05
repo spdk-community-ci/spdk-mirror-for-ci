@@ -177,8 +177,15 @@ nvmf_generate_discovery_log(struct spdk_nvmf_tgt *tgt, const char *hostnqn, size
 		SPDK_DEBUGLOG(nvmf, "referral %s:%s trtype %s\n", referral->trid.traddr, referral->trid.trsvcid,
 			      referral->trid.trstring);
 
-		size_t new_size = cur_size + sizeof(*entry);
-		void *new_log_page = realloc(disc_log, new_size);
+		size_t new_size;
+		void *new_log_page;
+
+		if (!spdk_nvmf_referral_host_allowed(referral, hostnqn)) {
+			continue;
+		}
+
+		new_size = cur_size + sizeof(*entry);
+		new_log_page = realloc(disc_log, new_size);
 
 		if (new_log_page == NULL) {
 			SPDK_ERRLOG("Discovery log page memory allocation error\n");
