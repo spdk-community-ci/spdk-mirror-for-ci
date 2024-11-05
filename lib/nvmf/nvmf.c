@@ -98,6 +98,7 @@ spdk_nvmf_tgt_add_referral(struct spdk_nvmf_tgt *tgt,
 	referral->entry.cntlid = 0xffff;
 	referral->entry.trtype = trid->trtype;
 	referral->entry.adrfam = trid->adrfam;
+	referral->allow_any_host = opts.allow_any_host;
 	memcpy(&referral->trid, trid, sizeof(struct spdk_nvme_transport_id));
 	spdk_strcpy_pad(referral->entry.subnqn, trid->subnqn, sizeof(trid->subnqn), '\0');
 	spdk_strcpy_pad(referral->entry.trsvcid, trid->trsvcid, sizeof(referral->entry.trsvcid), ' ');
@@ -733,6 +734,7 @@ spdk_nvmf_tgt_write_config_json(struct spdk_json_write_ctx *w, struct spdk_nvmf_
 	struct spdk_nvmf_subsystem *subsystem;
 	struct spdk_nvmf_transport *transport;
 	struct spdk_nvmf_referral *referral;
+	struct spdk_nvmf_host *host;
 
 	spdk_json_write_object_begin(w);
 	spdk_json_write_named_string(w, "method", "nvmf_set_max_subsystems");
@@ -772,8 +774,40 @@ spdk_nvmf_tgt_write_config_json(struct spdk_json_write_ctx *w, struct spdk_nvmf_
 					   referral->entry.treq.secure_channel ==
 					   SPDK_NVMF_TREQ_SECURE_CHANNEL_REQUIRED);
 		spdk_json_write_named_string(w, "subnqn", referral->trid.subnqn);
+		spdk_json_write_named_bool(w, "allow_any_host", spdk_nvmf_referral_get_allow_any_host(referral));
 		spdk_json_write_object_end(w);
 
+		spdk_json_write_object_end(w);
+	}
+	for (host = spdk_nvmf_referral_get_first_host(referral); host != NULL;
+	     host = spdk_nvmf_referral_get_next_host(referral, host)) {
+
+		spdk_json_write_object_begin(w);
+		spdk_json_write_named_string(w, "method", "nvmf_discovery_referral_add_host");
+
+		/*     "params" : { */
+		spdk_json_write_named_object_begin(w, "params");
+
+		spdk_json_write_named_string(w, "nqn", spdk_nvmf_referral_get_nqn(referral));
+		spdk_json_write_named_string(w, "host", spdk_nvmf_host_get_nqn(host));
+		if (host->dhchap_key != NULL) {
+			spdk_json_write_named_string(w, "dhchap_key",
+						     spdk_key_get_name(host->dhchap_key));
+		}
+		if (host->dhchap_ctrlr_key != NULL) {
+			spdk_json_write_named_string(w, "dhchap_ctrlr_key",
+						     spdk_key_get_name(host->dhchap_ctrlr_key));
+		}
+		TAILQ_FOREACH(transport, &referral->tgt->transports, link) {
+			if (transport->ops->referral_dump_host != NULL) {
+				transport->ops->referral_dump_host(transport, referral, host->nqn, w);
+			}
+		}
+
+		/*     } "params" */
+		spdk_json_write_object_end(w);
+
+		/* } */
 		spdk_json_write_object_end(w);
 	}
 
@@ -1115,6 +1149,20 @@ spdk_nvmf_tgt_find_subsystem(struct spdk_nvmf_tgt *tgt, const char *subnqn)
 
 	snprintf(subsystem.subnqn, sizeof(subsystem.subnqn), "%s", subnqn);
 	return RB_FIND(subsystem_tree, &tgt->subsystems, &subsystem);
+}
+
+struct spdk_nvmf_referral *
+spdk_nvmf_tgt_find_referral(struct spdk_nvmf_tgt *tgt, const char *subnqn)
+{
+	struct spdk_nvmf_referral *referral;
+
+	TAILQ_FOREACH(referral, &tgt->referrals, link) {
+		if (!strncmp(referral->trid.subnqn, subnqn, SPDK_NVMF_NQN_MAX_LEN)) {
+			return referral;
+		}
+	}
+
+	return NULL;
 }
 
 struct spdk_nvmf_transport *
