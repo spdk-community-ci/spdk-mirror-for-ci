@@ -41,9 +41,9 @@ rpc_cmd nvmf_create_transport $NVMF_TRANSPORT_OPTS -u 8192
 rpc_cmd nvmf_subsystem_add_listener -t $TEST_TRANSPORT -a $NVMF_FIRST_TARGET_IP -s 8009 discovery
 
 # Add a referral to another discovery service
-rpc_cmd nvmf_discovery_add_referral -t $TEST_TRANSPORT -a $NVMF_REFERRAL_IP_1 -s $NVMF_PORT_REFERRAL
-rpc_cmd nvmf_discovery_add_referral -t $TEST_TRANSPORT -a $NVMF_REFERRAL_IP_2 -s $NVMF_PORT_REFERRAL
-rpc_cmd nvmf_discovery_add_referral -t $TEST_TRANSPORT -a $NVMF_REFERRAL_IP_3 -s $NVMF_PORT_REFERRAL
+rpc_cmd nvmf_discovery_add_referral -t $TEST_TRANSPORT -a $NVMF_REFERRAL_IP_1 -s $NVMF_PORT_REFERRAL -ah
+rpc_cmd nvmf_discovery_add_referral -t $TEST_TRANSPORT -a $NVMF_REFERRAL_IP_2 -s $NVMF_PORT_REFERRAL -ah
+rpc_cmd nvmf_discovery_add_referral -t $TEST_TRANSPORT -a $NVMF_REFERRAL_IP_3 -s $NVMF_PORT_REFERRAL -ah
 
 (($(rpc_cmd nvmf_discovery_get_referrals | jq 'length') == 3))
 [[ $(get_referral_ips "rpc") == "$NVMF_REFERRAL_IP_1 $NVMF_REFERRAL_IP_2 $NVMF_REFERRAL_IP_3" ]]
@@ -58,9 +58,9 @@ rpc_cmd nvmf_discovery_remove_referral -t $TEST_TRANSPORT -a $NVMF_REFERRAL_IP_3
 
 # Add a referral to a discovery and NVMe subsystems on the same IP/port
 rpc_cmd nvmf_discovery_add_referral -t $TEST_TRANSPORT -a $NVMF_REFERRAL_IP_1 \
-	-s $NVMF_PORT_REFERRAL -n discovery
+	-s $NVMF_PORT_REFERRAL -n discovery -ah
 rpc_cmd nvmf_discovery_add_referral -t $TEST_TRANSPORT -a $NVMF_REFERRAL_IP_1 \
-	-s $NVMF_PORT_REFERRAL -n "$NQN"
+	-s $NVMF_PORT_REFERRAL -n "$NQN" -ah
 
 [[ $(get_referral_ips "rpc") == "$NVMF_REFERRAL_IP_1 $NVMF_REFERRAL_IP_1" ]]
 [[ $(get_referral_ips "nvme") == "$NVMF_REFERRAL_IP_1 $NVMF_REFERRAL_IP_1" ]]
