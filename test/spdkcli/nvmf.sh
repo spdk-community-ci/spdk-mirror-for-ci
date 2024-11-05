@@ -61,7 +61,8 @@ $spdkcli_job "'/bdevs/malloc create 32 512 Malloc1' 'Malloc1' True
 '/nvmf/subsystem/nqn.2014-08.org.spdk:cnode1/hosts create nqn.2014-08.org.spdk:cnode2' 'nqn.2014-08.org.spdk:cnode2' True
 '/nvmf/subsystem/nqn.2014-08.org.spdk:cnode1/namespaces create Malloc5' 'Malloc5' True
 '/nvmf/subsystem/nqn.2014-08.org.spdk:cnode1/namespaces create Malloc6' 'Malloc6' True
-'/nvmf/referral create tcp 127.0.0.2 4030 IPv4'
+'/nvmf/referral create tcp 127.0.0.2 4030 IPv4 allow_any_host=True'
+'/nvmf/referral/nqn.2014-08.org.nvmexpress.discovery/hosts create nqn.2014-08.org.spdk:cnode2' 'nqn.2014-08.org.spdk:cnode2' True
 "
 timing_exit spdkcli_create_nvmf_config
 
@@ -72,6 +73,7 @@ timing_exit spdkcli_check_match
 timing_enter spdkcli_clear_nvmf_config
 $spdkcli_job "'/nvmf/subsystem/nqn.2014-08.org.spdk:cnode1/namespaces delete nsid=1' 'Malloc3'
 '/nvmf/subsystem/nqn.2014-08.org.spdk:cnode1/namespaces delete_all' 'Malloc4'
+'/nvmf/referral/nqn.2014-08.org.nvmexpress.discovery/hosts delete nqn.2014-08.org.spdk:cnode2' 'nqn.2014-08.org.spdk:cnode2'
 '/nvmf/subsystem/nqn.2014-08.org.spdk:cnode1/hosts delete nqn.2014-08.org.spdk:cnode2' 'nqn.2014-08.org.spdk:cnode2'
 '/nvmf/subsystem/nqn.2014-08.org.spdk:cnode3/hosts delete_all' 'nqn.2014-08.org.spdk:cnode1'
 '/nvmf/subsystem/nqn.2014-08.org.spdk:cnode1/listen_addresses delete $TEST_TRANSPORT $NVMF_TARGET_IP 4262' '$NVMF_TARGET_IP:4262'

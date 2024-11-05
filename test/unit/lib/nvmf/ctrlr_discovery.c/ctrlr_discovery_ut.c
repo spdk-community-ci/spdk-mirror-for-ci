@@ -475,6 +475,7 @@ test_discovery_log_with_filters(void)
 
 	ref1.trid = rdma_trid_4;
 
+	ref1.allow_any_host = true;
 	ref1.entry.trtype = rdma_trid_4.trtype;
 	ref1.entry.adrfam = rdma_trid_4.adrfam;
 	ref1.entry.subtype = SPDK_NVMF_SUBTYPE_DISCOVERY;
@@ -486,6 +487,7 @@ test_discovery_log_with_filters(void)
 
 	ref2.trid = tcp_trid_4;
 
+	ref2.allow_any_host = true;
 	ref2.entry.trtype = tcp_trid_4.trtype;
 	ref2.entry.adrfam = tcp_trid_4.adrfam;
 	ref2.entry.subtype = SPDK_NVMF_SUBTYPE_DISCOVERY;
