@@ -369,22 +369,26 @@ class UINVMfSubsystemNamespace(UINode):
 
 
 class UINVMfReferral(UINode):
-    def __init__(self, address, secure_channel, parent):
-        UINode.__init__(self, "%s:%s" % (address['traddr'], address['trsvcid']),
-                        parent)
-        self.address = address
-        self.secure_channel = secure_channel
+    def __init__(self, referral, parent):
+        UINode.__init__(self, referral.subnqn, parent)
+        self.referral = referral
         self.refresh()
 
     def refresh(self):
         self._children = set([])
+        UINVMfReferralHosts(self.referral.hosts, self)
 
     def refresh_node(self):
         self.refresh()
 
     def summary(self):
-        info = ", ".join([self.address['trtype'], "Secure channel"]) if self.secure_channel \
-            else self.address['trtype']
+        allow_any_host = None
+        secure_channel = None
+        if self.referral.allow_any_host:
+            allow_any_host = "Allow any host"
+        if self.referral.secure_channel:
+            secure_channel = "Secure channel"
+        info = ", ".join(filter(None, [self.referral.address['trtype'], secure_channel, allow_any_host]))
         return info, None
 
 
@@ -396,13 +400,13 @@ class UINVMfReferrals(UINode):
     def refresh(self):
         self._children = set([])
         for referral in self.get_root().nvmf_discovery_get_referrals():
-            UINVMfReferral(referral.address, referral.secure_channel, self)
+            UINVMfReferral(referral, self)
 
     def delete(self, trtype, traddr, trsvcid, adrfam=None):
         self.get_root().nvmf_discovery_remove_referral(
             trtype=trtype, traddr=traddr, trsvcid=trsvcid, adrfam=adrfam)
 
-    def ui_command_create(self, trtype, traddr, trsvcid, adrfam, secure_channel=False):
+    def ui_command_create(self, trtype, traddr, trsvcid, adrfam, secure_channel=False, allow_any_host=False):
         """Create a referral to a discovery subsystem.
 
         Arguments:
@@ -412,10 +416,12 @@ class UINVMfReferrals(UINode):
             adrfam - NVMe-oF transport adrfam: e.g., ipv4, ipv6, ib, fc.
             secure_channel - The connection to that discovery subsystem requires a secure channel
             Default: False
+            allow_any_host - Optional parameter. Allow any host to connect (don't enforce allowed host NQN
         """
+        allow_any_host = self.ui_eval_param(allow_any_host, "bool", False)
         self.get_root().nvmf_discovery_add_referral(
             trtype=trtype, traddr=traddr,
-            trsvcid=trsvcid, adrfam=adrfam, secure_channel=bool(secure_channel))
+            trsvcid=trsvcid, adrfam=adrfam, secure_channel=bool(secure_channel), allow_any_host=bool(allow_any_host))
 
     def ui_command_delete(self, trtype, traddr, trsvcid, adrfam=None):
         """Remove a referral to a discovery subsystem.
@@ -430,3 +436,61 @@ class UINVMfReferrals(UINode):
 
     def summary(self):
         return "Referrals: %s" % len(self.children), None
+
+
+class UINVMfReferralHosts(UINode):
+    def __init__(self, hosts, parent):
+        UINode.__init__(self, "hosts", parent)
+        self.hosts = hosts
+        self.refresh()
+
+    def refresh(self):
+        self._children = set([])
+        for host in self.hosts:
+            UINVMfReferralHost(host, self)
+
+    def refresh_node(self):
+        for referral in self.get_root().nvmf_discovery_get_referrals():
+            if referral.subnqn == self.parent.referral.subnqn:
+                self.hosts = referral.hosts
+        self.refresh()
+
+    def delete(self, host):
+        self.get_root().nvmf_discovery_referral_remove_host(nqn=self.parent.referral.subnqn, host=host)
+
+    def ui_command_create(self, host):
+        """Add a host NQN to the list of allowed hosts.
+
+        Args:
+            host: Host NQN to add to the list of allowed host NQNs
+        """
+        self.get_root().nvmf_discovery_referral_add_host(
+            nqn=self.parent.referral.subnqn, host=host)
+
+    def ui_command_delete(self, host):
+        """Delete host from referral.
+
+        Arguments:
+           host - NQN of host to remove.
+        """
+        self.delete(host)
+
+    def ui_command_delete_all(self):
+        """Delete host from referral"""
+        rpc_messages = ""
+        for host in self.hosts:
+            try:
+                self.delete(host['nqn'])
+            except JSONRPCException as e:
+                rpc_messages += e.message
+        if rpc_messages:
+            raise JSONRPCException(rpc_messages)
+
+    def summary(self):
+        return "Hosts: %s" % len(self.hosts), None
+
+
+class UINVMfReferralHost(UINode):
+    def __init__(self, host, parent):
+        UINode.__init__(self, "%s" % host['nqn'], parent)
+        self.host = host
