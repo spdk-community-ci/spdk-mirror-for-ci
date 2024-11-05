@@ -439,6 +439,21 @@ nvme_bdev_ctrlr_for_each(nvme_bdev_ctrlr_for_each_fn fn, void *ctx)
 	pthread_mutex_unlock(&g_bdev_nvme_mutex);
 }
 
+void
+spdk_bdev_nvme_get_each_spdk_nvme_ctrlr(spdk_bdev_nvme_get_each_spdk_nvme_ctrlr_fn fn, void *ctx)
+{
+	struct nvme_bdev_ctrlr *nbdev_ctrlr;
+	struct nvme_ctrlr *nvme_ctrlr;
+
+	pthread_mutex_lock(&g_bdev_nvme_mutex);
+	TAILQ_FOREACH(nbdev_ctrlr, &g_nvme_bdev_ctrlrs, tailq) {
+		TAILQ_FOREACH(nvme_ctrlr, &nbdev_ctrlr->ctrlrs, tailq) {
+			fn(nvme_ctrlr->ctrlr, ctx);
+		}
+	}
+	pthread_mutex_unlock(&g_bdev_nvme_mutex);
+}
+
 struct nvme_ctrlr_channel_iter {
 	nvme_ctrlr_for_each_channel_msg fn;
 	nvme_ctrlr_for_each_channel_done cpl;
