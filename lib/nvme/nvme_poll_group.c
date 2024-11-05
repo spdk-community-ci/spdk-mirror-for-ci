@@ -95,6 +95,20 @@ spdk_nvme_poll_group_get_fd_group(struct spdk_nvme_poll_group *group)
 	return group->fgrp;
 }
 
+int
+spdk_nvme_poll_group_set_interrupt_callback(struct spdk_nvme_poll_group *group,
+		spdk_nvme_poll_group_interrupt_cb cb_fn, void *cb_ctx)
+{
+	if (group->interrupt.cb_fn != NULL && cb_fn != NULL) {
+		return -EEXIST;
+	}
+
+	group->interrupt.cb_fn = cb_fn;
+	group->interrupt.cb_ctx = cb_ctx;
+
+	return 0;
+}
+
 struct spdk_nvme_poll_group *
 spdk_nvme_qpair_get_optimal_poll_group(struct spdk_nvme_qpair *qpair)
 {
@@ -113,6 +127,12 @@ spdk_nvme_qpair_get_optimal_poll_group(struct spdk_nvme_qpair *qpair)
 static int
 nvme_poll_group_read_disconnect_qpair_fd(void *arg)
 {
+	struct spdk_nvme_poll_group *group = arg;
+
+	if (group->interrupt.cb_fn != NULL) {
+		group->interrupt.cb_fn(group, group->interrupt.cb_ctx);
+	}
+
 	return 0;
 }
 
