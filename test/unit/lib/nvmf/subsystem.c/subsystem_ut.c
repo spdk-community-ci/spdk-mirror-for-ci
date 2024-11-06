@@ -209,8 +209,9 @@ struct spdk_bdev_desc {
 };
 
 int
-spdk_bdev_open_ext(const char *bdev_name, bool write, spdk_bdev_event_cb_t event_cb,
-		   void *event_ctx, struct spdk_bdev_desc **_desc)
+spdk_bdev_open_ext_v2(const char *bdev_name, bool write, spdk_bdev_event_cb_t event_cb,
+		      void *event_ctx, struct spdk_bdev_open_opts *opts,
+		      struct spdk_bdev_desc **_desc)
 {
 	struct spdk_bdev_desc *desc;
 	size_t i;
