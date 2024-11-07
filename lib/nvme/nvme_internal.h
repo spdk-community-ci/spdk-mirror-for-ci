@@ -1125,6 +1125,14 @@ struct spdk_nvme_ctrlr {
 	uint32_t				auth_seqnum;
 };
 
+struct spdk_nvme_detach_ctx {
+	TAILQ_HEAD(, nvme_ctrlr_detach_ctx)	head;
+};
+
+struct spdk_nvme_detach_ctx {
+	TAILQ_HEAD(, nvme_ctrlr_detach_ctx)	head;
+};
+
 struct spdk_nvme_probe_ctx {
 	struct spdk_nvme_transport_id		trid;
 	const struct spdk_nvme_ctrlr_opts	*opts;
@@ -1134,6 +1142,8 @@ struct spdk_nvme_probe_ctx {
 	spdk_nvme_attach_fail_cb		attach_fail_cb;
 	spdk_nvme_remove_cb			remove_cb;
 	TAILQ_HEAD(, spdk_nvme_ctrlr)		init_ctrlrs;
+	/* detach contexts allocated for controllers that failed to initialize */
+	struct spdk_nvme_detach_ctx		aborted_ctxs;
 };
 
 typedef void (*nvme_ctrlr_detach_cb)(struct spdk_nvme_ctrlr *ctrlr);
@@ -1154,10 +1164,6 @@ struct nvme_ctrlr_detach_ctx {
 	enum nvme_ctrlr_detach_state		state;
 	union spdk_nvme_csts_register		csts;
 	TAILQ_ENTRY(nvme_ctrlr_detach_ctx)	link;
-};
-
-struct spdk_nvme_detach_ctx {
-	TAILQ_HEAD(, nvme_ctrlr_detach_ctx)	head;
 };
 
 struct nvme_driver {
