@@ -2281,6 +2281,13 @@ nvme_rdma_qpair_submit_request(struct spdk_nvme_qpair *qpair,
 	assert(rqpair != NULL);
 	assert(req != NULL);
 
+	if (spdk_unlikely(rqpair->state >= NVME_RDMA_QPAIR_STATE_EXITING)) {
+		/* Skip submitting request if we are in a disconnection process. We may never get
+		 * a completion for the send wr and we may end up stuck in LINGERING state until
+		 * the timeout. */
+		return -ENXIO;
+	}
+
 	rdma_req = nvme_rdma_req_get(rqpair);
 	if (spdk_unlikely(!rdma_req)) {
 		if (rqpair->poller) {
@@ -2386,6 +2393,12 @@ nvme_rdma_request_ready(struct nvme_rdma_qpair *rqpair, struct spdk_nvme_rdma_re
 	struct ibv_recv_wr *recv_wr = rdma_rsp->recv_wr;
 
 	nvme_rdma_req_complete(rdma_req, &rdma_rsp->cpl, true);
+
+	if (spdk_unlikely(rqpair->state >= NVME_RDMA_QPAIR_STATE_EXITING)) {
+		/* Skip posting back recv wr if we are in a disconnection process. We may never get
+		 * a WC and we may end up stuck in LINGERING state until the timeout. */
+		return;
+	}
 
 	assert(rqpair->rsps->current_num_recvs < rqpair->rsps->num_entries);
 	rqpair->rsps->current_num_recvs++;
