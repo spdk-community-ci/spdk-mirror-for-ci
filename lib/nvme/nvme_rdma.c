@@ -733,10 +733,8 @@ nvme_rdma_qpair_init(struct nvme_rdma_qpair *rqpair)
 
 static void
 nvme_rdma_reset_failed_sends(struct nvme_rdma_qpair *rqpair,
-			     struct ibv_send_wr *bad_send_wr, int rc)
+			     struct ibv_send_wr *bad_send_wr)
 {
-	SPDK_ERRLOG("Failed to post WRs on send queue, errno %d (%s), bad_wr %p\n",
-		    rc, spdk_strerror(rc), bad_send_wr);
 	while (bad_send_wr != NULL) {
 		assert(rqpair->current_num_sends > 0);
 		rqpair->current_num_sends--;
@@ -766,7 +764,9 @@ nvme_rdma_qpair_submit_sends(struct nvme_rdma_qpair *rqpair)
 	rc = spdk_rdma_provider_qp_flush_send_wrs(rqpair->rdma_qp, &bad_send_wr);
 
 	if (spdk_unlikely(rc)) {
-		nvme_rdma_reset_failed_sends(rqpair, bad_send_wr, rc);
+		SPDK_ERRLOG("Failed to post WRs on send queue, errno %d (%s), bad_wr %p\n",
+			    rc, spdk_strerror(rc), bad_send_wr);
+		nvme_rdma_reset_failed_sends(rqpair, bad_send_wr);
 	}
 
 	return rc;
@@ -1860,6 +1860,18 @@ nvme_rdma_qpair_destroy(struct nvme_rdma_qpair *rqpair)
 
 static void nvme_rdma_qpair_abort_reqs(struct spdk_nvme_qpair *qpair, uint32_t dnr);
 
+static void
+nvme_rdma_qpair_flush_send_wrs(struct nvme_rdma_qpair *rqpair)
+{
+	struct ibv_send_wr *bad_wr = NULL;
+	int rc;
+
+	rc = spdk_rdma_provider_qp_flush_send_wrs(rqpair->rdma_qp, &bad_wr);
+	if (rc) {
+		nvme_rdma_reset_failed_sends(rqpair, bad_wr);
+	}
+}
+
 static int
 nvme_rdma_qpair_disconnected(struct nvme_rdma_qpair *rqpair, int ret)
 {
@@ -1878,6 +1890,8 @@ nvme_rdma_qpair_disconnected(struct nvme_rdma_qpair *rqpair, int ret)
 	if (rqpair->rsps == NULL) {
 		goto quiet;
 	}
+
+	nvme_rdma_qpair_flush_send_wrs(rqpair);
 
 	if (rqpair->need_destroy ||
 	    (rqpair->current_num_sends != 0 ||
@@ -2386,6 +2400,12 @@ nvme_rdma_request_ready(struct nvme_rdma_qpair *rqpair, struct spdk_nvme_rdma_re
 	struct ibv_recv_wr *recv_wr = rdma_rsp->recv_wr;
 
 	nvme_rdma_req_complete(rdma_req, &rdma_rsp->cpl, true);
+
+	if (spdk_unlikely(rqpair->state >= NVME_RDMA_QPAIR_STATE_EXITING)) {
+		/* Skip posting back recv wr if we are in a disconnection process. We may never get
+		 * a WC and we may end up stuck in LINGERING state until the timeout. */
+		return;
+	}
 
 	assert(rqpair->rsps->current_num_recvs < rqpair->rsps->num_entries);
 	rqpair->rsps->current_num_recvs++;
