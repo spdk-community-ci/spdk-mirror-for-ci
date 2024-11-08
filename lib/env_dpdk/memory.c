@@ -745,6 +745,15 @@ mem_map_init(bool legacy_mem)
 	return 0;
 }
 
+void
+mem_map_fini(void)
+{
+	if (g_huge_pages) {
+		rte_mem_event_callback_unregister("spdk", NULL);
+	}
+	spdk_mem_map_free(&g_mem_reg_map);
+}
+
 bool
 spdk_iommu_is_enabled(void)
 {
@@ -1554,6 +1563,16 @@ vtophys_init(void)
 		}
 	}
 	return 0;
+}
+
+void
+vtophys_fini(void)
+{
+	if (g_huge_pages) {
+		spdk_mem_map_free(&g_vtophys_map);
+	}
+	spdk_mem_map_free(&g_numa_map);
+	spdk_mem_map_free(&g_phys_ref_map);
 }
 
 uint64_t
