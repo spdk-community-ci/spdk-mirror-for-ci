@@ -1408,6 +1408,15 @@ struct spdk_io_channel *spdk_bdev_io_get_io_channel(struct spdk_bdev_io *bdev_io
 uint64_t spdk_bdev_io_get_submit_tsc(struct spdk_bdev_io *bdev_io);
 
 /**
+ * Query if the bdev I/O from the upper layer does not have metadata.
+ *
+ * \param bdev_io The bdev I/O to query.
+ *
+ * \return true if the bdev I/O does not have metadata, or false otherwise.
+ */
+bool spdk_bdev_io_has_no_metadata(struct spdk_bdev_io *bdev_io);
+
+/**
  * Resize for a bdev.
  *
  * Change number of blocks for provided block device.
