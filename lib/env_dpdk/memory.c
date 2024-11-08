@@ -118,6 +118,7 @@ static pthread_mutex_t g_spdk_mem_map_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static bool g_legacy_mem;
 static bool g_huge_pages = true;
+static bool g_mem_event_cb_registered = false;
 
 /*
  * Walk the currently registered memory via the main memory registration map
@@ -726,6 +727,8 @@ memory_iter_cb(const struct rte_memseg_list *msl,
 int
 mem_map_init(bool legacy_mem)
 {
+	int rc;
+
 	g_legacy_mem = legacy_mem;
 
 	g_mem_reg_map = spdk_mem_map_alloc(0, NULL, NULL);
@@ -734,15 +737,45 @@ mem_map_init(bool legacy_mem)
 		return -ENOMEM;
 	}
 
+	if (!g_huge_pages) {
+		return 0;
+	}
+
+	rc = rte_mem_event_callback_register("spdk", memory_hotplug_cb, NULL);
+	if (rc != 0) {
+		DEBUG_PRINT("memory event callback registration failed, rc = %d\n", rc);
+		goto err_free_reg_map;
+	}
+	g_mem_event_cb_registered = true;
+
 	/*
 	 * Walk all DPDK memory segments and register them
 	 * with the main memory map
 	 */
-	if (g_huge_pages) {
-		rte_mem_event_callback_register("spdk", memory_hotplug_cb, NULL);
-		rte_memseg_contig_walk(memory_iter_cb, NULL);
+	rc = rte_memseg_contig_walk(memory_iter_cb, NULL);
+	if (rc != 0) {
+		DEBUG_PRINT("memory segments walking failed, rc = %d\n", rc);
+		goto err_unregister_mem_cb;
 	}
+
 	return 0;
+
+err_unregister_mem_cb:
+	g_mem_event_cb_registered = false;
+	rte_mem_event_callback_unregister("spdk", NULL);
+err_free_reg_map:
+	spdk_mem_map_free(&g_mem_reg_map);
+	return rc;
+}
+
+void
+mem_map_fini(void)
+{
+	if (g_mem_event_cb_registered) {
+		g_mem_event_cb_registered = false;
+		rte_mem_event_callback_unregister("spdk", NULL);
+	}
+	spdk_mem_map_free(&g_mem_reg_map);
 }
 
 bool
@@ -764,9 +797,9 @@ static pthread_mutex_t g_vtophys_pci_devices_mutex = PTHREAD_MUTEX_INITIALIZER;
 static TAILQ_HEAD(, spdk_vtophys_pci_device) g_vtophys_pci_devices =
 	TAILQ_HEAD_INITIALIZER(g_vtophys_pci_devices);
 
-static struct spdk_mem_map *g_vtophys_map;
-static struct spdk_mem_map *g_phys_ref_map;
-static struct spdk_mem_map *g_numa_map;
+static struct spdk_mem_map *g_vtophys_map = NULL;
+static struct spdk_mem_map *g_phys_ref_map = NULL;
+static struct spdk_mem_map *g_numa_map = NULL;
 
 #if VFIO_ENABLED
 static int
@@ -1554,6 +1587,14 @@ vtophys_init(void)
 		}
 	}
 	return 0;
+}
+
+void
+vtophys_fini(void)
+{
+	spdk_mem_map_free(&g_vtophys_map);
+	spdk_mem_map_free(&g_numa_map);
+	spdk_mem_map_free(&g_phys_ref_map);
 }
 
 uint64_t
