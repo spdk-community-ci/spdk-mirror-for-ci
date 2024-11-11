@@ -17,6 +17,7 @@ extern "C" {
 
 typedef void (*spdk_bdev_nvme_create_cb)(void *ctx, size_t bdev_count, int rc);
 typedef void (*spdk_bdev_nvme_set_multipath_policy_cb)(void *cb_arg, int rc);
+typedef void (*spdk_bdev_nvme_delete_cb)(void *ctx, int rc);
 
 enum spdk_bdev_nvme_multipath_policy {
 	BDEV_NVME_MP_POLICY_ACTIVE_PASSIVE,
@@ -46,6 +47,13 @@ struct spdk_bdev_nvme_ctrlr_opts {
 
 	/* Set to true if multipath enabled */
 	bool multipath;
+};
+
+struct spdk_nvme_path_id {
+	struct spdk_nvme_transport_id		trid;
+	struct spdk_nvme_host_id		hostid;
+	TAILQ_ENTRY(spdk_nvme_path_id)		link;
+	uint64_t				last_failed_tsc;
 };
 
 /**
@@ -94,6 +102,22 @@ void spdk_bdev_nvme_set_multipath_policy(const char *name,
  * \param opts Ctrlr opts object to be loaded with default values.
  */
 void spdk_bdev_nvme_get_default_ctrlr_opts(struct spdk_bdev_nvme_ctrlr_opts *opts);
+
+/**
+ * Delete NVMe controller with all bdevs on top of it, or delete the specified path
+ * if there is any alternative path. Requires to pass name of NVMe controller.
+ *
+ * \param name NVMe controller name.
+ * \param path_id The specified path to remove (optional).
+ * \param delete_cb Callback function on delete complete (optional).
+ * \param cb_ctx Context passed to callback (optional).
+ * \return zero on success,
+ *		-EINVAL on wrong parameters or
+ *		-ENODEV if controller is not found or
+ *		-ENOMEM on no memory.
+ */
+int spdk_bdev_nvme_delete(const char *name, const struct spdk_nvme_path_id *path_id,
+		     spdk_bdev_nvme_delete_cb delete_cb, void *cb_ctx);
 
 #ifdef __cplusplus
 }
