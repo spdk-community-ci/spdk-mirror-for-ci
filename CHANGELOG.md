@@ -16,6 +16,8 @@ to `multipath` field in spdk_bdev_nvme_ctrlr_opts structure passed as a paramete
 If multipathing shall be enabled for nvme bdev, `bdev_opts.multipath` shall be set to `true`. When
 `bdev_opts.multipath` is set to `false`, failover mode is enabled.
 
+Added `spdk_bdev_nvme_delete` public API to delete NVMe controller and all bdevs on top of it.
+
 ### env
 
 Added 3 APIs to handle multiple interrupts for PCI device `spdk_pci_device_enable_interrupts()`,
