@@ -7480,12 +7480,26 @@ ut_examine_claimed_disk1(struct spdk_bdev *bdev)
 	examine_claimed_disk(bdev, 1);
 }
 
+static bool g_examine_done = false;
+
 static void
-examine_claimed(void)
+ut_examine_done_cb(void *ctx)
+{
+	g_examine_done = true;
+}
+
+static void
+examine_claimed_common(bool autoexamine)
 {
 	struct spdk_bdev *bdev;
 	struct spdk_bdev_module *mod = examine_claimed_mods;
 	struct ut_examine_claimed_ctx *ctx = examine_claimed_ctx;
+	struct spdk_bdev_opts bdev_opts = {};
+	int rc;
+
+	spdk_bdev_get_opts(&bdev_opts, sizeof(bdev_opts));
+	bdev_opts.bdev_auto_examine = autoexamine;
+	ut_init_bdev(&bdev_opts);
 
 	ut_testing_examine_claimed = true;
 	reset_examine_claimed_ctx();
@@ -7496,6 +7510,17 @@ examine_claimed(void)
 	 */
 	ctx[0].claim_type = SPDK_BDEV_CLAIM_READ_MANY_WRITE_NONE;
 	bdev = allocate_bdev("bdev0");
+
+	if (!autoexamine) {
+		g_examine_done = false;
+		rc = spdk_bdev_examine("bdev0");
+		CU_ASSERT(rc == 0);
+		rc = spdk_bdev_wait_for_examine(ut_examine_done_cb, NULL);
+		CU_ASSERT(rc == 0);
+		poll_threads();
+		CU_ASSERT(g_examine_done);
+	}
+
 	CU_ASSERT(ctx[0].examine_config_count == 1);
 	CU_ASSERT(ctx[0].examine_disk_count == 1);
 	SPDK_CU_ASSERT_FATAL(ctx[0].desc != NULL);
@@ -7513,6 +7538,17 @@ examine_claimed(void)
 	ctx[0].claim_type = SPDK_BDEV_CLAIM_READ_MANY_WRITE_NONE;
 	ctx[1].claim_type = SPDK_BDEV_CLAIM_READ_MANY_WRITE_NONE;
 	bdev = allocate_bdev("bdev0");
+
+	if (!autoexamine) {
+		g_examine_done = false;
+		rc = spdk_bdev_examine("bdev0");
+		CU_ASSERT(rc == 0);
+		rc = spdk_bdev_wait_for_examine(ut_examine_done_cb, NULL);
+		CU_ASSERT(rc == 0);
+		poll_threads();
+		CU_ASSERT(g_examine_done);
+	}
+
 	CU_ASSERT(ctx[0].examine_config_count == 1);
 	CU_ASSERT(ctx[0].examine_disk_count == 1);
 	SPDK_CU_ASSERT_FATAL(ctx[0].desc != NULL);
@@ -7533,6 +7569,17 @@ examine_claimed(void)
 	ctx[0].expect_claim_err = -EPERM;
 	ctx[1].claim_type = SPDK_BDEV_CLAIM_READ_MANY_WRITE_ONE;
 	bdev = allocate_bdev("bdev0");
+
+	if (!autoexamine) {
+		g_examine_done = false;
+		rc = spdk_bdev_examine("bdev0");
+		CU_ASSERT(rc == 0);
+		rc = spdk_bdev_wait_for_examine(ut_examine_done_cb, NULL);
+		CU_ASSERT(rc == 0);
+		poll_threads();
+		CU_ASSERT(g_examine_done);
+	}
+
 	CU_ASSERT(ctx[0].examine_config_count == 1);
 	CU_ASSERT(ctx[0].examine_disk_count == 0);
 	CU_ASSERT(ctx[1].examine_config_count == 1);
@@ -7544,6 +7591,20 @@ examine_claimed(void)
 	free_bdev(bdev);
 
 	ut_testing_examine_claimed = false;
+
+	ut_fini_bdev();
+}
+
+static void
+examine_claimed(void)
+{
+	examine_claimed_common(true);
+}
+
+static void
+examine_claimed_manual(void)
+{
+	examine_claimed_common(false);
 }
 
 static void
@@ -7711,6 +7772,7 @@ main(int argc, char **argv)
 	CU_ADD_TEST(suite, claim_v2_existing_v1);
 	CU_ADD_TEST(suite, claim_v1_existing_v2);
 	CU_ADD_TEST(suite, examine_claimed);
+	CU_ADD_TEST(suite, examine_claimed_manual);
 	CU_ADD_TEST(suite, get_numa_id);
 	CU_ADD_TEST(suite, get_device_stat_with_reset);
 
