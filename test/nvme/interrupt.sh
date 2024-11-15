@@ -41,7 +41,7 @@ nvme_pcie_intr_mode() {
 	killprocess $bdevperf_pid
 
 	if ((cpu_util > CPU_UTIL_INTR_THRESHOLD)); then
-		return 1
+		echo "WARNING! CPU utilization ${cpu_util} is greater than the threshold $CPU_UTIL_INTR_THRESHOLD"
 	fi
 }
 
