@@ -1655,13 +1655,23 @@ function is_block_zoned() {
 
 function get_zoned_devs() {
 	local -gA zoned_devs=()
-	local nvme bdf
+	local nvme bdf ns is_zoned=0
 
-	for nvme in /sys/block/nvme*; do
-		if is_block_zoned "${nvme##*/}"; then
-			zoned_devs["${nvme##*/}"]=$(< "$nvme/device/address")
-		fi
+	# When given ctrl has > 1 namespaces attached, we need to make
+	# sure we pick up ALL of them, even if only one of them is zoned.
+	# This is because the zoned_devs[] is mainly used for PCI_BLOCKED
+	# which passed to setup.sh will skip entire ctrl, not a single
+	# ns.
+	for nvme in /sys/class/nvme/nvme*; do
+		bdf=$(< "$nvme/address") is_zoned=0
+		for ns in "$nvme/"nvme*n*; do
+			if is_block_zoned "${ns##*/}" || ((is_zoned == 1)); then
+				zoned_devs["${ns##*/}"]=$bdf
+				is_zoned=1
+			fi
+		done
 	done
+
 }
 
 function is_pid_child() {
