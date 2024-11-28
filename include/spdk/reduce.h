@@ -19,6 +19,10 @@ extern "C" {
 
 #define REDUCE_MAX_IOVECS	33
 
+/* If we use some space of basebdev to persist metadata, press pm_path 'builtin' */
+#define REDUCE_META_BUILTIN	"builtin"
+#define REDUCE_META_BLKSZ	4096
+
 /**
  * Describes the information of spdk_reduce_vol.
  */
@@ -26,6 +30,22 @@ struct spdk_reduce_vol_info {
 	/* Statistics on the number of allocated io units */
 	uint64_t		allocated_io_units;
 	/* TODO: Migrate other vol properties to this structure */
+};
+
+enum spdk_reduce_meta_type {
+	REDUCE_MTYPE_SB = 0,
+	REDUCE_MTYPE_PATH,
+	REDUCE_MTYPE_LOGICAL_MAP,
+	REDUCE_MTYPE_CHUNK_MAP,
+	REDUCE_MTYPE_NR,
+};
+
+/* the struct to describe the meta layout. the offset unit is REDUCE_META_BLKSZ */
+struct spdk_reduce_meta_desc {
+	uint32_t		offset;
+	uint32_t		length;
+	uint16_t		size_per_elem;
+	uint16_t		elems_per_mblk;
 };
 
 /**
@@ -79,7 +99,13 @@ struct spdk_reduce_vol_params {
 	 * specified by the user
 	 */
 	uint8_t                 comp_algo;
-	uint8_t                 reserved[3];
+	uint8_t                 reserved[2];
+
+	uint8_t			meta_builtin: 1;
+	uint8_t			pad: 7;
+	struct spdk_reduce_meta_desc	meta_region_desc[REDUCE_MTYPE_NR];
+	/* unit is byte. should align by mblk */
+	uint64_t		data_region_off;
 };
 
 struct spdk_reduce_vol;

@@ -60,7 +60,8 @@ def bdev_compress_create(client, base_bdev_name, pm_path, lb_size=None, comp_alg
     """
     params = dict()
     params['base_bdev_name'] = base_bdev_name
-    params['pm_path'] = pm_path
+    if pm_path is not None:
+        params['pm_path'] = pm_path
     if lb_size is not None:
         params['lb_size'] = lb_size
     if comp_algo is not None:
