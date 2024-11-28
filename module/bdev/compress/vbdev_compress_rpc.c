@@ -129,7 +129,7 @@ free_rpc_construct_compress(struct rpc_bdev_compress_create_ctx *ctx)
 /* Structure to decode the input parameters for this RPC method. */
 static const struct spdk_json_object_decoder rpc_construct_compress_decoders[] = {
 	{"base_bdev_name", offsetof(struct rpc_construct_compress, base_bdev_name), spdk_json_decode_string},
-	{"pm_path", offsetof(struct rpc_construct_compress, pm_path), spdk_json_decode_string},
+	{"pm_path", offsetof(struct rpc_construct_compress, pm_path), spdk_json_decode_string, true},
 	{"lb_size", offsetof(struct rpc_construct_compress, lb_size), spdk_json_decode_uint32, true},
 	{"comp_algo", offsetof(struct rpc_construct_compress, comp_algo), rpc_decode_comp_algo, true},
 	{"comp_level", offsetof(struct rpc_construct_compress, comp_level), spdk_json_decode_uint32, true},
@@ -178,6 +178,7 @@ rpc_bdev_compress_create(struct spdk_jsonrpc_request *request,
 	req = &ctx->req;
 	req->comp_algo = SPDK_ACCEL_COMP_ALGO_DEFLATE;
 	req->comp_level = 1;
+	req->pm_path = NULL;
 	if (spdk_json_decode_object(params, rpc_construct_compress_decoders,
 				    SPDK_COUNTOF(rpc_construct_compress_decoders),
 				    req)) {

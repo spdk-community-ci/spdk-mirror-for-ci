@@ -269,7 +269,7 @@ if __name__ == "__main__":
 
     p = subparsers.add_parser('bdev_compress_create', help='Add a compress vbdev')
     p.add_argument('-b', '--base-bdev-name', help="Name of the base bdev", required=True)
-    p.add_argument('-p', '--pm-path', help="Path to persistent memory", required=True)
+    p.add_argument('-p', '--pm-path', help="Path to persistent memory. (optional, Default use the base bdev)")
     p.add_argument('-l', '--lb-size', help="Compressed vol logical block size (optional, if used must be 512 or 4096)", type=int)
     p.add_argument('-c', '--comp-algo', help='Compression algorithm, (deflate, lz4). Default is deflate')
     p.add_argument('-L', '--comp-level',

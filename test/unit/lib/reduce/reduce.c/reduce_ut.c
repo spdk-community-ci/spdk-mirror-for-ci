@@ -1158,6 +1158,157 @@ write_unmap_verify(void)
 	backing_dev_destroy(&backing_dev);
 }
 
+/* 1.init vol and verify the metablock cache tree should not NULL
+ * 2.write offset 0KB, length 16KB, with 0xAA, verify
+ * 3.verify the metablock cache exist, then relcaim the caching metablock, verify them has gone
+ * enable async io. 4 and 5 run concurrentily. caching metablock refcnt should have some change
+ * 4.write offset 0KB, length 8KB, with 0xBB
+ * 5.unmap offset 8KB, length 8KB
+ * 6.verify the whole chunk
+ * 7.verify the metablock cache exist, then relcaim the caching metablock, verify them has gone
+ */
+static void
+_meta_builtin_write_read_unmap_verify(uint32_t backing_blocklen)
+{
+	struct reduce_metablock_extent mblkext_find;
+	struct reduce_metablock_extent *mblkext_res = NULL;
+	struct spdk_reduce_vol_params params = {};
+	struct spdk_reduce_backing_dev backing_dev = {};
+	struct iovec iov;
+	char buf[16 * 1024]; /* chunk size */
+	char compare_buf[16 * 1024];
+	uint32_t offset, length; /* unit: block */
+
+	params.chunk_size = 16 * 1024;
+	params.backing_io_unit_size = 4096;
+	params.logical_block_size = 512;
+	spdk_uuid_generate(&params.uuid);
+
+	backing_dev_init(&backing_dev, &params, backing_blocklen);
+
+	g_vol = NULL;
+	g_reduce_errno = -1;
+	spdk_reduce_vol_init(&params, &backing_dev, REDUCE_META_BUILTIN, init_cb, NULL);
+	CU_ASSERT(g_reduce_errno == 0);
+	CU_ASSERT(g_vol->params.meta_builtin == true);
+	SPDK_CU_ASSERT_FATAL(g_vol != NULL);
+
+	/* 1. verify the metablock cache tree should not find logical and map cache */
+	mblkext_find.mblk_sn = _meta_get_mblksn(&g_vol->params, REDUCE_MTYPE_LOGICAL_MAP, 0);
+	CU_ASSERT(NULL == RB_FIND(metablock_cache_tree, &g_vol->metablocks_caching, &mblkext_find));
+	mblkext_find.mblk_sn = _meta_get_mblksn(&g_vol->params, REDUCE_MTYPE_CHUNK_MAP, 0);
+	CU_ASSERT(NULL == RB_FIND(metablock_cache_tree, &g_vol->metablocks_caching, &mblkext_find));
+
+	/* 2.write offset 0KB, length 16KB, with 0xAA */
+	iov.iov_base = buf;
+	iov.iov_len = 16 * 1024;
+	memset(buf, 0xAA, iov.iov_len);
+	offset = 0;
+	length = iov.iov_len / params.logical_block_size;
+	g_reduce_errno = -1;
+	spdk_reduce_vol_writev(g_vol, &iov, 1, offset, length, write_cb, NULL);
+	CU_ASSERT(g_reduce_errno == 0);
+	/* record the expected data */
+	memset(compare_buf + offset * params.logical_block_size, 0xAA, length * params.logical_block_size);
+
+	/* read 16kb and verify */
+	memset(buf, 0xFF, sizeof(buf));
+	iov.iov_len = sizeof(buf);
+	g_reduce_errno = -1;
+	spdk_reduce_vol_readv(g_vol, &iov, 1, 0, sizeof(buf) / params.logical_block_size, read_cb, NULL);
+	CU_ASSERT(g_reduce_errno == 0);
+	CU_ASSERT(memcmp(buf, compare_buf, sizeof(buf)) == 0);
+
+	/* 3.verify the metablock cache exist, then relcaim the caching metablock, verify them has gone */
+	mblkext_find.mblk_sn = _meta_get_mblksn(&g_vol->params, REDUCE_MTYPE_LOGICAL_MAP, 0);
+	CU_ASSERT(NULL != RB_FIND(metablock_cache_tree, &g_vol->metablocks_caching, &mblkext_find));
+	mblkext_find.mblk_sn = _meta_get_mblksn(&g_vol->params, REDUCE_MTYPE_CHUNK_MAP, 0);
+	CU_ASSERT(NULL != RB_FIND(metablock_cache_tree, &g_vol->metablocks_caching, &mblkext_find));
+
+	_metablock_lru_reclaim_batch(g_vol);
+	mblkext_find.mblk_sn = _meta_get_mblksn(&g_vol->params, REDUCE_MTYPE_LOGICAL_MAP, 0);
+	CU_ASSERT(NULL == RB_FIND(metablock_cache_tree, &g_vol->metablocks_caching, &mblkext_find));
+	mblkext_find.mblk_sn = _meta_get_mblksn(&g_vol->params, REDUCE_MTYPE_CHUNK_MAP, 0);
+	CU_ASSERT(NULL == RB_FIND(metablock_cache_tree, &g_vol->metablocks_caching, &mblkext_find));
+
+	/* async io enable */
+	g_defer_bdev_io = true;
+
+	/* 4.write offset 0KB, length 8KB, with 0xBB */
+	iov.iov_len = 8 * 1024;
+	memset(buf, 0xBB, iov.iov_len);
+	offset = 0;
+	length = iov.iov_len / params.logical_block_size;
+	g_reduce_errno = -1;
+	spdk_reduce_vol_writev(g_vol, &iov, 1, offset, length, write_cb, NULL);
+	CU_ASSERT(g_reduce_errno == -1);
+	CU_ASSERT(!TAILQ_EMPTY(&g_pending_bdev_io));
+	CU_ASSERT(g_pending_bdev_io_count == 1);
+
+	/* caching meta block should have refcnt */
+	mblkext_find.mblk_sn = _meta_get_mblksn(&g_vol->params, REDUCE_MTYPE_LOGICAL_MAP, 0);
+	mblkext_res = RB_FIND(metablock_cache_tree, &g_vol->metablocks_caching, &mblkext_find);
+	CU_ASSERT(mblkext_res != NULL);
+	CU_ASSERT(mblkext_res->refcnt == 1);
+	/* record the expected data */
+	memset(compare_buf + offset * params.logical_block_size, 0xBB, length * params.logical_block_size);
+
+	/* write another chunk to make concurrency */
+	spdk_reduce_vol_writev(g_vol, &iov, 1, 16 * 1024 / params.logical_block_size, length, write_cb,
+			       NULL);
+	CU_ASSERT(mblkext_res->refcnt == 2);
+
+	/* 5.unmap offset 8KB, length 4KB */
+	offset = 8 * 1024 / params.logical_block_size;
+	length = 4 * 1024 / params.logical_block_size;
+	spdk_reduce_vol_unmap(g_vol, offset, length, unmap_cb, NULL);
+	/* record the expected data */
+	memset(compare_buf + offset * params.logical_block_size, 0x00, length * params.logical_block_size);
+
+	/* async io execute and async io disable */
+	backing_dev_io_execute(0);
+	g_defer_bdev_io = false;
+	CU_ASSERT(g_reduce_errno == 0);
+	mblkext_find.mblk_sn = _meta_get_mblksn(&g_vol->params, REDUCE_MTYPE_CHUNK_MAP, 0);
+	mblkext_res = RB_FIND(metablock_cache_tree, &g_vol->metablocks_caching, &mblkext_find);
+	CU_ASSERT(mblkext_res != NULL);
+	CU_ASSERT(mblkext_res->refcnt == 0);
+
+	/* 6.read 16kb and verify */
+	memset(buf, 0xFF, sizeof(buf));
+	iov.iov_len = sizeof(buf);
+	g_reduce_errno = -1;
+	spdk_reduce_vol_readv(g_vol, &iov, 1, 0, sizeof(buf) / params.logical_block_size, read_cb, NULL);
+
+	CU_ASSERT(g_reduce_errno == 0);
+	CU_ASSERT(memcmp(buf, compare_buf, sizeof(buf)) == 0);
+
+	/* 7.verify the metablock cache exist, then relcaim the caching metablock, verify them has gone */
+	mblkext_find.mblk_sn = _meta_get_mblksn(&g_vol->params, REDUCE_MTYPE_LOGICAL_MAP, 0);
+	CU_ASSERT(NULL != RB_FIND(metablock_cache_tree, &g_vol->metablocks_caching, &mblkext_find));
+	mblkext_find.mblk_sn = _meta_get_mblksn(&g_vol->params, REDUCE_MTYPE_CHUNK_MAP, 0);
+	CU_ASSERT(NULL != RB_FIND(metablock_cache_tree, &g_vol->metablocks_caching, &mblkext_find));
+
+	_metablock_lru_reclaim_batch(g_vol);
+	mblkext_find.mblk_sn = _meta_get_mblksn(&g_vol->params, REDUCE_MTYPE_LOGICAL_MAP, 0);
+	CU_ASSERT(NULL == RB_FIND(metablock_cache_tree, &g_vol->metablocks_caching, &mblkext_find));
+	mblkext_find.mblk_sn = _meta_get_mblksn(&g_vol->params, REDUCE_MTYPE_CHUNK_MAP, 0);
+	CU_ASSERT(NULL == RB_FIND(metablock_cache_tree, &g_vol->metablocks_caching, &mblkext_find));
+
+	/* clear */
+	g_reduce_errno = -1;
+	spdk_reduce_vol_unload(g_vol, unload_cb, NULL);
+	CU_ASSERT(g_reduce_errno == 0);
+	backing_dev_destroy(&backing_dev);
+}
+
+static void
+meta_builtin_write_read_unmap_verify(void)
+{
+	_meta_builtin_write_read_unmap_verify(512);
+	_meta_builtin_write_read_unmap_verify(4096);
+}
+
 static void
 destroy_cb(void *ctx, int reduce_errno)
 {
@@ -1988,6 +2139,7 @@ main(int argc, char **argv)
 	CU_ADD_TEST(suite, read_write);
 	CU_ADD_TEST(suite, readv_writev);
 	CU_ADD_TEST(suite, write_unmap_verify);
+	CU_ADD_TEST(suite, meta_builtin_write_read_unmap_verify);
 	CU_ADD_TEST(suite, destroy);
 	CU_ADD_TEST(suite, defer_bdev_io);
 	CU_ADD_TEST(suite, overlapped);
