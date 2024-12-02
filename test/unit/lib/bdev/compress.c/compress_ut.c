@@ -103,6 +103,7 @@ DEFINE_STUB_V(spdk_reduce_vol_destroy, (struct spdk_reduce_backing_dev *backing_
 					spdk_reduce_vol_op_complete cb_fn, void *cb_arg));
 DEFINE_STUB(spdk_reduce_vol_get_info, const struct spdk_reduce_vol_info *,
 	    (const struct spdk_reduce_vol *vol), 0);
+DEFINE_STUB(spdk_bdev_get_optimal_io_boundary, uint32_t, (const struct spdk_bdev *bdev), 0);
 
 int g_small_size_counter = 0;
 int g_small_size_modify = 0;

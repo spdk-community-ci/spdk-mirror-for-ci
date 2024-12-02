@@ -123,6 +123,8 @@ struct spdk_reduce_vol_request {
 	TAILQ_ENTRY(spdk_reduce_vol_request)	tailq;
 	RB_ENTRY(spdk_reduce_vol_request)	rbnode;
 	struct spdk_reduce_vol_cb_args		backing_cb_args;
+	/* Only be used in unmap, save old chunk map index */
+	uint64_t				old_chunk_map_index;
 };
 
 struct spdk_reduce_vol {
@@ -1202,9 +1204,14 @@ static void _unmap_backing_blocks(struct spdk_reduce_vol_request *req, uint64_t 
 static void
 _unmap_backing_blocks_write_done(void *_req, int reduce_errno)
 {
+	struct spdk_reduce_vol_request *req = _req;
+	struct spdk_reduce_vol *vol = req->vol;
+
 	if (reduce_errno != 0) {
 		SPDK_ERRLOG("Fails to unmap backing dev blocks after write.");
 	}
+
+	_reduce_vol_reset_chunk(vol, req->old_chunk_map_index);
 
 	_reduce_vol_complete_req(_req, reduce_errno);
 }
@@ -1232,9 +1239,6 @@ _write_write_done(void *_req, int reduce_errno)
 	}
 
 	old_chunk_map_index = vol->pm_logical_map[req->logical_map_index];
-	if (old_chunk_map_index != REDUCE_EMPTY_MAP_ENTRY) {
-		_reduce_vol_reset_chunk(vol, old_chunk_map_index);
-	}
 
 	/*
 	 * We don't need to persist the clearing of the old chunk map here.  The old chunk map
@@ -1250,11 +1254,19 @@ _write_write_done(void *_req, int reduce_errno)
 
 	_reduce_persist(vol, &vol->pm_logical_map[req->logical_map_index], sizeof(uint64_t));
 
-	if (spdk_unlikely(req->iov == &req->unmap_iov)) {
+	/* This write operation is converted from the unmap operation with non-chunk size alignment,
+	 * where we need to free blocks in old chunk.
+	 */
+	if (spdk_unlikely(req->iov == &req->unmap_iov) &&
+	    old_chunk_map_index != REDUCE_EMPTY_MAP_ENTRY) {
+		req->old_chunk_map_index = old_chunk_map_index;
 		_unmap_backing_blocks(req, old_chunk_map_index, _unmap_backing_blocks_write_done);
 		return;
 	}
 
+	if (old_chunk_map_index != REDUCE_EMPTY_MAP_ENTRY) {
+		_reduce_vol_reset_chunk(vol, old_chunk_map_index);
+	}
 	_reduce_vol_complete_req(req, 0);
 }
 
@@ -2006,12 +2018,22 @@ _unmap_backing_blocks_done(void *_req, int reduce_errno)
 	uint64_t chunk_map_index;
 
 	if (reduce_errno != 0) {
+		req->reduce_errno = reduce_errno;
+	}
+
+	assert(req->num_backing_ops > 0);
+	if (--req->num_backing_ops > 0) {
+		return;
+	}
+
+	if (req->reduce_errno != 0) {
 		SPDK_ERRLOG("Fails to unmap backing dev blocks.");
 		_reduce_vol_complete_req(req, reduce_errno);
 		return;
 	}
 
 	chunk_map_index = vol->pm_logical_map[req->logical_map_index];
+	assert(chunk_map_index != REDUCE_EMPTY_MAP_ENTRY);
 
 	_reduce_vol_reset_chunk(vol, chunk_map_index);
 	vol->pm_logical_map[req->logical_map_index] = REDUCE_EMPTY_MAP_ENTRY;
@@ -2024,9 +2046,91 @@ static void
 _unmap_backing_blocks(struct spdk_reduce_vol_request *req, uint64_t chunk_map_index,
 		      reduce_request_fn next_fn)
 {
-	/* TODO: Send unmap operation to backing bdev.
-	 */
-	next_fn(req, 0);
+	struct spdk_reduce_vol *vol = req->vol;
+	struct spdk_reduce_backing_dev *backing_dev = vol->backing_dev;
+	struct spdk_reduce_chunk_map *chunk;
+	struct spdk_reduce_backing_io *backing_io, *tmp_backing_io;
+	uint64_t optimal_io_lba_offset, unit_io_index_start, unit_io_index_end;
+	uint64_t index;
+	uint32_t i, j, k;
+	bool submitted = false;
+
+	req->num_backing_ops = 0;
+	req->backing_cb_args.cb_fn = next_fn;
+	req->backing_cb_args.cb_arg = req;
+
+	chunk = _reduce_vol_get_chunk_map(vol, chunk_map_index);
+	for (i = 0; i < vol->backing_io_units_per_chunk; i++) {
+		index = chunk->io_unit_index[i];
+		if (index == REDUCE_EMPTY_MAP_ENTRY) {
+			break;
+		}
+
+		optimal_io_lba_offset = index * vol->backing_lba_per_io_unit /
+					backing_dev->optimal_io_boundary * backing_dev->optimal_io_boundary;
+		unit_io_index_start = optimal_io_lba_offset / vol->backing_lba_per_io_unit;
+		unit_io_index_end = (optimal_io_lba_offset + backing_dev->optimal_io_boundary - 1) /
+				    vol->backing_lba_per_io_unit;
+
+		backing_io = _reduce_vol_req_get_backing_io(req, i);
+		backing_io->dev = vol->backing_dev;
+		backing_io->lba = optimal_io_lba_offset;
+		backing_io->lba_count = backing_dev->optimal_io_boundary;
+		backing_io->backing_cb_args = &req->backing_cb_args;
+		backing_io->backing_io_type = SPDK_REDUCE_BACKING_IO_UNMAP;
+		for (j = 0; j < i; j++) {
+			tmp_backing_io = _reduce_vol_req_get_backing_io(req, j);
+			if (tmp_backing_io->lba == backing_io->lba) {
+				backing_io->lba_count = 0;
+				goto next_io_unit;
+			}
+		}
+
+		for (index = unit_io_index_start; index <= unit_io_index_end; index++) {
+			if (!spdk_bit_array_get(vol->allocated_backing_io_units, index)) {
+				continue;
+			}
+
+			for (k = 0; k < vol->backing_io_units_per_chunk; k++) {
+				if (chunk->io_unit_index[k] == REDUCE_EMPTY_MAP_ENTRY) {
+					break;
+				}
+				if (chunk->io_unit_index[k] == index) {
+					goto bit_check_continue;
+				}
+			}
+
+			backing_io->lba_count = 0;
+			goto next_io_unit;
+bit_check_continue:
+			continue;
+		}
+
+		req->num_backing_ops++;
+next_io_unit:
+		continue;
+	}
+
+	for (i = 0; i < vol->backing_io_units_per_chunk; i++) {
+		index = chunk->io_unit_index[i];
+		if (index == REDUCE_EMPTY_MAP_ENTRY) {
+			break;
+		}
+
+		backing_io = _reduce_vol_req_get_backing_io(req, i);
+		if (backing_io->lba_count == 0) {
+			continue;
+		}
+
+		vol->backing_dev->submit_backing_io(backing_io);
+		submitted = true;
+	}
+
+	if (!submitted) {
+		assert(req->num_backing_ops == 0);
+		req->num_backing_ops = 1;
+		next_fn(req, 0);
+	}
 }
 
 static void
