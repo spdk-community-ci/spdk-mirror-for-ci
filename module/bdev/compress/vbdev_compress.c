@@ -25,6 +25,7 @@
 #define COMP_BDEV_NAME "compress"
 #define BACKING_IO_SZ (4 * 1024)
 
+#define BACKING_OPTIMAL_IO_BOUNDARY (4 * 1024 * 1024)
 /* This namespace UUID was generated using uuid_generate() method. */
 #define BDEV_COMPRESS_NAMESPACE_UUID "c3fad6da-832f-4cc0-9cdc-5c552b225e7b"
 
@@ -1012,6 +1013,11 @@ _prepare_for_load_init(struct spdk_bdev_desc *bdev_desc, uint32_t lb_size, uint8
 
 	comp_bdev->backing_dev.blocklen = bdev->blocklen;
 	comp_bdev->backing_dev.blockcnt = bdev->blockcnt;
+
+	comp_bdev->backing_dev.optimal_io_boundary = spdk_bdev_get_optimal_io_boundary(bdev);
+	if (comp_bdev->backing_dev.optimal_io_boundary == 0) {
+		comp_bdev->backing_dev.optimal_io_boundary = BACKING_OPTIMAL_IO_BOUNDARY;
+	}
 
 	comp_bdev->backing_dev.user_ctx_size = sizeof(struct spdk_bdev_io_wait_entry);
 
