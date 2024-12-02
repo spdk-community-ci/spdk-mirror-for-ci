@@ -16,6 +16,7 @@
 #include "spdk/log.h"
 #include "spdk/memory.h"
 #include "spdk/tree.h"
+#include "spdk/likely.h"
 
 #include "libpmem.h"
 
@@ -96,6 +97,12 @@ struct spdk_reduce_vol_request {
 	uint8_t					*comp_buf;
 	struct iovec				*comp_buf_iov;
 	struct iovec				*iov;
+	/**
+	 * If the unmap operation is not chunk size aligned and is an integral multiple, use
+	 * Write instead of UNMAP. When converting an unmap operation to a write operation,
+	 * use unmap_iov instead of iov in the write operation.
+	 */
+	struct iovec				unmap_iov;
 	bool					rmw;
 	struct spdk_reduce_vol			*vol;
 	int					type;
@@ -1129,7 +1136,7 @@ _request_spans_chunk_boundary(struct spdk_reduce_vol *vol, uint64_t offset, uint
 }
 
 typedef void (*reduce_request_fn)(void *_req, int reduce_errno);
-static void _start_unmap_request_full_chunk(void *ctx);
+static void _start_unmap_request(struct spdk_reduce_vol_request *req);
 
 static void
 _reduce_vol_complete_req(struct spdk_reduce_vol_request *req, int reduce_errno)
@@ -1149,7 +1156,7 @@ _reduce_vol_complete_req(struct spdk_reduce_vol_request *req, int reduce_errno)
 				_start_writev_request(next_req);
 			} else {
 				assert(next_req->type == REDUCE_IO_UNMAP);
-				_start_unmap_request_full_chunk(next_req);
+				_start_unmap_request(next_req);
 			}
 			break;
 		}
@@ -1187,6 +1194,19 @@ _reduce_vol_reset_chunk(struct spdk_reduce_vol *vol, uint64_t chunk_map_index)
 		vol->find_chunk_offset = chunk_map_index;
 	}
 	spdk_bit_array_clear(vol->allocated_chunk_maps, chunk_map_index);
+}
+
+static void _unmap_backing_blocks(struct spdk_reduce_vol_request *req, uint64_t chunk_index,
+				  reduce_request_fn next_fn);
+
+static void
+_unmap_backing_blocks_write_done(void *_req, int reduce_errno)
+{
+	if (reduce_errno != 0) {
+		SPDK_ERRLOG("Fails to unmap backing dev blocks after write.");
+	}
+
+	_reduce_vol_complete_req(_req, reduce_errno);
 }
 
 static void
@@ -1230,7 +1250,13 @@ _write_write_done(void *_req, int reduce_errno)
 
 	_reduce_persist(vol, &vol->pm_logical_map[req->logical_map_index], sizeof(uint64_t));
 
+	if (spdk_unlikely(req->iov == &req->unmap_iov)) {
+		_unmap_backing_blocks(req, old_chunk_map_index, _unmap_backing_blocks_write_done);
+		return;
+	}
+
 	_reduce_vol_complete_req(req, 0);
+
 }
 
 static struct spdk_reduce_backing_io *
@@ -1974,31 +2000,86 @@ spdk_reduce_vol_writev(struct spdk_reduce_vol *vol,
 }
 
 static void
-_start_unmap_request_full_chunk(void *ctx)
+_unmap_backing_blocks_done(void *_req, int reduce_errno)
 {
-	struct spdk_reduce_vol_request *req = ctx;
+	struct spdk_reduce_vol_request *req = _req;
 	struct spdk_reduce_vol *vol = req->vol;
 	uint64_t chunk_map_index;
 
-	RB_INSERT(executing_req_tree, &req->vol->executing_requests, req);
+	if (reduce_errno != 0) {
+		SPDK_ERRLOG("Fails to unmap backing dev blocks.");
+		_reduce_vol_complete_req(req, reduce_errno);
+		return;
+	}
 
 	chunk_map_index = vol->pm_logical_map[req->logical_map_index];
-	if (chunk_map_index != REDUCE_EMPTY_MAP_ENTRY) {
-		_reduce_vol_reset_chunk(vol, chunk_map_index);
-		vol->pm_logical_map[req->logical_map_index] = REDUCE_EMPTY_MAP_ENTRY;
-		_reduce_persist(vol, &vol->pm_logical_map[req->logical_map_index], sizeof(uint64_t));
-	}
-	_reduce_vol_complete_req(req, 0);
+
+	_reduce_vol_reset_chunk(vol, chunk_map_index);
+	vol->pm_logical_map[req->logical_map_index] = REDUCE_EMPTY_MAP_ENTRY;
+	_reduce_persist(vol, &vol->pm_logical_map[req->logical_map_index], sizeof(uint64_t));
+
+	_reduce_vol_complete_req(req, reduce_errno);
 }
 
 static void
-_reduce_vol_unmap_full_chunk(struct spdk_reduce_vol *vol,
-			     uint64_t offset, uint64_t length,
-			     spdk_reduce_vol_op_complete cb_fn, void *cb_arg)
+_unmap_backing_blocks(struct spdk_reduce_vol_request *req, uint64_t chunk_map_index,
+		      reduce_request_fn next_fn)
+{
+	/* TODO: Send unmap operation to backing bdev.
+	 */
+	next_fn(req, 0);
+}
+
+static void
+_reduce_vol_unmap_req(struct spdk_reduce_vol_request *req)
+{
+	struct spdk_reduce_vol *vol = req->vol;
+	uint64_t chunk_map_index;
+
+	chunk_map_index = vol->pm_logical_map[req->logical_map_index];
+	if (chunk_map_index != REDUCE_EMPTY_MAP_ENTRY) {
+		_unmap_backing_blocks(req, chunk_map_index, _unmap_backing_blocks_done);
+	}
+}
+
+static void
+_start_unmap_request(struct spdk_reduce_vol_request *req)
+{
+	struct spdk_reduce_vol *vol = req->vol;
+
+	if (req->length < vol->logical_blocks_per_chunk) {
+		/* If the unmap operation is not chunk size aligned and is an integral multiple,
+		 * use WRITE instead of UNMAP.
+		 */
+		req->type = REDUCE_IO_WRITEV;
+	}
+
+	RB_INSERT(executing_req_tree, &req->vol->executing_requests, req);
+	switch (req->type) {
+	case REDUCE_IO_WRITEV:
+		_start_writev_request(req);
+		break;
+	case REDUCE_IO_UNMAP:
+		_reduce_vol_unmap_req(req);
+		break;
+	default:
+		assert(false);
+	}
+}
+
+void
+spdk_reduce_vol_unmap(struct spdk_reduce_vol *vol,
+		      uint64_t offset, uint64_t length,
+		      spdk_reduce_vol_op_complete cb_fn, void *cb_arg)
 {
 	struct spdk_reduce_vol_request *req;
 	uint64_t logical_map_index;
 	bool overlapped;
+
+	if (length == 0) {
+		cb_fn(cb_arg, 0);
+		return;
+	}
 
 	if (_request_spans_chunk_boundary(vol, offset, length)) {
 		cb_fn(cb_arg, -EINVAL);
@@ -2024,9 +2105,13 @@ _reduce_vol_unmap_full_chunk(struct spdk_reduce_vol *vol,
 
 	TAILQ_REMOVE(&vol->free_requests, req, tailq);
 	req->type = REDUCE_IO_UNMAP;
+	if (length < vol->logical_blocks_per_chunk) {
+		req->unmap_iov.iov_base = g_zero_buf;
+		req->unmap_iov.iov_len = length * vol->params.logical_block_size;
+		req->iov = &req->unmap_iov;
+	}
 	req->vol = vol;
-	req->iov = NULL;
-	req->iovcnt = 0;
+	req->iovcnt = 1;
 	req->offset = offset;
 	req->logical_map_index = logical_map_index;
 	req->length = length;
@@ -2036,63 +2121,12 @@ _reduce_vol_unmap_full_chunk(struct spdk_reduce_vol *vol,
 	req->reduce_errno = 0;
 
 	if (!overlapped) {
-		_start_unmap_request_full_chunk(req);
+		_start_unmap_request(req);
 	} else {
 		TAILQ_INSERT_TAIL(&vol->queued_requests, req, tailq);
 	}
 }
 
-struct unmap_partial_chunk_ctx {
-	struct spdk_reduce_vol *vol;
-	struct iovec iov;
-	spdk_reduce_vol_op_complete cb_fn;
-	void *cb_arg;
-};
-
-static void
-_reduce_unmap_partial_chunk_complete(void *_ctx, int reduce_errno)
-{
-	struct unmap_partial_chunk_ctx *ctx = _ctx;
-
-	ctx->cb_fn(ctx->cb_arg, reduce_errno);
-	free(ctx);
-}
-
-static void
-_reduce_vol_unmap_partial_chunk(struct spdk_reduce_vol *vol, uint64_t offset, uint64_t length,
-				spdk_reduce_vol_op_complete cb_fn, void *cb_arg)
-{
-	struct unmap_partial_chunk_ctx *ctx;
-
-	ctx = calloc(1, sizeof(struct unmap_partial_chunk_ctx));
-	if (ctx == NULL) {
-		cb_fn(cb_arg, -ENOMEM);
-		return;
-	}
-
-	ctx->vol = vol;
-	ctx->iov.iov_base = g_zero_buf;
-	ctx->iov.iov_len = length * vol->params.logical_block_size;
-	ctx->cb_fn = cb_fn;
-	ctx->cb_arg = cb_arg;
-
-	spdk_reduce_vol_writev(vol, &ctx->iov, 1, offset, length, _reduce_unmap_partial_chunk_complete,
-			       ctx);
-}
-
-void
-spdk_reduce_vol_unmap(struct spdk_reduce_vol *vol,
-		      uint64_t offset, uint64_t length,
-		      spdk_reduce_vol_op_complete cb_fn, void *cb_arg)
-{
-	if (length < vol->logical_blocks_per_chunk) {
-		_reduce_vol_unmap_partial_chunk(vol, offset, length, cb_fn, cb_arg);
-	} else if (length == vol->logical_blocks_per_chunk) {
-		_reduce_vol_unmap_full_chunk(vol, offset, length, cb_fn, cb_arg);
-	} else {
-		cb_fn(cb_arg, -EINVAL);
-	}
-}
 
 const struct spdk_reduce_vol_params *
 spdk_reduce_vol_get_params(struct spdk_reduce_vol *vol)
