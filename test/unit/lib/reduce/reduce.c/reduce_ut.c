@@ -557,6 +557,7 @@ backing_dev_init(struct spdk_reduce_backing_dev *backing_dev, struct spdk_reduce
 	size = 4 * 1024 * 1024;
 	backing_dev->blocklen = backing_blocklen;
 	backing_dev->blockcnt = size / backing_dev->blocklen;
+	backing_dev->optimal_io_boundary = 4 * 1024 * 1024;
 	backing_dev->submit_backing_io = backing_dev_submit_io;
 	backing_dev->compress = backing_dev_compress;
 	backing_dev->decompress = backing_dev_decompress;
