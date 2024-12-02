@@ -144,6 +144,7 @@ struct spdk_reduce_backing_dev {
 	bool		sgl_in;
 	bool		sgl_out;
 	uint32_t        user_ctx_size;
+	uint32_t	optimal_io_boundary;
 };
 
 /**
