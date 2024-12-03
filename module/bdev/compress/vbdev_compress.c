@@ -348,7 +348,7 @@ _comp_submit_unmap(void *ctx)
 
 	logical_blocks_per_chunk = vol_params->chunk_size / vol_params->logical_block_size;
 	start_chunk = bdev_io->u.bdev.offset_blocks / logical_blocks_per_chunk;
-	end_chunk = (bdev_io->u.bdev.offset_blocks + bdev_io->u.bdev.num_blocks - 1) /
+	end_chunk = (bdev_io->u.bdev.offset_blocks + bdev_io->u.bdev.num_blocks) /
 		    logical_blocks_per_chunk;
 	start_offset = bdev_io->u.bdev.offset_blocks % logical_blocks_per_chunk;
 	end_tail = (bdev_io->u.bdev.offset_blocks + bdev_io->u.bdev.num_blocks) %
