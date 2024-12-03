@@ -770,16 +770,14 @@ mem_map_init(bool legacy_mem)
 		return -ENOMEM;
 	}
 
-	if (!g_huge_pages) {
-		return 0;
+	if (g_huge_pages) {
+		rc = rte_mem_event_callback_register("spdk", memory_hotplug_cb, NULL);
+		if (rc != 0) {
+			DEBUG_PRINT("memory event callback registration failed, rc = %d\n", rc);
+			goto err_free_reg_map;
+		}
+		g_mem_event_cb_registered = true;
 	}
-
-	rc = rte_mem_event_callback_register("spdk", memory_hotplug_cb, NULL);
-	if (rc != 0) {
-		DEBUG_PRINT("memory event callback registration failed, rc = %d\n", rc);
-		goto err_free_reg_map;
-	}
-	g_mem_event_cb_registered = true;
 
 	/*
 	 * Walk all DPDK memory segments and register them
@@ -794,8 +792,10 @@ mem_map_init(bool legacy_mem)
 	return 0;
 
 err_unregister_mem_cb:
-	g_mem_event_cb_registered = false;
-	rte_mem_event_callback_unregister("spdk", NULL);
+	if (g_mem_event_cb_registered) {
+		g_mem_event_cb_registered = false;
+		rte_mem_event_callback_unregister("spdk", NULL);
+	}
 err_free_reg_map:
 	spdk_mem_map_free(&g_mem_reg_map);
 	return rc;
@@ -1691,6 +1691,7 @@ void
 mem_disable_huge_pages(void)
 {
 	g_huge_pages = false;
+	mem_map_use_page_shift(SHIFT_4KB);
 }
 
 void
