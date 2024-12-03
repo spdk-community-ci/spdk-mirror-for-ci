@@ -1434,11 +1434,18 @@ struct spdk_mem_map *spdk_mem_map_alloc(uint64_t default_translation,
 void spdk_mem_map_free(struct spdk_mem_map **pmap);
 
 /**
+ * Get the currently using page size for memory mapping.
+ *
+ * \return the page size for memory mapping, can be either 4 KiB or 2MiB.
+ */
+uint64_t spdk_mem_map_get_page_size(void);
+
+/**
  * Register an address translation for a range of virtual memory.
  *
  * \param map Memory map.
- * \param vaddr Virtual address of the region to register - must be 2 MB aligned.
- * \param size Size of the region in bytes - must be multiple of 2 MB in the
+ * \param vaddr Virtual address of the region to register - must be page size aligned.
+ * \param size Size of the region in bytes - must be multiple of page size in the
  *  current implementation.
  * \param translation Translation to store in the map for this address range.
  *
@@ -1453,8 +1460,8 @@ int spdk_mem_map_set_translation(struct spdk_mem_map *map, uint64_t vaddr, uint6
  * Unregister an address translation.
  *
  * \param map Memory map.
- * \param vaddr Virtual address of the region to unregister - must be 2 MB aligned.
- * \param size Size of the region in bytes - must be multiple of 2 MB in the
+ * \param vaddr Virtual address of the region to unregister - must be page size aligned.
+ * \param size Size of the region in bytes - must be multiple of page size in the
  *  current implementation.
  *
  * \sa spdk_mem_map_set_translation().
@@ -1479,8 +1486,6 @@ uint64_t spdk_mem_map_translate(const struct spdk_mem_map *map, uint64_t vaddr, 
 
 /**
  * Register the specified memory region for address translation.
- *
- * The memory region must map to pinned huge pages (2MB or greater).
  *
  * \param vaddr Virtual address to register.
  * \param len Length in bytes of the vaddr.
