@@ -60,6 +60,11 @@ void vtophys_pci_device_removed(struct rte_pci_device *pci_device);
 void mem_disable_huge_pages(void);
 
 /**
+ * Use the given page shift for memory mapping.
+ */
+void mem_map_use_page_shift(uint32_t page_shift);
+
+/**
  * Enforce socket ID allocations.
  */
 void mem_enforce_numa(void);

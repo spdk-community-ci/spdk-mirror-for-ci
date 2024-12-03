@@ -40,17 +40,17 @@ test_mem_map_notify(void *cb_ctx, struct spdk_mem_map *map,
 {
 	uint32_t i, end;
 
-	SPDK_CU_ASSERT_FATAL(((uintptr_t)vaddr & MASK_2MB) == 0);
-	SPDK_CU_ASSERT_FATAL((len & MASK_2MB) == 0);
+	SPDK_CU_ASSERT_FATAL(((uintptr_t)vaddr & MAP_PAGE_MASK) == 0);
+	SPDK_CU_ASSERT_FATAL((len & MAP_PAGE_MASK) == 0);
 
 	/*
 	 * This is a test requirement - the bit array we use to verify
 	 * pages are valid is only so large.
 	 */
-	SPDK_CU_ASSERT_FATAL((uintptr_t)vaddr < (VALUE_2MB * PAGE_ARRAY_SIZE));
+	SPDK_CU_ASSERT_FATAL((uintptr_t)vaddr < (MAP_PAGE_SIZE * PAGE_ARRAY_SIZE));
 
-	i = (uintptr_t)vaddr >> SHIFT_2MB;
-	end = i + (len >> SHIFT_2MB);
+	i = (uintptr_t)vaddr >> MAP_PAGE_SHIFT;
+	end = i + (len >> MAP_PAGE_SHIFT);
 	for (; i < end; i++) {
 		switch (action) {
 		case SPDK_MEM_MAP_NOTIFY_REGISTER:
@@ -115,14 +115,14 @@ test_mem_map_notify_checklen(void *cb_ctx, struct spdk_mem_map *map,
 	 * This is a test requirement - the len array we use to verify
 	 * pages are valid is only so large.
 	 */
-	SPDK_CU_ASSERT_FATAL((uintptr_t)vaddr < (VALUE_2MB * PAGE_ARRAY_SIZE));
+	SPDK_CU_ASSERT_FATAL((uintptr_t)vaddr < (MAP_PAGE_SIZE * PAGE_ARRAY_SIZE));
 
 	switch (action) {
 	case SPDK_MEM_MAP_NOTIFY_REGISTER:
-		assert(size == len_arr[(uintptr_t)vaddr / VALUE_2MB]);
+		assert(size == len_arr[(uintptr_t)vaddr / MAP_PAGE_SIZE]);
 		break;
 	case SPDK_MEM_MAP_NOTIFY_UNREGISTER:
-		CU_ASSERT(size == len_arr[(uintptr_t)vaddr / VALUE_2MB]);
+		CU_ASSERT(size == len_arr[(uintptr_t)vaddr / MAP_PAGE_SIZE]);
 		break;
 	}
 
@@ -176,24 +176,24 @@ test_mem_map_alloc_free(void)
 	 * initialized translations.
 	 */
 	for (i = 0; i < 5; i++) {
-		spdk_mem_register((void *)(uintptr_t)(2 * i * VALUE_2MB), VALUE_2MB);
+		spdk_mem_register((void *)(uintptr_t)(2 * i * MAP_PAGE_SIZE), MAP_PAGE_SIZE);
 	}
 
 	/* The last region */
-	g_vaddr_to_fail = (void *)(8 * VALUE_2MB);
+	g_vaddr_to_fail = (void *)(8 * MAP_PAGE_SIZE);
 	failed_map = spdk_mem_map_alloc(default_translation, &test_map_ops_notify_fail, map);
 	CU_ASSERT(failed_map == NULL);
 
 	for (i = 0; i < 4; i++) {
-		uint64_t reg, size = VALUE_2MB;
+		uint64_t reg, size = MAP_PAGE_SIZE;
 
-		reg = spdk_mem_map_translate(map, 2 * i * VALUE_2MB, &size);
+		reg = spdk_mem_map_translate(map, 2 * i * MAP_PAGE_SIZE, &size);
 		/* check if `failed_map` didn't leave any translations behind */
 		CU_ASSERT(reg == default_translation);
 	}
 
 	for (i = 0; i < 5; i++) {
-		spdk_mem_unregister((void *)(uintptr_t)(2 * i * VALUE_2MB), VALUE_2MB);
+		spdk_mem_unregister((void *)(uintptr_t)(2 * i * MAP_PAGE_SIZE), MAP_PAGE_SIZE);
 	}
 
 	spdk_mem_map_free(&map);
@@ -205,6 +205,8 @@ test_mem_map_translation(void)
 {
 	struct spdk_mem_map *map;
 	uint64_t default_translation = 0xDEADBEEF0BADF00D;
+	const uint64_t first_invalid_addr = 0x1000000000000ULL;
+	const uint64_t last_valid_page = first_invalid_addr - MAP_PAGE_SIZE;
 	uint64_t addr;
 	uint64_t mapping_length;
 	int rc;
@@ -217,35 +219,35 @@ test_mem_map_translation(void)
 	CU_ASSERT(addr == default_translation);
 
 	/* Set translation for region of non-2MB multiple size */
-	rc = spdk_mem_map_set_translation(map, VALUE_2MB, 1234, VALUE_2MB);
+	rc = spdk_mem_map_set_translation(map, MAP_PAGE_SIZE, 1234, MAP_PAGE_SIZE);
 	CU_ASSERT(rc == -EINVAL);
 
 	/* Set translation for vaddr that isn't 2MB aligned */
-	rc = spdk_mem_map_set_translation(map, 1234, VALUE_2MB, VALUE_2MB);
+	rc = spdk_mem_map_set_translation(map, 1234, MAP_PAGE_SIZE, MAP_PAGE_SIZE);
 	CU_ASSERT(rc == -EINVAL);
 
 	/* Set translation for one 2MB page */
-	rc = spdk_mem_map_set_translation(map, VALUE_2MB, VALUE_2MB, VALUE_2MB);
+	rc = spdk_mem_map_set_translation(map, MAP_PAGE_SIZE, MAP_PAGE_SIZE, MAP_PAGE_SIZE);
 	CU_ASSERT(rc == 0);
 
 	/* Set translation for region that overlaps the previous translation */
-	rc = spdk_mem_map_set_translation(map, 0, 3 * VALUE_2MB, 0);
+	rc = spdk_mem_map_set_translation(map, 0, 3 * MAP_PAGE_SIZE, 0);
 	CU_ASSERT(rc == 0);
 
 	/* Make sure we indicate that the three regions are contiguous */
-	mapping_length = VALUE_2MB * 3;
+	mapping_length = MAP_PAGE_SIZE * 3;
 	addr = spdk_mem_map_translate(map, 0, &mapping_length);
 	CU_ASSERT(addr == 0);
-	CU_ASSERT(mapping_length == VALUE_2MB * 3);
+	CU_ASSERT(mapping_length == MAP_PAGE_SIZE * 3);
 
 	/* Translate an unaligned address */
-	mapping_length = VALUE_2MB * 3;
+	mapping_length = MAP_PAGE_SIZE * 3;
 	addr = spdk_mem_map_translate(map, VALUE_4KB, &mapping_length);
 	CU_ASSERT(addr == 0);
-	CU_ASSERT(mapping_length == VALUE_2MB * 3 - VALUE_4KB);
+	CU_ASSERT(mapping_length == MAP_PAGE_SIZE * 3 - VALUE_4KB);
 
 	/* Clear translation for the middle page of the larger region. */
-	rc = spdk_mem_map_clear_translation(map, VALUE_2MB, VALUE_2MB);
+	rc = spdk_mem_map_clear_translation(map, MAP_PAGE_SIZE, MAP_PAGE_SIZE);
 	CU_ASSERT(rc == 0);
 
 	/* Get translation for first page */
@@ -253,23 +255,23 @@ test_mem_map_translation(void)
 	CU_ASSERT(addr == 0);
 
 	/* Make sure we indicate that the three regions are no longer contiguous */
-	mapping_length = VALUE_2MB * 3;
+	mapping_length = MAP_PAGE_SIZE * 3;
 	addr = spdk_mem_map_translate(map, 0, &mapping_length);
 	CU_ASSERT(addr == 0);
-	CU_ASSERT(mapping_length == VALUE_2MB);
+	CU_ASSERT(mapping_length == MAP_PAGE_SIZE);
 
 	/* Get translation for an unallocated block. Make sure size is 0 */
-	mapping_length = VALUE_2MB * 3;
-	addr = spdk_mem_map_translate(map, VALUE_2MB, &mapping_length);
+	mapping_length = MAP_PAGE_SIZE * 3;
+	addr = spdk_mem_map_translate(map, MAP_PAGE_SIZE, &mapping_length);
 	CU_ASSERT(addr == default_translation);
-	CU_ASSERT(mapping_length == VALUE_2MB);
+	CU_ASSERT(mapping_length == MAP_PAGE_SIZE);
 
 	/* Verify translation for 2nd page is the default */
-	addr = spdk_mem_map_translate(map, VALUE_2MB, NULL);
+	addr = spdk_mem_map_translate(map, MAP_PAGE_SIZE, NULL);
 	CU_ASSERT(addr == default_translation);
 
 	/* Get translation for third page */
-	addr = spdk_mem_map_translate(map, 2 * VALUE_2MB, NULL);
+	addr = spdk_mem_map_translate(map, 2 * MAP_PAGE_SIZE, NULL);
 	/*
 	 * Note that addr should be 0, not 4MB. When we set the
 	 * translation above, we said the whole 6MB region
@@ -285,18 +287,18 @@ test_mem_map_translation(void)
 
 	/* Translate another subset of a 2MB page */
 	mapping_length = 543;
-	addr = spdk_mem_map_translate(map, VALUE_4KB, &mapping_length);
+	addr = spdk_mem_map_translate(map, MAP_PAGE_SIZE >> 1, &mapping_length);
 	CU_ASSERT(addr == 0);
 	CU_ASSERT(mapping_length == 543);
 
 	/* Try to translate an unaligned region that is only partially registered */
 	mapping_length = 543;
-	addr = spdk_mem_map_translate(map, 3 * VALUE_2MB - 196, &mapping_length);
+	addr = spdk_mem_map_translate(map, 3 * MAP_PAGE_SIZE - 196, &mapping_length);
 	CU_ASSERT(addr == 0);
 	CU_ASSERT(mapping_length == 196);
 
 	/* Clear translation for the first page */
-	rc = spdk_mem_map_clear_translation(map, 0, VALUE_2MB);
+	rc = spdk_mem_map_clear_translation(map, 0, MAP_PAGE_SIZE);
 	CU_ASSERT(rc == 0);
 
 	/* Get translation for the first page */
@@ -304,27 +306,27 @@ test_mem_map_translation(void)
 	CU_ASSERT(addr == default_translation);
 
 	/* Clear translation for the third page */
-	rc = spdk_mem_map_clear_translation(map, 2 * VALUE_2MB, VALUE_2MB);
+	rc = spdk_mem_map_clear_translation(map, 2 * MAP_PAGE_SIZE, MAP_PAGE_SIZE);
 	CU_ASSERT(rc == 0);
 
 	/* Get translation for the third page */
-	addr = spdk_mem_map_translate(map, 2 * VALUE_2MB, NULL);
+	addr = spdk_mem_map_translate(map, 2 * MAP_PAGE_SIZE, NULL);
 	CU_ASSERT(addr == default_translation);
 
 	/* Set translation for the last valid 2MB region */
-	rc = spdk_mem_map_set_translation(map, 0xffffffe00000ULL, VALUE_2MB, 0x1234);
+	rc = spdk_mem_map_set_translation(map, last_valid_page, MAP_PAGE_SIZE, 0x1234);
 	CU_ASSERT(rc == 0);
 
 	/* Verify translation for last valid 2MB region */
-	addr = spdk_mem_map_translate(map, 0xffffffe00000ULL, NULL);
+	addr = spdk_mem_map_translate(map, last_valid_page, NULL);
 	CU_ASSERT(addr == 0x1234);
 
 	/* Attempt to set translation for the first invalid address */
-	rc = spdk_mem_map_set_translation(map, 0x1000000000000ULL, VALUE_2MB, 0x5678);
+	rc = spdk_mem_map_set_translation(map, first_invalid_addr, MAP_PAGE_SIZE, 0x5678);
 	CU_ASSERT(rc == -EINVAL);
 
 	/* Attempt to set translation starting at a valid address but exceeding the valid range */
-	rc = spdk_mem_map_set_translation(map, 0xffffffe00000ULL, VALUE_2MB * 2, 0x123123);
+	rc = spdk_mem_map_set_translation(map, last_valid_page, MAP_PAGE_SIZE * 2, 0x123123);
 	CU_ASSERT(rc != 0);
 
 	spdk_mem_map_free(&map);
@@ -335,14 +337,14 @@ test_mem_map_translation(void)
 	SPDK_CU_ASSERT_FATAL(map != NULL);
 
 	/* map three contiguous regions */
-	rc = spdk_mem_map_set_translation(map, 0, 3 * VALUE_2MB, 0);
+	rc = spdk_mem_map_set_translation(map, 0, 3 * MAP_PAGE_SIZE, 0);
 	CU_ASSERT(rc == 0);
 
 	/* Since we can't check their contiguity, make sure we only return the size of one page */
-	mapping_length = VALUE_2MB * 3;
+	mapping_length = MAP_PAGE_SIZE * 3;
 	addr = spdk_mem_map_translate(map, 0, &mapping_length);
 	CU_ASSERT(addr == 0);
-	CU_ASSERT(mapping_length == VALUE_2MB);
+	CU_ASSERT(mapping_length == MAP_PAGE_SIZE);
 
 	/* Translate only a subset of a 2MB page */
 	mapping_length = 543;
@@ -351,7 +353,7 @@ test_mem_map_translation(void)
 	CU_ASSERT(mapping_length == 543);
 
 	/* Clear the translation */
-	rc = spdk_mem_map_clear_translation(map, 0, VALUE_2MB * 3);
+	rc = spdk_mem_map_clear_translation(map, 0, MAP_PAGE_SIZE * 3);
 	CU_ASSERT(rc == 0);
 
 	spdk_mem_map_free(&map);
@@ -369,47 +371,47 @@ test_mem_map_registration(void)
 	SPDK_CU_ASSERT_FATAL(map != NULL);
 
 	/* Unregister memory region that wasn't previously registered */
-	rc =  spdk_mem_unregister((void *)VALUE_2MB, VALUE_2MB);
+	rc =  spdk_mem_unregister((void *)MAP_PAGE_SIZE, MAP_PAGE_SIZE);
 	CU_ASSERT(rc == -EINVAL);
 
 	/* Register non-2MB multiple size */
-	rc = spdk_mem_register((void *)VALUE_2MB, 1234);
+	rc = spdk_mem_register((void *)MAP_PAGE_SIZE, 1234);
 	CU_ASSERT(rc == -EINVAL);
 
 	/* Register region that isn't 2MB aligned */
-	rc = spdk_mem_register((void *)1234, VALUE_2MB);
+	rc = spdk_mem_register((void *)1234, MAP_PAGE_SIZE);
 	CU_ASSERT(rc == -EINVAL);
 
 	/* Register one 2MB page */
-	rc = spdk_mem_register((void *)VALUE_2MB, VALUE_2MB);
+	rc = spdk_mem_register((void *)MAP_PAGE_SIZE, MAP_PAGE_SIZE);
 	CU_ASSERT(rc == 0);
 
 	/* Register an overlapping address range */
-	rc = spdk_mem_register((void *)0, 3 * VALUE_2MB);
+	rc = spdk_mem_register((void *)0, 3 * MAP_PAGE_SIZE);
 	CU_ASSERT(rc == -EBUSY);
 
 	/* Unregister a 2MB page */
-	rc = spdk_mem_unregister((void *)VALUE_2MB, VALUE_2MB);
+	rc = spdk_mem_unregister((void *)MAP_PAGE_SIZE, MAP_PAGE_SIZE);
 	CU_ASSERT(rc == 0);
 
 	/* Register non overlapping address range */
-	rc = spdk_mem_register((void *)0, 3 * VALUE_2MB);
+	rc = spdk_mem_register((void *)0, 3 * MAP_PAGE_SIZE);
 	CU_ASSERT(rc == 0);
 
 	/* Unregister the middle page of the larger region. */
-	rc = spdk_mem_unregister((void *)VALUE_2MB, VALUE_2MB);
+	rc = spdk_mem_unregister((void *)MAP_PAGE_SIZE, MAP_PAGE_SIZE);
 	CU_ASSERT(rc == -ERANGE);
 
 	/* Unregister the first page */
-	rc = spdk_mem_unregister((void *)0, VALUE_2MB);
+	rc = spdk_mem_unregister((void *)0, MAP_PAGE_SIZE);
 	CU_ASSERT(rc == -ERANGE);
 
 	/* Unregister the third page */
-	rc = spdk_mem_unregister((void *)(2 * VALUE_2MB), VALUE_2MB);
+	rc = spdk_mem_unregister((void *)(2 * MAP_PAGE_SIZE), MAP_PAGE_SIZE);
 	CU_ASSERT(rc == -ERANGE);
 
 	/* Unregister the entire address range */
-	rc = spdk_mem_unregister((void *)0, 3 * VALUE_2MB);
+	rc = spdk_mem_unregister((void *)0, 3 * MAP_PAGE_SIZE);
 	CU_ASSERT(rc == 0);
 
 	spdk_mem_map_free(&map);
@@ -432,9 +434,9 @@ test_mem_map_registration_adjacent(void)
 
 	vaddr = 0;
 	for (i = 0; i < SPDK_COUNTOF(chunk_len); i++) {
-		notify_len[vaddr / VALUE_2MB] = chunk_len[i] * VALUE_2MB;
-		spdk_mem_register((void *)vaddr, notify_len[vaddr / VALUE_2MB]);
-		vaddr += notify_len[vaddr / VALUE_2MB];
+		notify_len[vaddr / MAP_PAGE_SIZE] = chunk_len[i] * MAP_PAGE_SIZE;
+		spdk_mem_register((void *)vaddr, notify_len[vaddr / MAP_PAGE_SIZE]);
+		vaddr += notify_len[vaddr / MAP_PAGE_SIZE];
 	}
 
 	/* Verify the memory is translated in the same chunks it was registered */
@@ -446,9 +448,9 @@ test_mem_map_registration_adjacent(void)
 
 	vaddr = 0;
 	for (i = 0; i < SPDK_COUNTOF(chunk_len); i++) {
-		notify_len[vaddr / VALUE_2MB] = chunk_len[i] * VALUE_2MB;
-		spdk_mem_unregister((void *)vaddr, notify_len[vaddr / VALUE_2MB]);
-		vaddr += notify_len[vaddr / VALUE_2MB];
+		notify_len[vaddr / MAP_PAGE_SIZE] = chunk_len[i] * MAP_PAGE_SIZE;
+		spdk_mem_unregister((void *)vaddr, notify_len[vaddr / MAP_PAGE_SIZE]);
+		vaddr += notify_len[vaddr / MAP_PAGE_SIZE];
 	}
 
 	/* Register all chunks again just to unregister them again, but this
@@ -456,14 +458,42 @@ test_mem_map_registration_adjacent(void)
 	 */
 	vaddr = 0;
 	for (i = 0; i < SPDK_COUNTOF(chunk_len); i++) {
-		notify_len[vaddr / VALUE_2MB] = chunk_len[i] * VALUE_2MB;
-		spdk_mem_register((void *)vaddr, notify_len[vaddr / VALUE_2MB]);
-		vaddr += notify_len[vaddr / VALUE_2MB];
+		notify_len[vaddr / MAP_PAGE_SIZE] = chunk_len[i] * MAP_PAGE_SIZE;
+		spdk_mem_register((void *)vaddr, notify_len[vaddr / MAP_PAGE_SIZE]);
+		vaddr += notify_len[vaddr / MAP_PAGE_SIZE];
 	}
 	spdk_mem_unregister(0, vaddr);
 
 	spdk_mem_map_free(&map);
 	CU_ASSERT(map == NULL);
+}
+
+static int
+init_2mb_map(void)
+{
+	mem_map_use_page_shift(SHIFT_2MB);
+	return mem_map_init(false);
+}
+
+static int
+cleanup_2mb_map(void)
+{
+	mem_map_fini();
+	return 0;
+}
+
+static int
+init_4kb_map(void)
+{
+	mem_map_use_page_shift(SHIFT_4KB);
+	return mem_map_init(false);
+}
+
+static int
+cleanup_4kb_map(void)
+{
+	mem_map_fini();
+	return 0;
 }
 
 int
@@ -479,16 +509,29 @@ main(int argc, char **argv)
 	  */
 	g_page_array = spdk_bit_array_create(PAGE_ARRAY_SIZE);
 
-	/* Initialize the memory map */
-	if (mem_map_init(false) < 0) {
-		return CUE_NOMEMORY;
-	}
-
 	if (CU_initialize_registry() != CUE_SUCCESS) {
 		return CU_get_error();
 	}
 
-	suite = CU_add_suite("memory", NULL, NULL);
+	/* Test suite for 2MB page size mapping. */
+	suite = CU_add_suite("mem_map_2mb", init_2mb_map, cleanup_2mb_map);
+	if (suite == NULL) {
+		CU_cleanup_registry();
+		return CU_get_error();
+	}
+
+	if (
+		CU_add_test(suite, "alloc and free memory map", test_mem_map_alloc_free) == NULL ||
+		CU_add_test(suite, "mem map translation", test_mem_map_translation) == NULL ||
+		CU_add_test(suite, "mem map registration", test_mem_map_registration) == NULL ||
+		CU_add_test(suite, "mem map adjacent registrations", test_mem_map_registration_adjacent) == NULL
+	) {
+		CU_cleanup_registry();
+		return CU_get_error();
+	}
+
+	/* Test suite for 4KB page size mapping. */
+	suite = CU_add_suite("mem_map_4kb", init_4kb_map, cleanup_4kb_map);
 	if (suite == NULL) {
 		CU_cleanup_registry();
 		return CU_get_error();
