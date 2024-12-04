@@ -1185,7 +1185,10 @@ create_compress_bdev(const char *bdev_name, const char *pm_path, uint32_t lb_siz
 	struct stat info;
 	int rc;
 
-	if (stat(pm_path, &info) != 0) {
+	if (pm_path == NULL || strcmp(pm_path, REDUCE_META_BUILTIN) == 0) {
+		pm_path = REDUCE_META_BUILTIN;
+		SPDK_NOTICELOG("Enable meta region on backing dev %s.\n", bdev_name);
+	} else if (stat(pm_path, &info) != 0) {
 		SPDK_ERRLOG("PM path %s does not exist.\n", pm_path);
 		return -EINVAL;
 	} else if (!S_ISDIR(info.st_mode)) {
