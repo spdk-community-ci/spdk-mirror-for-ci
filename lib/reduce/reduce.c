@@ -222,11 +222,16 @@ struct meta_builtin_request_ctx {
 	void *logicalmap_meta_req;
 };
 
+struct meta_builtin_load_ctx {
+	struct reduce_init_load_ctx *load_ctx;
+};
+
 /* meta read/write operations are async, should save the context before meta opetations */
 union reduce_meta_restore_ctx_container {
 	struct meta_builtin_readv_ctx readv_ctx;
 	struct meta_builtin_read_chunk_ctx read_chunk_ctx;
 	struct meta_builtin_request_ctx req_ctx;
+	struct meta_builtin_load_ctx load_ctx;
 };
 
 struct reduce_meta_request {
@@ -1504,6 +1509,156 @@ _get_init_meta_req(struct spdk_reduce_vol *vol, bool is_write,
 	return meta_req;
 }
 
+static void _load_allocated_backing_io_unit(struct reduce_init_load_ctx *load_ctx, uint32_t mblksn);
+
+/* restore the vol->allocated_backing_io_units by meta blocks */
+static void
+_load_allocated_backing_io_unit_cb(void *cb_arg, int reduce_errno)
+{
+	struct reduce_meta_request *meta_req = cb_arg;
+	struct reduce_init_load_ctx *load_ctx = meta_req->restore_ctx.load_ctx.load_ctx;
+	struct spdk_reduce_vol *vol = meta_req->vol;
+	struct spdk_reduce_meta_desc *mdesc = &vol->params.meta_region_desc[REDUCE_MTYPE_CHUNK_MAP];
+	void *chunk_array;
+	struct spdk_reduce_chunk_map *chunk = NULL;
+	/* chunk_off chunk_count describes the location of the chunkmap contained in this metadata block
+	 * among all chunkmaps in the reduce volume. Just like offset and length.
+	 */
+	uint32_t chunk_off, chunk_count, chunk_size, chunk_idx, next_mblksn, chunkmap_idx, i, io_unit;
+	uint64_t io_unit_index;
+
+	if (reduce_errno != 0) {
+		goto error;
+	}
+
+	chunk_size = mdesc->size_per_elem;
+	chunk_off = (meta_req->mblk_sn - mdesc->offset) * mdesc->elems_per_mblk;
+	chunk_count = mdesc->elems_per_mblk;
+
+	chunk_array = _reduce_get_meta_elem_addr(meta_req);
+	for (i = 0; i < chunk_count; i++) {
+		chunk_idx = chunk_off + i;
+		/* one chunkmap metablock contains lots of chunkmap, skip unused chunks */
+		if (0 == spdk_bit_array_get(vol->allocated_chunk_maps, chunk_idx)) {
+			continue;
+		}
+		chunk = (struct spdk_reduce_chunk_map *)(chunk_array + i * chunk_size);
+		for (io_unit = 0; io_unit < vol->backing_io_units_per_chunk; io_unit++) {
+			io_unit_index = chunk->io_unit_index[io_unit];
+			if (io_unit_index == REDUCE_EMPTY_MAP_ENTRY) {
+				continue;
+			}
+			spdk_bit_array_set(vol->allocated_backing_io_units, io_unit_index);
+		}
+	}
+	/* we only read the chunkmap mblks which contain used chunks */
+	assert(chunk);
+	_reduce_metablock_cache_read_done_update(meta_req, reduce_errno);
+
+	chunkmap_idx = spdk_bit_array_find_first_set(vol->allocated_chunk_maps, chunk_off + chunk_count);
+	if (chunkmap_idx == UINT32_MAX) {
+		SPDK_NOTICELOG("vol:%p io unit bitarray load finish\n", vol);
+		load_ctx->cb_fn(load_ctx->cb_arg, vol, 0);
+		_init_load_cleanup(NULL, load_ctx);
+		return;
+	}
+
+	/* load next chunkmap mblks */
+	next_mblksn = _meta_get_mblksn(&vol->params, REDUCE_MTYPE_CHUNK_MAP, chunkmap_idx);
+	_load_allocated_backing_io_unit(load_ctx, next_mblksn);
+	return;
+
+error:
+	load_ctx->cb_fn(load_ctx->cb_arg, NULL, reduce_errno);
+	_init_load_cleanup(vol, load_ctx);
+}
+
+static void
+_load_allocated_backing_io_unit(struct reduce_init_load_ctx *load_ctx, uint32_t mblksn)
+{
+	struct spdk_reduce_vol *vol = load_ctx->vol;
+	struct reduce_meta_request *meta_req;
+	uint32_t next_mblksn, chunkmap_idx;
+
+	if (mblksn == UINT32_MAX) {
+		chunkmap_idx = spdk_bit_array_find_first_set(vol->allocated_chunk_maps, 0);
+		if (chunkmap_idx == UINT32_MAX) {
+			/* means the compress volume is empty */
+			SPDK_NOTICELOG("vol:%p backing io units don't need load\n", vol);
+			load_ctx->cb_fn(load_ctx->cb_arg, vol, 0);
+			_init_load_cleanup(NULL, load_ctx);
+			return;
+		}
+		next_mblksn = _meta_get_mblksn(&vol->params, REDUCE_MTYPE_CHUNK_MAP, chunkmap_idx);
+	} else {
+		next_mblksn = mblksn;
+	}
+
+	meta_req = _get_init_meta_req(vol, false, REDUCE_MTYPE_CHUNK_MAP,
+				      next_mblksn, 0,
+				      _load_allocated_backing_io_unit_cb);
+	meta_req->restore_ctx.load_ctx.load_ctx = load_ctx;
+	_reduce_metablock_cache_read(meta_req);
+}
+
+static void _load_allocated_chunk_map_by_md(struct reduce_init_load_ctx *load_ctx, uint32_t mblksn);
+
+/* restore the vol->allocated_chunk_maps by meta blocks */
+static void
+_load_allocated_chunk_map_cb(void *cb_arg, int reduce_errno)
+{
+	struct reduce_meta_request *meta_req = cb_arg;
+	struct reduce_init_load_ctx *load_ctx = meta_req->restore_ctx.load_ctx.load_ctx;
+	struct spdk_reduce_vol *vol = meta_req->vol;
+	struct spdk_reduce_meta_desc *mdesc = &vol->params.meta_region_desc[REDUCE_MTYPE_LOGICAL_MAP];
+	uint64_t *logical_map_array, logical_map;
+	uint32_t next_mblksn;
+
+	if (reduce_errno != 0) {
+		goto error;
+	}
+
+	logical_map_array = _reduce_get_meta_elem_addr(meta_req);
+	for (int i = 0; i < mdesc->elems_per_mblk; i++) {
+		logical_map = logical_map_array[i];
+		if (logical_map == REDUCE_EMPTY_MAP_ENTRY) {
+			continue;
+		}
+		spdk_bit_array_set(vol->allocated_chunk_maps, logical_map);
+	}
+
+	next_mblksn = meta_req->mblk_sn + 1;
+	_reduce_metablock_cache_read_done_update(meta_req, reduce_errno);
+
+	if (next_mblksn == mdesc->offset + mdesc->length) {
+		SPDK_NOTICELOG("vol:%p logical map bitarray load finish\n", vol);
+		_load_allocated_backing_io_unit(load_ctx, UINT32_MAX);
+		return;
+	}
+
+	_load_allocated_chunk_map_by_md(load_ctx, next_mblksn);
+	return;
+
+error:
+	load_ctx->cb_fn(load_ctx->cb_arg, NULL, reduce_errno);
+	_init_load_cleanup(vol, load_ctx);
+}
+
+static void
+_load_allocated_chunk_map_by_md(struct reduce_init_load_ctx *load_ctx, uint32_t mblksn)
+{
+	struct spdk_reduce_vol *vol = load_ctx->vol;
+	struct spdk_reduce_meta_desc *md_desc = &vol->params.meta_region_desc[REDUCE_MTYPE_LOGICAL_MAP];
+	struct reduce_meta_request *meta_req;
+	uint32_t next_mblksn = mblksn == UINT32_MAX ? md_desc->offset : mblksn;
+
+	meta_req = _get_init_meta_req(vol, false, REDUCE_MTYPE_LOGICAL_MAP,
+				      next_mblksn, 0,
+				      _load_allocated_chunk_map_cb);
+	meta_req->restore_ctx.load_ctx.load_ctx = load_ctx;
+	_reduce_metablock_cache_read(meta_req);
+}
+
 static void destroy_load_cb(void *cb_arg, struct spdk_reduce_vol *vol, int reduce_errno);
 
 static void
@@ -1548,6 +1703,8 @@ _load_read_super_and_path_cpl(void *cb_arg, int reduce_errno)
 		return;
 	}
 
+	assert(vol->backing_super->params.meta_builtin == _check_meta_builtin(vol->pm_file.path));
+
 	memcpy(&vol->params, &vol->backing_super->params, sizeof(vol->params));
 	vol->backing_io_units_per_chunk = vol->params.chunk_size / vol->params.backing_io_unit_size;
 	vol->logical_blocks_per_chunk = vol->params.chunk_size / vol->params.logical_block_size;
@@ -1566,6 +1723,20 @@ _load_read_super_and_path_cpl(void *cb_arg, int reduce_errno)
 		goto error;
 	}
 
+	rc = _allocate_vol_requests(vol);
+	if (rc != 0) {
+		goto error;
+	}
+
+	if (vol->params.meta_builtin) {
+		rc = _allocate_vol_metablock_and_metaio(load_ctx->vol);
+		if (rc != 0) {
+			goto error;
+		}
+		_load_allocated_chunk_map_by_md(load_ctx, UINT32_MAX);
+		return;
+	}
+
 	vol->pm_file.size = _get_pm_file_size(&vol->params);
 	vol->pm_file.pm_buf = pmem_map_file(vol->pm_file.path, 0, 0, 0, &mapped_len,
 					    &vol->pm_file.pm_is_pmem);
@@ -1579,11 +1750,6 @@ _load_read_super_and_path_cpl(void *cb_arg, int reduce_errno)
 		SPDK_ERRLOG("could not map entire pmem file (size=%" PRIu64 " mapped=%" PRIu64 ")\n",
 			    vol->pm_file.size, mapped_len);
 		rc = -ENOMEM;
-		goto error;
-	}
-
-	rc = _allocate_vol_requests(vol);
-	if (rc != 0) {
 		goto error;
 	}
 
@@ -1642,6 +1808,10 @@ spdk_reduce_vol_load(struct spdk_reduce_backing_dev *backing_dev,
 	TAILQ_INIT(&vol->queued_requests);
 	queue_init(&vol->free_chunks_queue);
 	queue_init(&vol->free_backing_blocks_queue);
+	TAILQ_INIT(&vol->metablocks_free);
+	TAILQ_INIT(&vol->metablocks_lru);
+	RB_INIT(&vol->metablocks_caching);
+	TAILQ_INIT(&vol->free_meta_request);
 
 	vol->backing_super = spdk_zmalloc(sizeof(*vol->backing_super), 64, NULL,
 					  SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
@@ -1736,7 +1906,7 @@ destroy_unload_cpl(void *cb_arg, int reduce_errno)
 	struct reduce_destroy_ctx *destroy_ctx = cb_arg;
 
 	if (destroy_ctx->reduce_errno == 0) {
-		if (unlink(destroy_ctx->pm_path)) {
+		if (!_check_meta_builtin(destroy_ctx->pm_path) && unlink(destroy_ctx->pm_path)) {
 			SPDK_ERRLOG("%s could not be unlinked: %s\n",
 				    destroy_ctx->pm_path, strerror(errno));
 		}
