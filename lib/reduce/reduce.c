@@ -16,6 +16,7 @@
 #include "spdk/log.h"
 #include "spdk/memory.h"
 #include "spdk/tree.h"
+#include "spdk/queue.h"
 
 #include "libpmem.h"
 
@@ -33,7 +34,7 @@
 struct spdk_reduce_vol_superblock {
 	uint8_t				signature[8];
 	struct spdk_reduce_vol_params	params;
-	uint8_t				reserved[4040];
+	uint8_t				reserved[3983];
 };
 SPDK_STATIC_ASSERT(sizeof(struct spdk_reduce_vol_superblock) == 4096, "size incorrect");
 
@@ -45,6 +46,10 @@ SPDK_STATIC_ASSERT(sizeof(SPDK_REDUCE_SIGNATURE) - 1 ==
 #define REDUCE_PATH_MAX 4096
 
 #define REDUCE_ZERO_BUF_SIZE 0x100000
+
+/* REDUCE_META_CACHE_BLOCK_NUM should not less than 2*REDUCE_NUM_VOL_REQUESTS */
+#define REDUCE_META_CACHE_BLOCK_NUM	(4 * REDUCE_NUM_VOL_REQUESTS)
+#define REDUCE_META_INIT_BUF_SIZE	(256 << 10)	/* 256KB */
 
 /**
  * Describes a persistent memory file used to hold metadata associated with a
@@ -111,6 +116,10 @@ struct spdk_reduce_vol_request {
 	uint64_t				length;
 	uint64_t				chunk_map_index;
 	struct spdk_reduce_chunk_map		*chunk;
+	/* save the new chunkinfo to the pre-allocated chunk mem,
+	 * then memcpy from here to the metablock which used to submit backend
+	 */
+	struct spdk_reduce_chunk_map		*prealloc_chunk;
 	spdk_reduce_vol_op_complete		cb_fn;
 	void					*cb_arg;
 	TAILQ_ENTRY(spdk_reduce_vol_request)	tailq;
@@ -152,6 +161,61 @@ struct spdk_reduce_vol {
 	struct iovec				*buf_iov_mem;
 	/* Single contiguous buffer used for backing io buffers for this volume. */
 	uint8_t					*buf_backing_io_mem;
+
+	/* the count of meta cache block we prepare */
+	uint32_t				metablocks_num;
+	/* A pointer of many 4k DMA mem from huge page, It has metablocks_num * 4K Bytes */
+	uint8_t					*metablock_buf;
+	/* A pointer of many mblk describtion struct mem. The count of these struct is equal to metablocks num */
+	struct reduce_metablock_extent		*metablock_extent_mem;
+	TAILQ_HEAD(, reduce_metablock_extent)	metablocks_free;
+	RB_HEAD(metablock_cache_tree, reduce_metablock_extent) metablocks_caching;
+	TAILQ_HEAD(, reduce_metablock_extent)	metablocks_lru;
+
+	/* use independent mem for meta opetation backingio */
+	struct reduce_meta_request		*meta_request_buf;
+	TAILQ_HEAD(, reduce_meta_request)	free_meta_request;
+};
+
+struct reduce_metablock_extent {
+	uint32_t				mblk_sn;
+	/* pointer to 4K mem */
+	struct iovec				iov;
+	/* the node to attach free list or lru list */
+	TAILQ_ENTRY(reduce_metablock_extent)	tailq;
+	/* the node to attach read/write tree */
+	RB_ENTRY(reduce_metablock_extent)	rbnode;
+
+	/* the write_meta_req cnt that this one metadata write operation catching */
+	uint32_t				batch_write_cnt;
+	/* the refcnt should be both pending_to_supply_read and pending_to_write elem count */
+	uint32_t				refcnt;
+	/* when multi io to access metablock, callback them by the tailq */
+	TAILQ_HEAD(, reduce_meta_request)	pending_to_supply_read;
+	TAILQ_HEAD(, reduce_meta_request)	pending_to_write;
+};
+
+struct reduce_meta_request {
+	/* the node to attach free_meta_backingio or pending list of struct reduce_metablock_extent */
+	TAILQ_ENTRY(reduce_meta_request)	tailq;
+
+	struct spdk_reduce_vol			*vol;
+	/* if need or may need to update meta, set the is_write flag */
+	bool					is_write;
+	/* when we want to update meta, should do read-modify-write about the metablock.
+	 * 1. set the supply_read flag, and do read.
+	 * 2. read callback, modify the elem on metablock, and reset the supply_read flag. send do write.
+	 * 3. write callback, we can judge the meta stage according the supply_read flag.
+	 */
+	bool					supply_read;
+	enum spdk_reduce_meta_type		mtype;
+	uint32_t				mblk_sn;
+	uint32_t				elem_sn_on_mblk;
+	/* A pointer to caching meta block */
+	struct reduce_metablock_extent		*mblk_extent;
+
+	struct spdk_reduce_vol_cb_args		cb_args;
+	struct spdk_reduce_backing_io		backing_io;
 };
 
 static void _start_readv_request(struct spdk_reduce_vol_request *req);
@@ -312,6 +376,17 @@ _initialize_vol_pm_pointers(struct spdk_reduce_vol *vol)
 	vol->pm_chunk_maps = (uint64_t *)((uint8_t *)vol->pm_logical_map + logical_map_size);
 }
 
+struct reduce_mblk_init_ctx {
+	/* unit: bytes */
+	void					*meta_init_buf;
+	size_t					buf_len;
+	/* unit: backing blocklen */
+	uint64_t				off_need_init;
+	uint64_t				len_need_init;
+	uint64_t				off_need_init_next;
+	uint32_t				maxlen_per_io;
+};
+
 /* We need 2 iovs during load - one for the superblock, another for the path */
 #define LOAD_IOV_COUNT	2
 
@@ -323,6 +398,7 @@ struct reduce_init_load_ctx {
 	struct iovec				iov[LOAD_IOV_COUNT];
 	void					*path;
 	struct spdk_reduce_backing_io           *backing_io;
+	struct reduce_mblk_init_ctx		mblk_init_ctx;
 };
 
 static inline bool
@@ -370,7 +446,7 @@ _allocate_vol_requests(struct spdk_reduce_vol *vol)
 {
 	struct spdk_reduce_vol_request *req;
 	struct spdk_reduce_backing_dev *backing_dev = vol->backing_dev;
-	uint32_t reqs_in_2mb_page, huge_pages_needed;
+	uint32_t reqs_in_2mb_page, huge_pages_needed, request_memlen;
 	uint8_t *buffer, *buffer_end;
 	int i = 0;
 	int rc = 0;
@@ -391,7 +467,11 @@ _allocate_vol_requests(struct spdk_reduce_vol *vol)
 		return -ENOMEM;
 	}
 
-	vol->request_mem = calloc(REDUCE_NUM_VOL_REQUESTS, sizeof(*req));
+	request_memlen = sizeof(*req);
+	if (vol->params.meta_builtin) {
+		request_memlen = sizeof(*req) + _reduce_vol_get_chunk_struct_size(vol->backing_io_units_per_chunk);
+	}
+	vol->request_mem = calloc(REDUCE_NUM_VOL_REQUESTS, request_memlen);
 	if (vol->request_mem == NULL) {
 		spdk_free(vol->buf_mem);
 		vol->buf_mem = NULL;
@@ -427,8 +507,11 @@ _allocate_vol_requests(struct spdk_reduce_vol *vol)
 	buffer_end = buffer + VALUE_2MB * huge_pages_needed;
 
 	for (i = 0; i < REDUCE_NUM_VOL_REQUESTS; i++) {
-		req = &vol->request_mem[i];
+		req = (void *)vol->request_mem + i * request_memlen;
 		TAILQ_INSERT_HEAD(&vol->free_requests, req, tailq);
+		if (vol->params.meta_builtin) {
+			req->prealloc_chunk = (void *)req + sizeof(*req);
+		}
 		req->backing_io = (struct spdk_reduce_backing_io *)(vol->buf_backing_io_mem + i *
 				  (sizeof(struct spdk_reduce_backing_io) + backing_dev->user_ctx_size) *
 				  vol->backing_io_units_per_chunk);
@@ -475,6 +558,7 @@ _init_load_cleanup(struct spdk_reduce_vol *vol, struct reduce_init_load_ctx *ctx
 {
 	if (ctx != NULL) {
 		spdk_free(ctx->path);
+		spdk_free(ctx->mblk_init_ctx.meta_init_buf);
 		free(ctx->backing_io);
 		free(ctx);
 	}
@@ -491,6 +575,9 @@ _init_load_cleanup(struct spdk_reduce_vol *vol, struct reduce_init_load_ctx *ctx
 		free(vol->buf_backing_io_mem);
 		free(vol->buf_iov_mem);
 		spdk_free(vol->buf_mem);
+		spdk_free(vol->metablock_buf);
+		free(vol->metablock_extent_mem);
+		free(vol->meta_request_buf);
 		free(vol);
 	}
 }
@@ -516,6 +603,71 @@ _alloc_zero_buff(void)
 	return rc;
 }
 
+static int
+_allocate_vol_metablock_and_metaio(struct spdk_reduce_vol *vol)
+{
+	uint32_t mblk_in_2mb_page, total_mblk, total_metareq, huge_pages_needed, backing_io_struct_size, i;
+	struct reduce_metablock_extent *mblk_extent;
+	struct reduce_meta_request *meta_request;
+	int rc = 0;
+
+	mblk_in_2mb_page = VALUE_2MB / REDUCE_META_BLKSZ;
+	huge_pages_needed = SPDK_CEIL_DIV(REDUCE_META_CACHE_BLOCK_NUM, mblk_in_2mb_page);
+	total_mblk = huge_pages_needed * mblk_in_2mb_page;
+	vol->metablocks_num = total_mblk;
+
+	/* alloc metablock mem */
+	vol->metablock_buf = spdk_dma_malloc(VALUE_2MB * huge_pages_needed, VALUE_2MB, NULL);
+	if (vol->metablock_buf == NULL) {
+		rc = -ENOMEM;
+		goto err;
+	}
+
+	/* alloc metablock control struct */
+	vol->metablock_extent_mem = calloc(total_mblk, sizeof(*vol->metablock_extent_mem));
+	if (vol->request_mem == NULL) {
+		rc = -ENOMEM;
+		goto err;
+	}
+	for (i = 0; i < total_mblk; i++) {
+		mblk_extent = &vol->metablock_extent_mem[i];
+		mblk_extent->iov.iov_base = vol->metablock_buf + i * REDUCE_META_BLKSZ;
+		mblk_extent->iov.iov_len = REDUCE_META_BLKSZ;
+		TAILQ_INIT(&mblk_extent->pending_to_supply_read);
+		TAILQ_INIT(&mblk_extent->pending_to_write);
+		TAILQ_INSERT_HEAD(&vol->metablocks_free, mblk_extent, tailq);
+	}
+
+	/* alloc reduce_meta_request struct mem
+	 * Use these struct memory to record the ctx before meta read/write operetion, wait complete callback to restore them.
+	 */
+	backing_io_struct_size = sizeof(struct reduce_meta_request) + vol->backing_dev->user_ctx_size;
+	/* every vol date request may need 2 meta req for logical_map and chunk_map */
+	total_metareq = 2 * REDUCE_NUM_VOL_REQUESTS;
+	vol->meta_request_buf = (struct reduce_meta_request *)calloc(total_metareq, backing_io_struct_size);
+	if (vol->meta_request_buf == NULL) {
+		rc = -ENOMEM;
+		goto err;
+	}
+	for (i = 0; i < total_metareq; i++) {
+		meta_request = (struct reduce_meta_request *)((uint8_t *)vol->meta_request_buf + i *
+				backing_io_struct_size);
+		meta_request->backing_io.backing_cb_args = &meta_request->cb_args;
+		TAILQ_INSERT_HEAD(&vol->free_meta_request, meta_request, tailq);
+	}
+
+	return 0;
+err:
+	spdk_free(vol->metablock_buf);
+	free(vol->metablock_extent_mem);
+	free(vol->meta_request_buf);
+	vol->metablock_buf = NULL;
+	vol->metablock_extent_mem = NULL;
+	vol->meta_request_buf = NULL;
+
+	return rc;
+}
+
 static void
 _init_write_super_cpl(void *cb_arg, int reduce_errno)
 {
@@ -530,6 +682,13 @@ _init_write_super_cpl(void *cb_arg, int reduce_errno)
 	rc = _allocate_vol_requests(init_ctx->vol);
 	if (rc != 0) {
 		goto err;
+	}
+
+	if (init_ctx->vol->params.meta_builtin) {
+		rc = _allocate_vol_metablock_and_metaio(init_ctx->vol);
+		if (rc != 0) {
+			goto err;
+		}
 	}
 
 	rc = _alloc_zero_buff();
@@ -582,6 +741,88 @@ _init_write_path_cpl(void *cb_arg, int reduce_errno)
 	vol->backing_dev->submit_backing_io(backing_io);
 }
 
+static void
+_init_builtin_meta_region_cpl(void *cb_arg, int reduce_errno)
+{
+	struct reduce_init_load_ctx *init_ctx = cb_arg;
+	struct spdk_reduce_vol *vol = init_ctx->vol;
+	struct spdk_reduce_backing_io *backing_io = init_ctx->backing_io;
+
+	if (reduce_errno != 0) {
+		_init_write_path_cpl(cb_arg, reduce_errno);
+		return;
+	}
+
+	init_ctx->iov[0].iov_base = init_ctx->path;
+	init_ctx->iov[0].iov_len = REDUCE_PATH_MAX;
+	init_ctx->backing_cb_args.cb_fn = _init_write_path_cpl;
+	init_ctx->backing_cb_args.cb_arg = init_ctx;
+	/* Write path to offset 4K on backing device - just after where the super
+	 *  block will be written.  We wait until this is committed before writing the
+	 *  super block to guarantee we don't get the super block written without the
+	 *  the path if the system crashed in the middle of a write operation.
+	 */
+	backing_io->dev = vol->backing_dev;
+	backing_io->iov = init_ctx->iov;
+	backing_io->iovcnt = 1;
+	backing_io->lba = REDUCE_BACKING_DEV_PATH_OFFSET / vol->backing_dev->blocklen;
+	backing_io->lba_count = REDUCE_PATH_MAX / vol->backing_dev->blocklen;
+	backing_io->backing_cb_args = &init_ctx->backing_cb_args;
+	backing_io->backing_io_type = SPDK_REDUCE_BACKING_IO_WRITE;
+
+	vol->backing_dev->submit_backing_io(backing_io);
+}
+
+static void
+_init_builtin_meta_region(void *cb_arg, int reduce_errno)
+{
+	struct reduce_init_load_ctx *init_ctx = cb_arg;
+	struct spdk_reduce_vol *vol = init_ctx->vol;
+	struct reduce_mblk_init_ctx *ctx = &init_ctx->mblk_init_ctx;
+	struct spdk_reduce_backing_io *backing_io = init_ctx->backing_io;
+	uint64_t offset, len;
+
+	if (reduce_errno || ctx->off_need_init_next == ctx->off_need_init + ctx->len_need_init) {
+		_init_builtin_meta_region_cpl(cb_arg, reduce_errno);
+		return;
+	}
+
+	offset = ctx->off_need_init_next;
+	len = spdk_min(ctx->maxlen_per_io,
+		       ctx->off_need_init + ctx->len_need_init - ctx->off_need_init_next);
+	ctx->off_need_init_next = offset + len;
+
+	init_ctx->iov[0].iov_base = ctx->meta_init_buf;
+	init_ctx->iov[0].iov_len = len * vol->backing_dev->blocklen;
+	init_ctx->backing_cb_args.cb_fn = _init_builtin_meta_region;
+	init_ctx->backing_cb_args.cb_arg = init_ctx;
+
+	backing_io->dev = vol->backing_dev;
+	backing_io->iov = init_ctx->iov;
+	backing_io->iovcnt = 1;
+	backing_io->lba = offset;
+	backing_io->lba_count = len;
+	backing_io->backing_cb_args = &init_ctx->backing_cb_args;
+	backing_io->backing_io_type = SPDK_REDUCE_BACKING_IO_WRITE;
+
+	vol->backing_dev->submit_backing_io(backing_io);
+}
+
+static void
+_init_builtin_meta_region_ctx_init(struct reduce_init_load_ctx *init_ctx)
+{
+	struct reduce_mblk_init_ctx *mblk_init_ctx = &init_ctx->mblk_init_ctx;
+	struct spdk_reduce_vol *vol = init_ctx->vol;
+
+	mblk_init_ctx->off_need_init = vol->params.meta_region_desc[REDUCE_MTYPE_SB].offset /
+				       REDUCE_META_BLKSZ *
+				       vol->backing_dev->blocklen;
+	mblk_init_ctx->len_need_init = vol->params.data_region_off / vol->backing_dev->blocklen -
+				       mblk_init_ctx->off_need_init;
+	mblk_init_ctx->off_need_init_next = mblk_init_ctx->off_need_init;
+	mblk_init_ctx->maxlen_per_io = mblk_init_ctx->buf_len / vol->backing_dev->blocklen;
+}
+
 static int
 _allocate_bit_arrays(struct spdk_reduce_vol *vol)
 {
@@ -589,6 +830,9 @@ _allocate_bit_arrays(struct spdk_reduce_vol *vol)
 	uint32_t i, num_metadata_io_units;
 
 	total_chunks = _get_total_chunks(vol->params.vol_size, vol->params.chunk_size);
+	if (vol->params.meta_builtin) {
+		total_chunks += vol->params.data_region_off / vol->params.chunk_size;
+	}
 	vol->allocated_chunk_maps = spdk_bit_array_create(total_chunks);
 	vol->find_chunk_offset = 0;
 	total_backing_io_units = total_chunks * (vol->params.chunk_size / vol->params.backing_io_unit_size);
@@ -600,8 +844,12 @@ _allocate_bit_arrays(struct spdk_reduce_vol *vol)
 	}
 
 	/* Set backing io unit bits associated with metadata. */
-	num_metadata_io_units = (sizeof(*vol->backing_super) + REDUCE_PATH_MAX) /
-				vol->params.backing_io_unit_size;
+	if (vol->params.meta_builtin) {
+		num_metadata_io_units = vol->params.data_region_off / vol->params.backing_io_unit_size;
+	} else {
+		num_metadata_io_units = (sizeof(*vol->backing_super) + REDUCE_PATH_MAX) /
+					vol->params.backing_io_unit_size;
+	}
 	for (i = 0; i < num_metadata_io_units; i++) {
 		spdk_bit_array_set(vol->allocated_backing_io_units, i);
 		vol->info.allocated_io_units++;
@@ -618,6 +866,119 @@ overlap_cmp(struct spdk_reduce_vol_request *req1, struct spdk_reduce_vol_request
 }
 RB_GENERATE_STATIC(executing_req_tree, spdk_reduce_vol_request, rbnode, overlap_cmp);
 
+static inline int
+_check_meta_builtin(const char *path)
+{
+	return strlen(path) == strlen(REDUCE_META_BUILTIN) &&
+	       memcmp(path, REDUCE_META_BUILTIN, sizeof(REDUCE_META_BUILTIN)) == 0 ? 1 : 0;
+}
+
+static inline uint32_t
+_meta_get_elem_struct_size(struct spdk_reduce_vol_params *params, enum spdk_reduce_meta_type mtype)
+{
+	uint32_t size = 0;
+
+	switch (mtype) {
+	case REDUCE_MTYPE_SB:
+		size = sizeof(struct spdk_reduce_vol_superblock);
+		break;
+	case REDUCE_MTYPE_PATH:
+		size = REDUCE_PATH_MAX;
+		break;
+	case REDUCE_MTYPE_LOGICAL_MAP:
+		size = sizeof(uint64_t);
+		break;
+	case REDUCE_MTYPE_CHUNK_MAP:
+		size =  _reduce_vol_get_chunk_struct_size(params->chunk_size / params->backing_io_unit_size);
+		break;
+	default:
+		break;
+	}
+
+	return size;
+}
+
+static inline uint64_t
+_meta_get_elem_count(struct spdk_reduce_vol_params *params, enum spdk_reduce_meta_type mtype,
+		     uint64_t backing_dev_size)
+{
+	uint64_t count = 0;
+
+	switch (mtype) {
+	case REDUCE_MTYPE_SB:
+	case REDUCE_MTYPE_PATH:
+		count = 1;
+		break;
+	case REDUCE_MTYPE_LOGICAL_MAP:
+	case REDUCE_MTYPE_CHUNK_MAP:
+		count = backing_dev_size / params->chunk_size;
+		break;
+	default:
+		assert(0);
+	}
+
+	return count;
+}
+
+
+static uint64_t
+_meta_builtin_get_vol_size(uint64_t backing_dev_size, struct spdk_reduce_vol_params *params)
+{
+	uint64_t num_chunks;
+
+	num_chunks = (backing_dev_size - params->data_region_off) / params->chunk_size;
+	num_chunks -= REDUCE_NUM_EXTRA_CHUNKS;
+
+	return num_chunks * params->chunk_size;
+}
+
+/* Calc the metaregion offset and length according backing dev size,
+ * then datasize = backing dev size - metasize.
+ * The data region that 'logical_map' and 'chunkmap' can represent is a little more than the true data region.
+ * It is neccessary to set the bits on the allocated bitarray of allocated_backing_io_units which represent meta region.
+ */
+static void
+_init_builtin_meta_region_params(struct spdk_reduce_vol_params *params, uint64_t backing_dev_size)
+{
+	/* tmpoff unit is REDUCE_META_BLKSZ */
+	uint64_t tmpoff = 0;
+	uint32_t mtype;
+	struct spdk_reduce_meta_desc *meta_region_desc = params->meta_region_desc;
+
+	for (mtype = REDUCE_MTYPE_SB; mtype < REDUCE_MTYPE_NR; mtype++) {
+		/* Although size_per_elem and elems_per_mblk could calc at runtime,
+		 * calc it at init time could avoid calc it every time when edit a new mblk,
+		 * especially at I/O path.
+		 */
+		meta_region_desc[mtype].size_per_elem = _meta_get_elem_struct_size(params, mtype);
+		meta_region_desc[mtype].elems_per_mblk = REDUCE_META_BLKSZ / meta_region_desc[mtype].size_per_elem;
+		meta_region_desc[mtype].offset = tmpoff;
+		meta_region_desc[mtype].length = spdk_divide_round_up(_meta_get_elem_count(params, mtype,
+						 backing_dev_size), meta_region_desc[mtype].elems_per_mblk);
+		tmpoff += meta_region_desc[mtype].length;
+	}
+
+	/* data */
+	params->data_region_off = tmpoff * REDUCE_META_BLKSZ;
+	params->vol_size = _meta_builtin_get_vol_size(backing_dev_size, params);
+}
+
+static int
+_alloc_meta_buf(struct spdk_reduce_vol *vol, struct reduce_init_load_ctx *init_ctx)
+{
+	struct reduce_mblk_init_ctx *mblk_init_ctx = &init_ctx->mblk_init_ctx;
+
+	mblk_init_ctx->buf_len = SPDK_ALIGN_FLOOR(REDUCE_META_INIT_BUF_SIZE, REDUCE_META_BLKSZ);
+	mblk_init_ctx->meta_init_buf = spdk_malloc(mblk_init_ctx->buf_len,
+				       64, NULL, SPDK_ENV_LCORE_ID_ANY,
+				       SPDK_MALLOC_DMA);
+	if (mblk_init_ctx->meta_init_buf == NULL) {
+		return -ENOMEM;
+	}
+	memset(mblk_init_ctx->meta_init_buf, 0xff, mblk_init_ctx->buf_len);
+
+	return 0;
+}
 
 void
 spdk_reduce_vol_init(struct spdk_reduce_vol_params *params,
@@ -630,24 +991,7 @@ spdk_reduce_vol_init(struct spdk_reduce_vol_params *params,
 	struct spdk_reduce_backing_io *backing_io;
 	uint64_t backing_dev_size;
 	size_t mapped_len;
-	int dir_len, max_dir_len, rc;
-
-	/* We need to append a path separator and the UUID to the supplied
-	 * path.
-	 */
-	max_dir_len = REDUCE_PATH_MAX - SPDK_UUID_STRING_LEN - 1;
-	dir_len = strnlen(pm_file_dir, max_dir_len);
-	/* Strip trailing slash if the user provided one - we will add it back
-	 * later when appending the filename.
-	 */
-	if (pm_file_dir[dir_len - 1] == '/') {
-		dir_len--;
-	}
-	if (dir_len == max_dir_len) {
-		SPDK_ERRLOG("pm_file_dir (%s) too long\n", pm_file_dir);
-		cb_fn(cb_arg, NULL, -EINVAL);
-		return;
-	}
+	int dir_len = 0, max_dir_len, rc;
 
 	rc = _validate_vol_params(params);
 	if (rc != 0) {
@@ -670,6 +1014,34 @@ spdk_reduce_vol_init(struct spdk_reduce_vol_params *params,
 		return;
 	}
 
+	if (spdk_uuid_is_null(&params->uuid)) {
+		spdk_uuid_generate(&params->uuid);
+	}
+
+	if (!_check_meta_builtin(pm_file_dir)) {
+		/* Use pmem to host metadata */
+		params->meta_builtin = false;
+		/* We need to append a path separator and the UUID to the supplied
+		 * path.
+		 */
+		max_dir_len = REDUCE_PATH_MAX - SPDK_UUID_STRING_LEN - 1;
+		dir_len = strnlen(pm_file_dir, max_dir_len);
+		/* Strip trailing slash if the user provided one - we will add it back
+		 * later when appending the filename.
+		 */
+		if (pm_file_dir[dir_len - 1] == '/') {
+			dir_len--;
+		}
+		if (dir_len == max_dir_len) {
+			SPDK_ERRLOG("pm_file_dir (%s) too long\n", pm_file_dir);
+			cb_fn(cb_arg, NULL, -EINVAL);
+			return;
+		}
+	} else {
+		/* Use backing dev space to hold metadata */
+		params->meta_builtin = true;
+	}
+
 	vol = calloc(1, sizeof(*vol));
 	if (vol == NULL) {
 		cb_fn(cb_arg, NULL, -ENOMEM);
@@ -681,6 +1053,10 @@ spdk_reduce_vol_init(struct spdk_reduce_vol_params *params,
 	TAILQ_INIT(&vol->queued_requests);
 	queue_init(&vol->free_chunks_queue);
 	queue_init(&vol->free_backing_blocks_queue);
+	TAILQ_INIT(&vol->metablocks_free);
+	TAILQ_INIT(&vol->metablocks_lru);
+	RB_INIT(&vol->metablocks_caching);
+	TAILQ_INIT(&vol->free_meta_request);
 
 	vol->backing_super = spdk_zmalloc(sizeof(*vol->backing_super), 0, NULL,
 					  SPDK_ENV_LCORE_ID_ANY, SPDK_MALLOC_DMA);
@@ -713,40 +1089,64 @@ spdk_reduce_vol_init(struct spdk_reduce_vol_params *params,
 		return;
 	}
 
-	if (spdk_uuid_is_null(&params->uuid)) {
-		spdk_uuid_generate(&params->uuid);
-	}
-
-	memcpy(vol->pm_file.path, pm_file_dir, dir_len);
-	vol->pm_file.path[dir_len] = '/';
-	spdk_uuid_fmt_lower(&vol->pm_file.path[dir_len + 1], SPDK_UUID_STRING_LEN,
-			    &params->uuid);
-	vol->pm_file.size = _get_pm_file_size(params);
-	vol->pm_file.pm_buf = pmem_map_file(vol->pm_file.path, vol->pm_file.size,
-					    PMEM_FILE_CREATE | PMEM_FILE_EXCL, 0600,
-					    &mapped_len, &vol->pm_file.pm_is_pmem);
-	if (vol->pm_file.pm_buf == NULL) {
-		SPDK_ERRLOG("could not pmem_map_file(%s): %s\n",
-			    vol->pm_file.path, strerror(errno));
-		cb_fn(cb_arg, NULL, -errno);
-		_init_load_cleanup(vol, init_ctx);
-		return;
-	}
-
-	if (vol->pm_file.size != mapped_len) {
-		SPDK_ERRLOG("could not map entire pmem file (size=%" PRIu64 " mapped=%" PRIu64 ")\n",
-			    vol->pm_file.size, mapped_len);
-		cb_fn(cb_arg, NULL, -ENOMEM);
-		_init_load_cleanup(vol, init_ctx);
-		return;
-	}
-
 	vol->backing_io_units_per_chunk = params->chunk_size / params->backing_io_unit_size;
 	vol->logical_blocks_per_chunk = params->chunk_size / params->logical_block_size;
 	vol->backing_lba_per_io_unit = params->backing_io_unit_size / backing_dev->blocklen;
-	memcpy(&vol->params, params, sizeof(*params));
-
 	vol->backing_dev = backing_dev;
+
+	/* meta in pmem: init metadata in pmemdir.
+	   meta in backing_bdev: split total region to meta region and data region.
+	 */
+	if (params->meta_builtin == false) {
+		assert(dir_len != 0);
+		memcpy(vol->pm_file.path, pm_file_dir, dir_len);
+		vol->pm_file.path[dir_len] = '/';
+		spdk_uuid_fmt_lower(&vol->pm_file.path[dir_len + 1], SPDK_UUID_STRING_LEN,
+				    &params->uuid);
+		vol->pm_file.size = _get_pm_file_size(params);
+		vol->pm_file.pm_buf = pmem_map_file(vol->pm_file.path, vol->pm_file.size,
+						    PMEM_FILE_CREATE | PMEM_FILE_EXCL, 0600,
+						    &mapped_len, &vol->pm_file.pm_is_pmem);
+		if (vol->pm_file.pm_buf == NULL) {
+			SPDK_ERRLOG("could not pmem_map_file(%s): %s\n",
+				    vol->pm_file.path, strerror(errno));
+			cb_fn(cb_arg, NULL, -errno);
+			_init_load_cleanup(vol, init_ctx);
+			return;
+		}
+
+		if (vol->pm_file.size != mapped_len) {
+			SPDK_ERRLOG("could not map entire pmem file (size=%" PRIu64 " mapped=%" PRIu64 ")\n",
+				    vol->pm_file.size, mapped_len);
+			cb_fn(cb_arg, NULL, -ENOMEM);
+			_init_load_cleanup(vol, init_ctx);
+			return;
+		}
+
+		memcpy(&vol->params, params, sizeof(*params));
+		_initialize_vol_pm_pointers(vol);
+	} else {
+		/* metadata region on backingbdev
+		|0	|4096	|8192...	|
+		|sb	|mdpath	|logical_map...	|chunk_map...
+		the order of initailization: pmpath, normalmeta(logical_map, chunk_map), sb
+		 */
+		_init_builtin_meta_region_params(params, backing_dev_size);
+		memcpy(&vol->params, params, sizeof(*params));
+	}
+
+	memcpy(vol->backing_super->signature, SPDK_REDUCE_SIGNATURE,
+	       sizeof(vol->backing_super->signature));
+	memcpy(&vol->backing_super->params, params, sizeof(*params));
+
+	if (params->meta_builtin == false) {
+		memcpy(vol->pm_super, vol->backing_super, sizeof(*vol->backing_super));
+		/* Writing 0xFF's is equivalent of filling it all with SPDK_EMPTY_MAP_ENTRY.
+		 * Note that this writes 0xFF to not just the logical map but the chunk maps as well.
+		 */
+		memset(vol->pm_logical_map, 0xFF, vol->pm_file.size - sizeof(*vol->backing_super));
+		_reduce_persist(vol, vol->pm_file.pm_buf, vol->pm_file.size);
+	}
 
 	rc = _allocate_bit_arrays(vol);
 	if (rc != 0) {
@@ -755,42 +1155,24 @@ spdk_reduce_vol_init(struct spdk_reduce_vol_params *params,
 		return;
 	}
 
-	memcpy(vol->backing_super->signature, SPDK_REDUCE_SIGNATURE,
-	       sizeof(vol->backing_super->signature));
-	memcpy(&vol->backing_super->params, params, sizeof(*params));
-
-	_initialize_vol_pm_pointers(vol);
-
-	memcpy(vol->pm_super, vol->backing_super, sizeof(*vol->backing_super));
-	/* Writing 0xFF's is equivalent of filling it all with SPDK_EMPTY_MAP_ENTRY.
-	 * Note that this writes 0xFF to not just the logical map but the chunk maps as well.
-	 */
-	memset(vol->pm_logical_map, 0xFF, vol->pm_file.size - sizeof(*vol->backing_super));
-	_reduce_persist(vol, vol->pm_file.pm_buf, vol->pm_file.size);
-
 	init_ctx->vol = vol;
 	init_ctx->cb_fn = cb_fn;
 	init_ctx->cb_arg = cb_arg;
 
-	memcpy(init_ctx->path, vol->pm_file.path, REDUCE_PATH_MAX);
-	init_ctx->iov[0].iov_base = init_ctx->path;
-	init_ctx->iov[0].iov_len = REDUCE_PATH_MAX;
-	init_ctx->backing_cb_args.cb_fn = _init_write_path_cpl;
-	init_ctx->backing_cb_args.cb_arg = init_ctx;
-	/* Write path to offset 4K on backing device - just after where the super
-	 *  block will be written.  We wait until this is committed before writing the
-	 *  super block to guarantee we don't get the super block written without the
-	 *  the path if the system crashed in the middle of a write operation.
-	 */
-	backing_io->dev = vol->backing_dev;
-	backing_io->iov = init_ctx->iov;
-	backing_io->iovcnt = 1;
-	backing_io->lba = REDUCE_BACKING_DEV_PATH_OFFSET / vol->backing_dev->blocklen;
-	backing_io->lba_count = REDUCE_PATH_MAX / vol->backing_dev->blocklen;
-	backing_io->backing_cb_args = &init_ctx->backing_cb_args;
-	backing_io->backing_io_type = SPDK_REDUCE_BACKING_IO_WRITE;
-
-	vol->backing_dev->submit_backing_io(backing_io);
+	if (params->meta_builtin) {
+		memcpy(init_ctx->path, REDUCE_META_BUILTIN, sizeof(REDUCE_META_BUILTIN));
+		rc = _alloc_meta_buf(vol, init_ctx);
+		if (rc != 0) {
+			cb_fn(cb_arg, NULL, rc);
+			_init_load_cleanup(vol, init_ctx);
+			return;
+		}
+		_init_builtin_meta_region_ctx_init(init_ctx);
+		_init_builtin_meta_region(init_ctx, 0);
+	} else {
+		memcpy(init_ctx->path, vol->pm_file.path, REDUCE_PATH_MAX);
+		_init_builtin_meta_region_cpl(init_ctx, 0);
+	}
 }
 
 static void destroy_load_cb(void *cb_arg, struct spdk_reduce_vol *vol, int reduce_errno);
