@@ -16,6 +16,7 @@
 #include "spdk/log.h"
 #include "spdk/memory.h"
 #include "spdk/tree.h"
+#include "spdk/queue.h"
 
 #include "libpmem.h"
 
@@ -33,7 +34,7 @@
 struct spdk_reduce_vol_superblock {
 	uint8_t				signature[8];
 	struct spdk_reduce_vol_params	params;
-	uint8_t				reserved[4040];
+	uint8_t				reserved[3983];
 };
 SPDK_STATIC_ASSERT(sizeof(struct spdk_reduce_vol_superblock) == 4096, "size incorrect");
 
@@ -45,6 +46,11 @@ SPDK_STATIC_ASSERT(sizeof(SPDK_REDUCE_SIGNATURE) - 1 ==
 #define REDUCE_PATH_MAX 4096
 
 #define REDUCE_ZERO_BUF_SIZE 0x100000
+
+/* REDUCE_META_CACHE_BLOCK_NUM should not less than 2*REDUCE_NUM_VOL_REQUESTS */
+#define REDUCE_META_CACHE_BLOCK_NUM	(4 * REDUCE_NUM_VOL_REQUESTS)
+#define REDUCE_META_CACHE_RECLAIM_RATIO	20
+#define REDUCE_META_INIT_BUF_SIZE	(256 << 10)	/* 256KB */
 
 /**
  * Describes a persistent memory file used to hold metadata associated with a
@@ -110,7 +116,13 @@ struct spdk_reduce_vol_request {
 	uint64_t				logical_map_index;
 	uint64_t				length;
 	uint64_t				chunk_map_index;
+	/* record the old chunkmap idx when rmw */
+	uint64_t				read_chunk_map_index;
 	struct spdk_reduce_chunk_map		*chunk;
+	/* save the new chunkinfo to the pre-allocated chunk mem,
+	 * then memcpy from here to the metablock which used to submit backend
+	 */
+	struct spdk_reduce_chunk_map		*prealloc_chunk;
 	spdk_reduce_vol_op_complete		cb_fn;
 	void					*cb_arg;
 	TAILQ_ENTRY(spdk_reduce_vol_request)	tailq;
@@ -152,6 +164,124 @@ struct spdk_reduce_vol {
 	struct iovec				*buf_iov_mem;
 	/* Single contiguous buffer used for backing io buffers for this volume. */
 	uint8_t					*buf_backing_io_mem;
+
+	/* the count of meta cache block we prepare */
+	uint32_t				metablocks_num;
+	/* A pointer of many 4k DMA mem from huge page, It has metablocks_num * 4K Bytes */
+	uint8_t					*metablock_buf;
+	/* A pointer of many mblk describtion struct mem. The count of these struct is equal to metablocks num */
+	struct reduce_metablock_extent		*metablock_extent_mem;
+	TAILQ_HEAD(, reduce_metablock_extent)	metablocks_free;
+	RB_HEAD(metablock_cache_tree, reduce_metablock_extent) metablocks_caching;
+	TAILQ_HEAD(, reduce_metablock_extent)	metablocks_lru;
+
+	/* use independent mem for meta opetation backingio */
+	struct reduce_meta_request		*meta_request_buf;
+	TAILQ_HEAD(, reduce_meta_request)	free_meta_request;
+};
+
+struct reduce_metablock_extent {
+	uint32_t				mblk_sn;
+	/* pointer to 4K mem */
+	struct iovec				iov;
+	/* the node to attach free list or lru list */
+	TAILQ_ENTRY(reduce_metablock_extent)	tailq;
+	/* the node to attach read/write tree */
+	RB_ENTRY(reduce_metablock_extent)	rbnode;
+
+	/* the write_meta_req cnt that this one metadata write operation catching */
+	uint32_t				batch_write_cnt;
+	/* the refcnt should be both pending_to_supply_read and pending_to_write elem count */
+	uint32_t				refcnt;
+	/* when multi io to access metablock, callback them by the tailq */
+	TAILQ_HEAD(, reduce_meta_request)	pending_to_supply_read;
+	TAILQ_HEAD(, reduce_meta_request)	pending_to_write;
+};
+
+
+/* We need 2 iovs during load - one for the superblock, another for the path */
+#define LOAD_IOV_COUNT	2
+
+struct reduce_mblk_init_ctx {
+	/* unit: bytes */
+	void					*meta_init_buf;
+	size_t					buf_len;
+	/* unit: backing blocklen */
+	uint64_t				off_need_init;
+	uint64_t				len_need_init;
+	uint64_t				off_need_init_next;
+	uint32_t				maxlen_per_io;
+};
+
+struct reduce_init_load_ctx {
+	struct spdk_reduce_vol			*vol;
+	struct spdk_reduce_vol_cb_args		backing_cb_args;
+	spdk_reduce_vol_op_with_handle_complete	cb_fn;
+	void					*cb_arg;
+	struct iovec				iov[LOAD_IOV_COUNT];
+	void					*path;
+	struct spdk_reduce_backing_io           *backing_io;
+	struct reduce_mblk_init_ctx		mblk_init_ctx;
+};
+
+struct meta_builtin_readv_ctx {
+	struct spdk_reduce_vol *vol;
+	struct iovec	*iov;
+	int		iovcnt;
+	uint64_t	offset;
+	uint64_t	length;
+
+	spdk_reduce_vol_op_complete cb_fn;
+	void *cb_arg;
+};
+
+typedef void (*reduce_request_fn)(void *_req, int reduce_errno);
+
+struct meta_builtin_read_chunk_ctx {
+	struct spdk_reduce_vol *vol;
+	struct spdk_reduce_vol_request *req;
+	reduce_request_fn next_fn;
+};
+
+struct meta_builtin_request_ctx {
+	struct spdk_reduce_vol_request *req;
+	void *logicalmap_meta_req;
+};
+
+struct meta_builtin_load_ctx {
+	struct reduce_init_load_ctx *load_ctx;
+};
+
+/* meta read/write operations are async, should save the context before meta opetations */
+union reduce_meta_restore_ctx_container {
+	struct meta_builtin_readv_ctx readv_ctx;
+	struct meta_builtin_read_chunk_ctx read_chunk_ctx;
+	struct meta_builtin_request_ctx req_ctx;
+	struct meta_builtin_load_ctx load_ctx;
+};
+
+struct reduce_meta_request {
+	/* the node to attach free_meta_backingio or pending list of struct reduce_metablock_extent */
+	TAILQ_ENTRY(reduce_meta_request)	tailq;
+
+	struct spdk_reduce_vol			*vol;
+	/* if need or may need to update meta, set the is_write flag */
+	bool					is_write;
+	/* when we want to update meta, should do read-modify-write about the metablock.
+	 * 1. set the supply_read flag, and do read.
+	 * 2. read callback, modify the elem on metablock, and reset the supply_read flag. send do write.
+	 * 3. write callback, we can judge the meta stage according the supply_read flag.
+	 */
+	bool					supply_read;
+	enum spdk_reduce_meta_type		mtype;
+	uint32_t				mblk_sn;
+	uint32_t				elem_sn_on_mblk;
+	/* A pointer to caching meta block */
+	struct reduce_metablock_extent		*mblk_extent;
+	union reduce_meta_restore_ctx_container	restore_ctx;
+
+	struct spdk_reduce_vol_cb_args		cb_args;
+	struct spdk_reduce_backing_io		backing_io;
 };
 
 static void _start_readv_request(struct spdk_reduce_vol_request *req);
@@ -296,6 +426,33 @@ spdk_reduce_vol_get_uuid(struct spdk_reduce_vol *vol)
 	return &vol->params.uuid;
 }
 
+static uint32_t
+_meta_get_mblksn(struct spdk_reduce_vol_params *params, enum spdk_reduce_meta_type mtype,
+		 uint64_t elem_sn)
+{
+	uint32_t mblksn;
+
+	mblksn = params->meta_region_desc[mtype].offset + elem_sn /
+		 params->meta_region_desc[mtype].elems_per_mblk;
+	assert(mblksn < params->meta_region_desc[mtype].offset + params->meta_region_desc[mtype].length);
+
+	return mblksn;
+}
+
+static inline uint32_t
+_meta_get_elem_sn_on_mblk(struct spdk_reduce_vol_params *params, enum spdk_reduce_meta_type mtype,
+			  uint64_t elem_sn)
+{
+	return elem_sn % params->meta_region_desc[mtype].elems_per_mblk;
+}
+
+static inline void *
+_reduce_get_meta_elem_addr(struct reduce_meta_request *meta_req)
+{
+	return meta_req->mblk_extent->iov.iov_base + meta_req->elem_sn_on_mblk *
+	       meta_req->vol->params.meta_region_desc[meta_req->mtype].size_per_elem;
+}
+
 static void
 _initialize_vol_pm_pointers(struct spdk_reduce_vol *vol)
 {
@@ -312,18 +469,6 @@ _initialize_vol_pm_pointers(struct spdk_reduce_vol *vol)
 	vol->pm_chunk_maps = (uint64_t *)((uint8_t *)vol->pm_logical_map + logical_map_size);
 }
 
-/* We need 2 iovs during load - one for the superblock, another for the path */
-#define LOAD_IOV_COUNT	2
-
-struct reduce_init_load_ctx {
-	struct spdk_reduce_vol			*vol;
-	struct spdk_reduce_vol_cb_args		backing_cb_args;
-	spdk_reduce_vol_op_with_handle_complete	cb_fn;
-	void					*cb_arg;
-	struct iovec				iov[LOAD_IOV_COUNT];
-	void					*path;
-	struct spdk_reduce_backing_io           *backing_io;
-};
 
 static inline bool
 _addr_crosses_huge_page(const void *addr, size_t *size)
@@ -363,6 +508,248 @@ _set_buffer(uint8_t **vol_buffer, uint8_t **_addr, uint8_t *addr_range, size_t b
 	*_addr = addr + buffer_size;
 
 	return 0;
+}
+
+static inline uint64_t
+_reduce_meta_backingio_get_lba(struct reduce_meta_request *meta_req)
+{
+	return meta_req->mblk_sn * REDUCE_META_BLKSZ / meta_req->vol->backing_dev->blocklen;
+}
+
+static inline uint64_t
+_reduce_meta_backingio_get_lba_count(struct reduce_meta_request *meta_req)
+{
+	return REDUCE_META_BLKSZ / meta_req->vol->backing_dev->blocklen;
+}
+
+static void
+_reduce_meta_block_rw_backing(struct reduce_meta_request *meta_req,
+			      enum spdk_reduce_backing_io_type io_type)
+{
+	struct spdk_reduce_vol *vol = meta_req->vol;
+	struct spdk_reduce_backing_io *backing_io = &meta_req->backing_io;
+
+	backing_io->dev = vol->backing_dev;
+	backing_io->iov = &meta_req->mblk_extent->iov;
+	backing_io->iovcnt = 1;
+	backing_io->lba = _reduce_meta_backingio_get_lba(meta_req);
+	backing_io->lba_count = _reduce_meta_backingio_get_lba_count(meta_req);
+	backing_io->backing_io_type = io_type;
+	vol->backing_dev->submit_backing_io(backing_io);
+}
+
+static int
+metablock_cmp(struct reduce_metablock_extent *mblk1, struct reduce_metablock_extent *mblk2)
+{
+	return (mblk1->mblk_sn < mblk2->mblk_sn ? -1 : mblk1->mblk_sn >
+		mblk2->mblk_sn);
+}
+RB_GENERATE_STATIC(metablock_cache_tree, reduce_metablock_extent, rbnode, metablock_cmp);
+
+static inline void
+_metablock_lru_update(struct spdk_reduce_vol *vol, struct reduce_metablock_extent *mblkext,
+		      bool new_add)
+{
+	if (!new_add) {
+		TAILQ_REMOVE(&vol->metablocks_lru, mblkext, tailq);
+	}
+	TAILQ_INSERT_TAIL(&vol->metablocks_lru, mblkext, tailq);
+}
+
+static inline void
+_metablock_lru_delete(struct spdk_reduce_vol *vol, struct reduce_metablock_extent *mblkext)
+{
+	RB_REMOVE(metablock_cache_tree, &vol->metablocks_caching, mblkext);
+	TAILQ_REMOVE(&vol->metablocks_lru, mblkext, tailq);
+	TAILQ_INSERT_TAIL(&vol->metablocks_free, mblkext, tailq);
+}
+
+/* When the read process is complete, call this function to trigger
+ * the callback function registered in the metadata request on pending_to_supply_read.
+ * There will be metadata write requests and metadata read requests in the queue.
+ *
+ * When reading requests on pending_to_supply_read are callbacked, meta_req is released after the callback is completed.
+ * When the write request on pending_to_supply_read is callbacked, the metadata cache block data will be updated
+ * and the write request will be moved to the pending_to_write queue.
+ *
+ * After pending_to_supply_read is empty, if pending_to_write is not empty, one metadata write is triggered,
+ * and the metadata in multiple write requests is modified and solidify at one time.
+ */
+static void
+_reduce_metablock_cache_read_done_update(struct reduce_meta_request *meta_req, int32_t error)
+{
+	struct reduce_metablock_extent *mblkext = meta_req->mblk_extent;
+	struct reduce_meta_request *meta_req_next, *meta_req_write;
+	struct spdk_reduce_vol *vol = meta_req->vol;
+
+	TAILQ_REMOVE(&mblkext->pending_to_supply_read, meta_req, tailq);
+	if (meta_req->is_write && !meta_req->supply_read) {
+		TAILQ_INSERT_TAIL(&mblkext->pending_to_write, meta_req, tailq);
+		mblkext->batch_write_cnt++;
+	} else {
+		mblkext->refcnt--;
+		TAILQ_INSERT_TAIL(&vol->free_meta_request, meta_req, tailq);
+	}
+
+	/* check whether collected all modify region */
+	meta_req_next = TAILQ_FIRST(&mblkext->pending_to_supply_read);
+	if (meta_req_next) {
+		SPDK_INFOLOG(reduce,
+			     "metareq:%p mblkext %p mblksn %u ref %u. triger next readreq cpcb %p, error %d\n",
+			     meta_req, mblkext,
+			     mblkext->mblk_sn, mblkext->refcnt, meta_req_next, error);
+		assert(mblkext->refcnt);
+		meta_req_next->backing_io.backing_cb_args->cb_fn(meta_req_next->backing_io.backing_cb_args->cb_arg,
+				error);
+	} else {
+		/* we have callback all supply read metareq, start write to backend */
+		meta_req_write = TAILQ_FIRST(&mblkext->pending_to_write);
+		if (meta_req_write) {
+			SPDK_INFOLOG(reduce,
+				     "metareq:%p mblkext %p mblksn %u ref %u. collect write req cnt %u, triger writereq do write %p\n",
+				     meta_req, mblkext, mblkext->mblk_sn, mblkext->refcnt, mblkext->batch_write_cnt, meta_req_write);
+			assert(mblkext->refcnt);
+			assert(mblkext->batch_write_cnt);
+			assert(error == 0);
+			_reduce_meta_block_rw_backing(meta_req_write, SPDK_REDUCE_BACKING_IO_WRITE);
+		} else {
+			if (error != 0) {
+				/* This cache block has experienced abnormal reads or writes. Release it */
+				assert(mblkext->refcnt == 0);
+				assert(mblkext->batch_write_cnt == 0);
+				_metablock_lru_delete(vol, mblkext);
+			}
+		}
+	}
+}
+
+/* After meta block has written done, callback meta_req in pending_to_write one by one.
+ * Of course, during the process of metadata asynchronous disks, there will appear metadata read and write requests,
+ * but they will be in pending_to_supply_read.
+ * Because the metadata has just been written to backend, the metadata cache block in memory is the same as that on backend,
+ * and the requests on the queue can be called back one by one.
+ */
+static void
+_reduce_metablock_cache_write_done_update(struct reduce_meta_request *meta_req, int32_t error)
+{
+	struct reduce_metablock_extent *mblkext = meta_req->mblk_extent;
+	struct reduce_meta_request *meta_req_next;
+	struct spdk_reduce_vol *vol = meta_req->vol;
+
+	mblkext->refcnt--;
+	mblkext->batch_write_cnt--;
+
+	TAILQ_REMOVE(&mblkext->pending_to_write, meta_req, tailq);
+	TAILQ_INSERT_TAIL(&vol->free_meta_request, meta_req, tailq);
+
+	/* trigger next */
+	meta_req_next = TAILQ_FIRST(&mblkext->pending_to_write);
+	if (meta_req_next) {
+		SPDK_INFOLOG(reduce,
+			     "metareq:%p mblkext %p mblksn %u ref %u. write done to triger next writereq cpcb %p, error %d\n",
+			     meta_req, mblkext,
+			     mblkext->mblk_sn, mblkext->refcnt, meta_req_next, error);
+		assert(mblkext->refcnt);
+		assert(mblkext->batch_write_cnt);
+		meta_req_next->backing_io.backing_cb_args->cb_fn(meta_req_next->backing_io.backing_cb_args->cb_arg,
+				error);
+	} else {
+		/* when we async write to backend, there maybe new read come in, callback them */
+		assert(mblkext->batch_write_cnt == 0);
+		meta_req_next = TAILQ_FIRST(&mblkext->pending_to_supply_read);
+		if (meta_req_next) {
+			SPDK_INFOLOG(reduce,
+				     "metareq:%p mblkext %p mblksn %u ref %u. triger next readreq cpcb %p, error %d\n",
+				     meta_req, mblkext,
+				     mblkext->mblk_sn, mblkext->refcnt, meta_req_next, error);
+			assert(mblkext->refcnt);
+			meta_req_next->backing_io.backing_cb_args->cb_fn(meta_req_next->backing_io.backing_cb_args->cb_arg,
+					error);
+		} else {
+			if (error != 0) {
+				/* This cache block has experienced abnormal reads or writes. Release it */
+				assert(mblkext->refcnt == 0);
+				assert(mblkext->batch_write_cnt == 0);
+				_metablock_lru_delete(vol, mblkext);
+			}
+		}
+	}
+}
+
+static uint32_t
+_metablock_lru_reclaim_batch(struct spdk_reduce_vol *vol)
+{
+	struct reduce_metablock_extent *mblkext, *mblkext_next;
+	uint32_t reclaim_num_expected = vol->metablocks_num * REDUCE_META_CACHE_RECLAIM_RATIO / 100;
+	uint32_t reclaim_count = 0;
+
+	TAILQ_FOREACH_SAFE(mblkext, &vol->metablocks_lru, tailq, mblkext_next) {
+		if (mblkext->refcnt == 0 && reclaim_count < reclaim_num_expected) {
+			assert(TAILQ_EMPTY(&mblkext->pending_to_supply_read));
+			assert(TAILQ_EMPTY(&mblkext->pending_to_write));
+			_metablock_lru_delete(vol, mblkext);
+			reclaim_count++;
+		} else {
+			break;
+		}
+	}
+	SPDK_INFOLOG(reduce, "reclaim count %u\n", reclaim_count);
+
+	return reclaim_count;
+}
+
+/* The entry of meta block operation */
+static void
+_reduce_metablock_cache_read(struct reduce_meta_request *meta_req)
+{
+	struct reduce_metablock_extent *mblkext_res = NULL;
+	struct reduce_metablock_extent mblkext_find;
+	struct spdk_reduce_vol *vol = meta_req->vol;
+
+	mblkext_find.mblk_sn = meta_req->mblk_sn;
+	mblkext_res = RB_FIND(metablock_cache_tree, &vol->metablocks_caching, &mblkext_find);
+
+	if (mblkext_res) {
+		meta_req->mblk_extent = mblkext_res;
+		TAILQ_INSERT_TAIL(&mblkext_res->pending_to_supply_read, meta_req, tailq);
+		mblkext_res->refcnt++;
+		_metablock_lru_update(vol, mblkext_res, false);
+		if (mblkext_res->refcnt == 1) {
+			/* metablock in cache, just sync cb */
+			SPDK_INFOLOG(reduce, "metareq %p mblkext %p mblksn %u ref %u. direct get from cache.\n", meta_req,
+				     mblkext_res,
+				     mblkext_res->mblk_sn, mblkext_res->refcnt);
+			meta_req->backing_io.backing_cb_args->cb_fn(meta_req->backing_io.backing_cb_args->cb_arg, 0);
+		} else {
+			/* pending wait cb */
+			SPDK_INFOLOG(reduce, "metareq %p mblkext %p mblksn %u ref %u. wait callback.\n", meta_req,
+				     mblkext_res,
+				     mblkext_res->mblk_sn, mblkext_res->refcnt);
+		}
+	} else {
+		mblkext_res = TAILQ_FIRST(&vol->metablocks_free);
+		if (!mblkext_res) {
+			_metablock_lru_reclaim_batch(vol);
+			mblkext_res = TAILQ_FIRST(&vol->metablocks_free);
+			assert(mblkext_res);
+		}
+		TAILQ_REMOVE(&vol->metablocks_free, mblkext_res, tailq);
+		assert(mblkext_res->refcnt == 0);
+		assert(mblkext_res->batch_write_cnt == 0);
+
+		mblkext_res->mblk_sn = meta_req->mblk_sn;
+		RB_INSERT(metablock_cache_tree, &vol->metablocks_caching, mblkext_res);
+		_metablock_lru_update(vol, mblkext_res, true);
+
+		TAILQ_INSERT_TAIL(&mblkext_res->pending_to_supply_read, meta_req, tailq);
+		mblkext_res->refcnt++;
+		meta_req->mblk_extent = mblkext_res;
+
+		SPDK_INFOLOG(reduce, "metareq %p mblkext %p mtype %u mblksn %u ref %u. add to cache\n", meta_req,
+			     mblkext_res, meta_req->mtype,
+			     mblkext_res->mblk_sn, mblkext_res->refcnt);
+		_reduce_meta_block_rw_backing(meta_req, SPDK_REDUCE_BACKING_IO_READ);
+	}
 }
 
 static int
