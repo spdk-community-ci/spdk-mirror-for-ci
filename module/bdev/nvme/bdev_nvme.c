@@ -181,6 +181,7 @@ static struct spdk_bdev_nvme_opts g_opts = {
 	.transport_ack_timeout = 0,
 	.disable_auto_failback = false,
 	.generate_uuids = false,
+	.generate_random_uuids = false,
 	.transport_tos = 0,
 	.nvme_error_stat = false,
 	.io_path_stat = false,
@@ -4486,6 +4487,11 @@ nvme_disk_create(struct spdk_bdev *disk, const char *base_name,
 		memcpy(&disk->uuid, nguid, sizeof(disk->uuid));
 	}
 
+	/* Ignoring the nguid/uuid reported by the namespace and assigning a random generated uuid */
+	if (g_opts.generate_random_uuids) {
+		spdk_uuid_generate(&disk->uuid);
+	}
+
 	disk->name = spdk_sprintf_alloc("%sn%d", base_name, spdk_nvme_ns_get_id(ns));
 	if (!disk->name) {
 		return -ENOMEM;
@@ -6148,6 +6154,7 @@ spdk_bdev_nvme_get_opts(struct spdk_bdev_nvme_opts *opts, size_t opts_size)
 	SET_FIELD(transport_ack_timeout, 0);
 	SET_FIELD(disable_auto_failback, false);
 	SET_FIELD(generate_uuids, false);
+	SET_FIELD(generate_random_uuids, false);
 	SET_FIELD(transport_tos, 0);
 	SET_FIELD(nvme_error_stat, false);
 	SET_FIELD(io_path_stat, false);
@@ -6162,7 +6169,7 @@ spdk_bdev_nvme_get_opts(struct spdk_bdev_nvme_opts *opts, size_t opts_size)
 
 	/* Do not remove this statement, you should always update this statement when you adding a new field,
 	 * and do not forget to add the SET_FIELD statement for your added field. */
-	SPDK_STATIC_ASSERT(sizeof(struct spdk_bdev_nvme_opts) == 120, "Incorrect size");
+	SPDK_STATIC_ASSERT(sizeof(struct spdk_bdev_nvme_opts) == 128, "Incorrect size");
 }
 
 static bool bdev_nvme_check_io_error_resiliency_params(int32_t ctrlr_loss_timeout_sec,
@@ -6265,6 +6272,7 @@ spdk_bdev_nvme_set_opts(const struct spdk_bdev_nvme_opts *opts)
 	SET_FIELD(transport_ack_timeout, 0);
 	SET_FIELD(disable_auto_failback, false);
 	SET_FIELD(generate_uuids, false);
+	SET_FIELD(generate_random_uuids, false);
 	SET_FIELD(transport_tos, 0);
 	SET_FIELD(nvme_error_stat, false);
 	SET_FIELD(io_path_stat, false);
@@ -8842,6 +8850,7 @@ bdev_nvme_opts_config_json(struct spdk_json_write_ctx *w)
 	spdk_json_write_named_uint32(w, "fast_io_fail_timeout_sec", g_opts.fast_io_fail_timeout_sec);
 	spdk_json_write_named_bool(w, "disable_auto_failback", g_opts.disable_auto_failback);
 	spdk_json_write_named_bool(w, "generate_uuids", g_opts.generate_uuids);
+	spdk_json_write_named_bool(w, "generate_random_uuids", g_opts.generate_random_uuids);
 	spdk_json_write_named_uint8(w, "transport_tos", g_opts.transport_tos);
 	spdk_json_write_named_bool(w, "nvme_error_stat", g_opts.nvme_error_stat);
 	spdk_json_write_named_uint32(w, "rdma_srq_size", g_opts.rdma_srq_size);
