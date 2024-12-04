@@ -38,11 +38,17 @@ function create_vols() {
 	$rpc_py bdev_lvol_create -t -l lvs0 lv0 100
 	waitforbdev lvs0/lv0
 
-	if [ -z "$1" ]; then
-		$rpc_py bdev_compress_create -b lvs0/lv0 -p /tmp/pmem
-	else
-		$rpc_py bdev_compress_create -b lvs0/lv0 -p /tmp/pmem -l $1
+	local base_cmd="$rpc_py bdev_compress_create -b lvs0/lv0"
+	# if param 1 is 0, means store metadata on backing dev.
+	if [ "$1" -eq 1 ]; then
+		base_cmd+=" -p /tmp/pmem"
 	fi
+	if [ -n "$2" ]; then
+		base_cmd+=" -l $2"
+	fi
+
+	$base_cmd
+
 	waitforbdev COMP_lvs0/lv0
 }
 
@@ -55,7 +61,7 @@ function run_bdevio() {
 	bdevio_pid=$!
 	trap 'killprocess $bdevio_pid; error_cleanup; exit 1' SIGINT SIGTERM EXIT
 	waitforlisten $bdevio_pid
-	create_vols
+	create_vols $1 $2
 	$rootdir/test/bdev/bdevio/tests.py perform_tests
 	destroy_vols
 	trap - SIGINT SIGTERM EXIT
@@ -71,7 +77,7 @@ function run_bdevperf() {
 	bdevperf_pid=$!
 	trap 'killprocess $bdevperf_pid; error_cleanup; exit 1' SIGINT SIGTERM EXIT
 	waitforlisten $bdevperf_pid
-	create_vols $5
+	create_vols $5 $6
 	$rootdir/examples/bdev/bdevperf/bdevperf.py perform_tests
 	destroy_vols
 	trap - SIGINT SIGTERM EXIT
@@ -83,21 +89,24 @@ test_type=$1
 
 # per patch bdevperf uses slightly different params than nightly
 # logical block size same as underlying device, then 512 then 4096
-run_bdevperf 32 4096 3 "verify"
-run_bdevperf 32 4096 3 "verify" 512
-run_bdevperf 32 4096 3 "verify" 4096
-run_bdevio
+run_bdevperf 32 4096 3 "verify" 1
+run_bdevperf 32 4096 3 "verify" 1 512
+run_bdevperf 32 4096 3 "verify" 1 4096
+run_bdevio 1
+
+run_bdevperf 32 4096 3 "verify" 0 512
+run_bdevperf 32 4096 3 "verify" 0 4096
+run_bdevio 0
 
 # unmap test. 16kb per chunk.
 # one/multi chunks aligned/unaligned unmap;
-run_bdevperf 32 $((8 * 1024)) 3 "unmap" 512
-run_bdevperf 32 $((16 * 1024)) 3 "unmap" 512
-run_bdevperf 32 $((32 * 1024)) 3 "unmap" 512
-run_bdevperf 32 $((20 * 1024)) 3 "unmap" 512
-run_bdevperf 32 $((40 * 1024)) 3 "unmap" 512
-run_bdevperf 32 $((40 * 1024)) 3 "unmap" 4096
+run_bdevperf 32 $((40 * 1024)) 3 "unmap" 1 512
+run_bdevperf 32 $((40 * 1024)) 3 "unmap" 1 4096
 
-if [ $RUN_NIGHTLY -eq 1 ]; then
+run_bdevperf 32 $((40 * 1024)) 3 "unmap" 0 512
+run_bdevperf 32 $((40 * 1024)) 3 "unmap" 0 4096
+
+function run_nightly() {
 	run_bdevperf 64 16384 30 "verify"
 
 	# run perf on nvmf target w/compressed vols
@@ -108,7 +117,7 @@ if [ $RUN_NIGHTLY -eq 1 ]; then
 
 	# Create an NVMe-oF subsystem and add compress bdevs as namespaces
 	$rpc_py nvmf_create_transport -t $TEST_TRANSPORT -u 8192
-	create_vols
+	create_vols $1
 	$rpc_py nvmf_create_subsystem nqn.2016-06.io.spdk:cnode0 -a -s SPDK0
 	$rpc_py nvmf_subsystem_add_ns nqn.2016-06.io.spdk:cnode0 COMP_lvs0/lv0
 	$rpc_py nvmf_subsystem_add_listener nqn.2016-06.io.spdk:cnode0 -t $TEST_TRANSPORT -a $NVMF_FIRST_TARGET_IP -s $NVMF_PORT
@@ -124,6 +133,11 @@ if [ $RUN_NIGHTLY -eq 1 ]; then
 
 	trap - SIGINT SIGTERM EXIT
 	nvmftestfini
+}
+
+if [ $RUN_NIGHTLY -eq 1 ]; then
+	run_nightly 1
+	run_nightly 0
 fi
 
 rm -rf /tmp/pmem
