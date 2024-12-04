@@ -426,6 +426,33 @@ spdk_reduce_vol_get_uuid(struct spdk_reduce_vol *vol)
 	return &vol->params.uuid;
 }
 
+static uint32_t
+_meta_get_mblksn(struct spdk_reduce_vol_params *params, enum spdk_reduce_meta_type mtype,
+		 uint64_t elem_sn)
+{
+	uint32_t mblksn;
+
+	mblksn = params->meta_region_desc[mtype].offset + elem_sn /
+		 params->meta_region_desc[mtype].elems_per_mblk;
+	assert(mblksn < params->meta_region_desc[mtype].offset + params->meta_region_desc[mtype].length);
+
+	return mblksn;
+}
+
+static inline uint32_t
+_meta_get_elem_sn_on_mblk(struct spdk_reduce_vol_params *params, enum spdk_reduce_meta_type mtype,
+			  uint64_t elem_sn)
+{
+	return elem_sn % params->meta_region_desc[mtype].elems_per_mblk;
+}
+
+static inline void *
+_reduce_get_meta_elem_addr(struct reduce_meta_request *meta_req)
+{
+	return meta_req->mblk_extent->iov.iov_base + meta_req->elem_sn_on_mblk *
+	       meta_req->vol->params.meta_region_desc[meta_req->mtype].size_per_elem;
+}
+
 static void
 _initialize_vol_pm_pointers(struct spdk_reduce_vol *vol)
 {
@@ -481,6 +508,248 @@ _set_buffer(uint8_t **vol_buffer, uint8_t **_addr, uint8_t *addr_range, size_t b
 	*_addr = addr + buffer_size;
 
 	return 0;
+}
+
+static inline uint64_t
+_reduce_meta_backingio_get_lba(struct reduce_meta_request *meta_req)
+{
+	return meta_req->mblk_sn * REDUCE_META_BLKSZ / meta_req->vol->backing_dev->blocklen;
+}
+
+static inline uint64_t
+_reduce_meta_backingio_get_lba_count(struct reduce_meta_request *meta_req)
+{
+	return REDUCE_META_BLKSZ / meta_req->vol->backing_dev->blocklen;
+}
+
+static void
+_reduce_meta_block_rw_backing(struct reduce_meta_request *meta_req,
+			      enum spdk_reduce_backing_io_type io_type)
+{
+	struct spdk_reduce_vol *vol = meta_req->vol;
+	struct spdk_reduce_backing_io *backing_io = &meta_req->backing_io;
+
+	backing_io->dev = vol->backing_dev;
+	backing_io->iov = &meta_req->mblk_extent->iov;
+	backing_io->iovcnt = 1;
+	backing_io->lba = _reduce_meta_backingio_get_lba(meta_req);
+	backing_io->lba_count = _reduce_meta_backingio_get_lba_count(meta_req);
+	backing_io->backing_io_type = io_type;
+	vol->backing_dev->submit_backing_io(backing_io);
+}
+
+static int
+metablock_cmp(struct reduce_metablock_extent *mblk1, struct reduce_metablock_extent *mblk2)
+{
+	return (mblk1->mblk_sn < mblk2->mblk_sn ? -1 : mblk1->mblk_sn >
+		mblk2->mblk_sn);
+}
+RB_GENERATE_STATIC(metablock_cache_tree, reduce_metablock_extent, rbnode, metablock_cmp);
+
+static inline void
+_metablock_lru_update(struct spdk_reduce_vol *vol, struct reduce_metablock_extent *mblkext,
+		      bool new_add)
+{
+	if (!new_add) {
+		TAILQ_REMOVE(&vol->metablocks_lru, mblkext, tailq);
+	}
+	TAILQ_INSERT_TAIL(&vol->metablocks_lru, mblkext, tailq);
+}
+
+static inline void
+_metablock_lru_delete(struct spdk_reduce_vol *vol, struct reduce_metablock_extent *mblkext)
+{
+	RB_REMOVE(metablock_cache_tree, &vol->metablocks_caching, mblkext);
+	TAILQ_REMOVE(&vol->metablocks_lru, mblkext, tailq);
+	TAILQ_INSERT_TAIL(&vol->metablocks_free, mblkext, tailq);
+}
+
+/* When the read process is complete, call this function to trigger
+ * the callback function registered in the metadata request on pending_to_supply_read.
+ * There will be metadata write requests and metadata read requests in the queue.
+ *
+ * When reading requests on pending_to_supply_read are callbacked, meta_req is released after the callback is completed.
+ * When the write request on pending_to_supply_read is callbacked, the metadata cache block data will be updated
+ * and the write request will be moved to the pending_to_write queue.
+ *
+ * After pending_to_supply_read is empty, if pending_to_write is not empty, one metadata write is triggered,
+ * and the metadata in multiple write requests is modified and solidify at one time.
+ */
+static void
+_reduce_metablock_cache_read_done_update(struct reduce_meta_request *meta_req, int32_t error)
+{
+	struct reduce_metablock_extent *mblkext = meta_req->mblk_extent;
+	struct reduce_meta_request *meta_req_next, *meta_req_write;
+	struct spdk_reduce_vol *vol = meta_req->vol;
+
+	TAILQ_REMOVE(&mblkext->pending_to_supply_read, meta_req, tailq);
+	if (meta_req->is_write && !meta_req->supply_read) {
+		TAILQ_INSERT_TAIL(&mblkext->pending_to_write, meta_req, tailq);
+		mblkext->batch_write_cnt++;
+	} else {
+		mblkext->refcnt--;
+		TAILQ_INSERT_TAIL(&vol->free_meta_request, meta_req, tailq);
+	}
+
+	/* check whether collected all modify region */
+	meta_req_next = TAILQ_FIRST(&mblkext->pending_to_supply_read);
+	if (meta_req_next) {
+		SPDK_INFOLOG(reduce,
+			     "metareq:%p mblkext %p mblksn %u ref %u. triger next readreq cpcb %p, error %d\n",
+			     meta_req, mblkext,
+			     mblkext->mblk_sn, mblkext->refcnt, meta_req_next, error);
+		assert(mblkext->refcnt);
+		meta_req_next->backing_io.backing_cb_args->cb_fn(meta_req_next->backing_io.backing_cb_args->cb_arg,
+				error);
+	} else {
+		/* we have callback all supply read metareq, start write to backend */
+		meta_req_write = TAILQ_FIRST(&mblkext->pending_to_write);
+		if (meta_req_write) {
+			SPDK_INFOLOG(reduce,
+				     "metareq:%p mblkext %p mblksn %u ref %u. collect write req cnt %u, triger writereq do write %p\n",
+				     meta_req, mblkext, mblkext->mblk_sn, mblkext->refcnt, mblkext->batch_write_cnt, meta_req_write);
+			assert(mblkext->refcnt);
+			assert(mblkext->batch_write_cnt);
+			assert(error == 0);
+			_reduce_meta_block_rw_backing(meta_req_write, SPDK_REDUCE_BACKING_IO_WRITE);
+		} else {
+			if (error != 0) {
+				/* This cache block has experienced abnormal reads or writes. Release it */
+				assert(mblkext->refcnt == 0);
+				assert(mblkext->batch_write_cnt == 0);
+				_metablock_lru_delete(vol, mblkext);
+			}
+		}
+	}
+}
+
+/* After meta block has written done, callback meta_req in pending_to_write one by one.
+ * Of course, during the process of metadata asynchronous disks, there will appear metadata read and write requests,
+ * but they will be in pending_to_supply_read.
+ * Because the metadata has just been written to backend, the metadata cache block in memory is the same as that on backend,
+ * and the requests on the queue can be called back one by one.
+ */
+static void
+_reduce_metablock_cache_write_done_update(struct reduce_meta_request *meta_req, int32_t error)
+{
+	struct reduce_metablock_extent *mblkext = meta_req->mblk_extent;
+	struct reduce_meta_request *meta_req_next;
+	struct spdk_reduce_vol *vol = meta_req->vol;
+
+	mblkext->refcnt--;
+	mblkext->batch_write_cnt--;
+
+	TAILQ_REMOVE(&mblkext->pending_to_write, meta_req, tailq);
+	TAILQ_INSERT_TAIL(&vol->free_meta_request, meta_req, tailq);
+
+	/* trigger next */
+	meta_req_next = TAILQ_FIRST(&mblkext->pending_to_write);
+	if (meta_req_next) {
+		SPDK_INFOLOG(reduce,
+			     "metareq:%p mblkext %p mblksn %u ref %u. write done to triger next writereq cpcb %p, error %d\n",
+			     meta_req, mblkext,
+			     mblkext->mblk_sn, mblkext->refcnt, meta_req_next, error);
+		assert(mblkext->refcnt);
+		assert(mblkext->batch_write_cnt);
+		meta_req_next->backing_io.backing_cb_args->cb_fn(meta_req_next->backing_io.backing_cb_args->cb_arg,
+				error);
+	} else {
+		/* when we async write to backend, there maybe new read come in, callback them */
+		assert(mblkext->batch_write_cnt == 0);
+		meta_req_next = TAILQ_FIRST(&mblkext->pending_to_supply_read);
+		if (meta_req_next) {
+			SPDK_INFOLOG(reduce,
+				     "metareq:%p mblkext %p mblksn %u ref %u. triger next readreq cpcb %p, error %d\n",
+				     meta_req, mblkext,
+				     mblkext->mblk_sn, mblkext->refcnt, meta_req_next, error);
+			assert(mblkext->refcnt);
+			meta_req_next->backing_io.backing_cb_args->cb_fn(meta_req_next->backing_io.backing_cb_args->cb_arg,
+					error);
+		} else {
+			if (error != 0) {
+				/* This cache block has experienced abnormal reads or writes. Release it */
+				assert(mblkext->refcnt == 0);
+				assert(mblkext->batch_write_cnt == 0);
+				_metablock_lru_delete(vol, mblkext);
+			}
+		}
+	}
+}
+
+static uint32_t
+_metablock_lru_reclaim_batch(struct spdk_reduce_vol *vol)
+{
+	struct reduce_metablock_extent *mblkext, *mblkext_next;
+	uint32_t reclaim_num_expected = vol->metablocks_num * REDUCE_META_CACHE_RECLAIM_RATIO / 100;
+	uint32_t reclaim_count = 0;
+
+	TAILQ_FOREACH_SAFE(mblkext, &vol->metablocks_lru, tailq, mblkext_next) {
+		if (mblkext->refcnt == 0 && reclaim_count < reclaim_num_expected) {
+			assert(TAILQ_EMPTY(&mblkext->pending_to_supply_read));
+			assert(TAILQ_EMPTY(&mblkext->pending_to_write));
+			_metablock_lru_delete(vol, mblkext);
+			reclaim_count++;
+		} else {
+			break;
+		}
+	}
+	SPDK_INFOLOG(reduce, "reclaim count %u\n", reclaim_count);
+
+	return reclaim_count;
+}
+
+/* The entry of meta block operation */
+static void
+_reduce_metablock_cache_read(struct reduce_meta_request *meta_req)
+{
+	struct reduce_metablock_extent *mblkext_res = NULL;
+	struct reduce_metablock_extent mblkext_find;
+	struct spdk_reduce_vol *vol = meta_req->vol;
+
+	mblkext_find.mblk_sn = meta_req->mblk_sn;
+	mblkext_res = RB_FIND(metablock_cache_tree, &vol->metablocks_caching, &mblkext_find);
+
+	if (mblkext_res) {
+		meta_req->mblk_extent = mblkext_res;
+		TAILQ_INSERT_TAIL(&mblkext_res->pending_to_supply_read, meta_req, tailq);
+		mblkext_res->refcnt++;
+		_metablock_lru_update(vol, mblkext_res, false);
+		if (mblkext_res->refcnt == 1) {
+			/* metablock in cache, just sync cb */
+			SPDK_INFOLOG(reduce, "metareq %p mblkext %p mblksn %u ref %u. direct get from cache.\n", meta_req,
+				     mblkext_res,
+				     mblkext_res->mblk_sn, mblkext_res->refcnt);
+			meta_req->backing_io.backing_cb_args->cb_fn(meta_req->backing_io.backing_cb_args->cb_arg, 0);
+		} else {
+			/* pending wait cb */
+			SPDK_INFOLOG(reduce, "metareq %p mblkext %p mblksn %u ref %u. wait callback.\n", meta_req,
+				     mblkext_res,
+				     mblkext_res->mblk_sn, mblkext_res->refcnt);
+		}
+	} else {
+		mblkext_res = TAILQ_FIRST(&vol->metablocks_free);
+		if (!mblkext_res) {
+			_metablock_lru_reclaim_batch(vol);
+			mblkext_res = TAILQ_FIRST(&vol->metablocks_free);
+			assert(mblkext_res);
+		}
+		TAILQ_REMOVE(&vol->metablocks_free, mblkext_res, tailq);
+		assert(mblkext_res->refcnt == 0);
+		assert(mblkext_res->batch_write_cnt == 0);
+
+		mblkext_res->mblk_sn = meta_req->mblk_sn;
+		RB_INSERT(metablock_cache_tree, &vol->metablocks_caching, mblkext_res);
+		_metablock_lru_update(vol, mblkext_res, true);
+
+		TAILQ_INSERT_TAIL(&mblkext_res->pending_to_supply_read, meta_req, tailq);
+		mblkext_res->refcnt++;
+		meta_req->mblk_extent = mblkext_res;
+
+		SPDK_INFOLOG(reduce, "metareq %p mblkext %p mtype %u mblksn %u ref %u. add to cache\n", meta_req,
+			     mblkext_res, meta_req->mtype,
+			     mblkext_res->mblk_sn, mblkext_res->refcnt);
+		_reduce_meta_block_rw_backing(meta_req, SPDK_REDUCE_BACKING_IO_READ);
+	}
 }
 
 static int
@@ -1217,6 +1486,31 @@ spdk_reduce_vol_init(struct spdk_reduce_vol_params *params,
 	}
 }
 
+static struct reduce_meta_request *
+_get_init_meta_req(struct spdk_reduce_vol *vol, bool is_write,
+		   enum spdk_reduce_meta_type mtype, uint32_t mblk_sn, uint32_t elemsn_on_mblk,
+		   spdk_reduce_dev_cpl cb_fn)
+{
+	struct reduce_meta_request *meta_req;
+	meta_req = TAILQ_FIRST(&vol->free_meta_request);
+	if (meta_req == NULL) {
+		/* should not happend, because we have allocated enough metateq. 2 metareq for each vol req */
+		assert(0);
+		return meta_req;
+	}
+	TAILQ_REMOVE(&vol->free_meta_request, meta_req, tailq);
+	meta_req->vol = vol;
+	meta_req->is_write = is_write;
+	meta_req->supply_read = is_write ? 1 : 0;
+	meta_req->mtype = mtype;
+	meta_req->mblk_sn = mblk_sn;
+	meta_req->elem_sn_on_mblk = elemsn_on_mblk;
+	meta_req->cb_args.cb_fn = cb_fn;
+	meta_req->cb_args.cb_arg = meta_req;
+
+	return meta_req;
+}
+
 static void destroy_load_cb(void *cb_arg, struct spdk_reduce_vol *vol, int reduce_errno);
 
 static void
@@ -1583,14 +1877,23 @@ _reduce_vol_complete_req(struct spdk_reduce_vol_request *req, int reduce_errno)
 }
 
 static void
-_reduce_vol_reset_chunk(struct spdk_reduce_vol *vol, uint64_t chunk_map_index)
+_reduce_vol_reset_chunk(struct spdk_reduce_vol *vol, uint64_t chunk_map_index,
+			struct spdk_reduce_chunk_map *chunkaddr)
 {
 	struct spdk_reduce_chunk_map *chunk;
 	uint64_t index;
 	bool success;
 	uint32_t i;
 
-	chunk = _reduce_vol_get_chunk_map(vol, chunk_map_index);
+	assert(chunk_map_index != REDUCE_EMPTY_MAP_ENTRY);
+	if (chunkaddr == NULL) {
+		chunk = _reduce_vol_get_chunk_map(vol, chunk_map_index);
+	} else {
+		chunk = chunkaddr;
+	}
+	SPDK_INFOLOG(reduce, "release %lu. %lu %lu %lu %lu\n",
+		     chunk_map_index, chunk->io_unit_index[0], chunk->io_unit_index[1], chunk->io_unit_index[2],
+		     chunk->io_unit_index[3]);
 	for (i = 0; i < vol->backing_io_units_per_chunk; i++) {
 		index = chunk->io_unit_index[i];
 		if (index == REDUCE_EMPTY_MAP_ENTRY) {
@@ -1613,12 +1916,138 @@ _reduce_vol_reset_chunk(struct spdk_reduce_vol *vol, uint64_t chunk_map_index)
 	spdk_bit_array_clear(vol->allocated_chunk_maps, chunk_map_index);
 }
 
+static inline void
+convert_supply_read_to_write(struct reduce_meta_request *meta_req)
+{
+	assert(meta_req->is_write && meta_req->supply_read);
+	meta_req->supply_read = false;
+}
+
+static void
+_write_done_mapinfo_update_error_process(struct reduce_meta_request *meta_req, int error)
+{
+	struct spdk_reduce_vol_request *req = meta_req->restore_ctx.req_ctx.req;
+	char uuid_str[SPDK_UUID_STRING_LEN];
+
+	/* update chunk map or logical fail, we need to release the bit from
+	 * allocated_chunk_maps and allocated_backing_io_units where we want to write.
+	 */
+	_reduce_vol_reset_chunk(req->vol, req->chunk_map_index, req->chunk);
+	spdk_uuid_fmt_lower(uuid_str, sizeof(uuid_str), spdk_reduce_vol_get_uuid(req->vol));
+	SPDK_ERRLOG("%s write update new mapping error %d, release chunkmap idx: %lu, backing io unit: %lu %lu %lu %lu\n",
+		    uuid_str, error, req->chunk_map_index,
+		    req->chunk->io_unit_index[0], req->chunk->io_unit_index[1], req->chunk->io_unit_index[2],
+		    req->chunk->io_unit_index[3]);
+	req->reduce_errno = error;
+	_reduce_vol_complete_req(req, req->reduce_errno);
+	if (meta_req->supply_read || !meta_req->is_write) {
+		_reduce_metablock_cache_read_done_update(meta_req, error);
+	} else {
+		_reduce_metablock_cache_write_done_update(meta_req, error);
+	}
+}
+
+static void
+_write_write_done_update_logical_map(void *_meta_req, int error)
+{
+	struct reduce_meta_request *meta_req = _meta_req;
+	struct spdk_reduce_vol_request *req = meta_req->restore_ctx.req_ctx.req;
+	uint64_t *logical_map;
+
+	if (error != 0) {
+		_write_done_mapinfo_update_error_process(meta_req, error);
+		return;
+	}
+
+	if (meta_req->supply_read) {
+		logical_map = (uint64_t *)_reduce_get_meta_elem_addr(meta_req);
+		*logical_map = req->chunk_map_index;
+		convert_supply_read_to_write(meta_req);
+		_reduce_metablock_cache_read_done_update(meta_req, error);
+	} else {
+		_reduce_metablock_cache_write_done_update(meta_req, error);
+
+		_reduce_vol_complete_req(req, error);
+	}
+}
+
+static void
+_write_write_done_update_chunk_map(void *_meta_req, int error)
+{
+	struct reduce_meta_request *meta_req = _meta_req;
+	struct spdk_reduce_vol_request *req = meta_req->restore_ctx.req_ctx.req;
+	struct spdk_reduce_vol *vol = req->vol;
+	struct spdk_reduce_chunk_map *chunk;
+
+	if (error != 0) {
+		_write_done_mapinfo_update_error_process(meta_req, error);
+		return;
+	}
+
+	if (meta_req->supply_read) {
+		chunk = (struct spdk_reduce_chunk_map *)_reduce_get_meta_elem_addr(meta_req);
+		memcpy(chunk, req->chunk, _reduce_vol_get_chunk_struct_size(vol->backing_io_units_per_chunk));
+		convert_supply_read_to_write(meta_req);
+		_reduce_metablock_cache_read_done_update(meta_req, error);
+	} else {
+		_reduce_metablock_cache_write_done_update(meta_req, error);
+		meta_req = _get_init_meta_req(req->vol, true, REDUCE_MTYPE_LOGICAL_MAP,
+					      _meta_get_mblksn(&vol->params, REDUCE_MTYPE_LOGICAL_MAP, req->logical_map_index),
+					      _meta_get_elem_sn_on_mblk(&vol->params, REDUCE_MTYPE_LOGICAL_MAP, req->logical_map_index),
+					      _write_write_done_update_logical_map);
+		meta_req->restore_ctx.req_ctx.req = req;
+		_reduce_metablock_cache_read(meta_req);
+	}
+}
+
+static void
+_write_write_done_clear_old_chunkmap(void *_meta_req, int error)
+{
+	struct reduce_meta_request *meta_req = _meta_req;
+	struct spdk_reduce_vol_request *req = meta_req->restore_ctx.req_ctx.req;
+	struct spdk_reduce_vol *vol = req->vol;
+	struct spdk_reduce_chunk_map *chunk_addr;
+
+	if (error != 0) {
+		/* If clear the old chunkmap meta fail, we don't consider it will success when update new chunk map.
+		 * There is no necessary to continue the rest of process.
+		 * We also don't release old chunkmap and old logical map to protect the data when we read chunkmap failed.
+		 * So just return error.
+		 */
+		_write_done_mapinfo_update_error_process(meta_req, error);
+		return;
+	}
+
+	/* read the meta elem */
+	if (meta_req->supply_read) {
+		chunk_addr = (struct spdk_reduce_chunk_map *)_reduce_get_meta_elem_addr(meta_req);
+		_reduce_vol_reset_chunk(req->vol, req->read_chunk_map_index, chunk_addr);
+
+		/* meta data write backing */
+		convert_supply_read_to_write(meta_req);
+		_reduce_metablock_cache_read_done_update(meta_req, error);
+	} else {
+		_reduce_metablock_cache_write_done_update(meta_req, error);
+
+		/* set the new chunk map */
+		meta_req = _get_init_meta_req(req->vol, true, REDUCE_MTYPE_CHUNK_MAP,
+					      _meta_get_mblksn(&vol->params, REDUCE_MTYPE_CHUNK_MAP, req->chunk_map_index),
+					      _meta_get_elem_sn_on_mblk(&vol->params, REDUCE_MTYPE_CHUNK_MAP, req->chunk_map_index),
+					      _write_write_done_update_chunk_map);
+		meta_req->restore_ctx.req_ctx.req = req;
+		_reduce_metablock_cache_read(meta_req);
+
+		return;
+	}
+}
+
 static void
 _write_write_done(void *_req, int reduce_errno)
 {
 	struct spdk_reduce_vol_request *req = _req;
 	struct spdk_reduce_vol *vol = req->vol;
 	uint64_t old_chunk_map_index;
+	struct reduce_meta_request *meta_req;
 
 	if (reduce_errno != 0) {
 		req->reduce_errno = reduce_errno;
@@ -1630,14 +2059,38 @@ _write_write_done(void *_req, int reduce_errno)
 	}
 
 	if (req->reduce_errno != 0) {
-		_reduce_vol_reset_chunk(vol, req->chunk_map_index);
+		if (!vol->params.meta_builtin) {
+			_reduce_vol_reset_chunk(vol, req->chunk_map_index, NULL);
+		}
+		/* for meta_builtin == true, we don't need handle the case, because we haven't change the metadata yet */
 		_reduce_vol_complete_req(req, req->reduce_errno);
 		return;
 	}
 
+	if (vol->params.meta_builtin) {
+		if (req->read_chunk_map_index != REDUCE_EMPTY_MAP_ENTRY) {
+			meta_req = _get_init_meta_req(req->vol, true, REDUCE_MTYPE_CHUNK_MAP,
+						      _meta_get_mblksn(&vol->params, REDUCE_MTYPE_CHUNK_MAP, req->read_chunk_map_index),
+						      _meta_get_elem_sn_on_mblk(&vol->params, REDUCE_MTYPE_CHUNK_MAP, req->read_chunk_map_index),
+						      _write_write_done_clear_old_chunkmap);
+			meta_req->restore_ctx.req_ctx.req = req;
+			_reduce_metablock_cache_read(meta_req);
+			return;
+		} else {
+			/* set the new chunk map */
+			meta_req = _get_init_meta_req(req->vol, true, REDUCE_MTYPE_CHUNK_MAP,
+						      _meta_get_mblksn(&vol->params, REDUCE_MTYPE_CHUNK_MAP, req->chunk_map_index),
+						      _meta_get_elem_sn_on_mblk(&vol->params, REDUCE_MTYPE_CHUNK_MAP, req->chunk_map_index),
+						      _write_write_done_update_chunk_map);
+			meta_req->restore_ctx.req_ctx.req = req;
+			_reduce_metablock_cache_read(meta_req);
+			return;
+		}
+	}
+
 	old_chunk_map_index = vol->pm_logical_map[req->logical_map_index];
 	if (old_chunk_map_index != REDUCE_EMPTY_MAP_ENTRY) {
-		_reduce_vol_reset_chunk(vol, old_chunk_map_index);
+		_reduce_vol_reset_chunk(vol, old_chunk_map_index, NULL);
 	}
 
 	/*
@@ -1816,7 +2269,13 @@ _reduce_vol_write_chunk(struct spdk_reduce_vol_request *req, reduce_request_fn n
 	assert(req->chunk_map_index != REDUCE_EMPTY_MAP_ENTRY);
 	spdk_bit_array_set(vol->allocated_chunk_maps, req->chunk_map_index);
 
-	req->chunk = _reduce_vol_get_chunk_map(vol, req->chunk_map_index);
+	if (vol->params.meta_builtin) {
+		/* when use builtin meta, need the chunk memory from heap */
+		req->chunk = req->prealloc_chunk;
+		memset(req->chunk->io_unit_index, 0XFF, sizeof(uint64_t) * vol->backing_io_units_per_chunk);
+	} else {
+		req->chunk = _reduce_vol_get_chunk_map(vol, req->chunk_map_index);
+	}
 	req->num_io_units = spdk_divide_round_up(compressed_size,
 			    vol->params.backing_io_unit_size);
 	req->chunk_is_compressed = (req->num_io_units != vol->backing_io_units_per_chunk);
@@ -1867,7 +2326,9 @@ _reduce_vol_write_chunk(struct spdk_reduce_vol_request *req, reduce_request_fn n
 		spdk_bit_array_set(vol->allocated_backing_io_units, req->chunk->io_unit_index[i]);
 		vol->info.allocated_io_units++;
 	}
-
+	SPDK_INFOLOG(reduce, "datareq %p, use %lu. %lu %lu %lu %lu\n", req,
+		     req->chunk_map_index, req->chunk->io_unit_index[0], req->chunk->io_unit_index[1],
+		     req->chunk->io_unit_index[2], req->chunk->io_unit_index[3]);
 	_issue_backing_ops(req, vol, next_fn, true /* write */);
 }
 
@@ -2212,9 +2673,100 @@ _read_read_done(void *_req, int reduce_errno)
 }
 
 static void
+_reduce_meta_read_chunk_map_for_read_chunk(void *_meta_req, int error)
+{
+	struct reduce_meta_request *meta_req = _meta_req;
+	struct spdk_reduce_vol *vol = meta_req->restore_ctx.read_chunk_ctx.vol;
+	struct spdk_reduce_vol_request *req = meta_req->restore_ctx.read_chunk_ctx.req;
+	reduce_request_fn next_fn = meta_req->restore_ctx.read_chunk_ctx.next_fn;
+
+	if (error != 0) {
+		next_fn(req, error);
+		_reduce_metablock_cache_read_done_update(meta_req, error);
+		return;
+	}
+
+	/* copy the elem memory from metablock */
+	req->chunk = req->prealloc_chunk;
+	memcpy(req->chunk, _reduce_get_meta_elem_addr(meta_req),
+	       _reduce_vol_get_chunk_struct_size(vol->backing_io_units_per_chunk));
+	_reduce_metablock_cache_read_done_update(meta_req, error);
+
+	assert(req->chunk->compressed_size != UINT32_MAX);
+	req->num_io_units = spdk_divide_round_up(req->chunk->compressed_size,
+			    vol->params.backing_io_unit_size);
+	req->chunk_is_compressed = (req->num_io_units != vol->backing_io_units_per_chunk);
+
+	_issue_backing_ops(req, vol, next_fn, false /* read */);
+}
+
+static void
+_reduce_meta_read_logical_map_for_read_chunk(void *_meta_req, int error)
+{
+	struct reduce_meta_request *meta_req = _meta_req, *chunkmap_meta_req;
+	struct spdk_reduce_vol *vol = meta_req->restore_ctx.read_chunk_ctx.vol;
+	struct spdk_reduce_vol_request *req = meta_req->restore_ctx.read_chunk_ctx.req;
+	reduce_request_fn next_fn = meta_req->restore_ctx.read_chunk_ctx.next_fn;
+
+	if (error != 0) {
+		next_fn(req, error);
+		_reduce_metablock_cache_read_done_update(meta_req, error);
+		return;
+	}
+
+	/* read the meta elem */
+	req->chunk_map_index = *(uint64_t *)_reduce_get_meta_elem_addr(meta_req);
+	_reduce_metablock_cache_read_done_update(meta_req, error);
+
+	/* check chunk allocated */
+	if (req->chunk_map_index == REDUCE_EMPTY_MAP_ENTRY) {
+		for (int i = 0; i < req->iovcnt; i++) {
+			memset(req->iov[i].iov_base, 0, req->iov[i].iov_len);
+		}
+		_reduce_vol_complete_req(req, 0);
+		return;
+	}
+
+	/* read chunkmap */
+	chunkmap_meta_req = _get_init_meta_req(vol, false, REDUCE_MTYPE_CHUNK_MAP,
+					       _meta_get_mblksn(&vol->params, REDUCE_MTYPE_CHUNK_MAP, req->chunk_map_index),
+					       _meta_get_elem_sn_on_mblk(&vol->params, REDUCE_MTYPE_CHUNK_MAP, req->chunk_map_index),
+					       _reduce_meta_read_chunk_map_for_read_chunk);
+	chunkmap_meta_req->restore_ctx.read_chunk_ctx.vol = vol;
+	chunkmap_meta_req->restore_ctx.read_chunk_ctx.req = req;
+	chunkmap_meta_req->restore_ctx.read_chunk_ctx.next_fn = next_fn;
+	_reduce_metablock_cache_read(chunkmap_meta_req);
+
+	return;
+}
+
+static void
 _reduce_vol_read_chunk(struct spdk_reduce_vol_request *req, reduce_request_fn next_fn)
 {
 	struct spdk_reduce_vol *vol = req->vol;
+	struct reduce_meta_request *meta_req = NULL;
+
+	if (vol->params.meta_builtin) {
+		if (next_fn == _write_read_done) {
+			meta_req = _get_init_meta_req(vol, false, REDUCE_MTYPE_CHUNK_MAP,
+						      _meta_get_mblksn(&vol->params, REDUCE_MTYPE_CHUNK_MAP, req->chunk_map_index),
+						      _meta_get_elem_sn_on_mblk(&vol->params, REDUCE_MTYPE_CHUNK_MAP, req->chunk_map_index),
+						      _reduce_meta_read_chunk_map_for_read_chunk);
+		} else if (next_fn == _read_read_done) {
+			meta_req = _get_init_meta_req(vol, false, REDUCE_MTYPE_LOGICAL_MAP,
+						      _meta_get_mblksn(&vol->params, REDUCE_MTYPE_LOGICAL_MAP, req->logical_map_index),
+						      _meta_get_elem_sn_on_mblk(&vol->params, REDUCE_MTYPE_LOGICAL_MAP, req->logical_map_index),
+						      _reduce_meta_read_logical_map_for_read_chunk);
+		} else {
+			assert(0);
+		}
+		meta_req->restore_ctx.read_chunk_ctx.vol = vol;
+		meta_req->restore_ctx.read_chunk_ctx.req = req;
+		meta_req->restore_ctx.read_chunk_ctx.next_fn = next_fn;
+		_reduce_metablock_cache_read(meta_req);
+
+		return;
+	}
 
 	req->chunk_map_index = vol->pm_logical_map[req->logical_map_index];
 	assert(req->chunk_map_index != REDUCE_EMPTY_MAP_ENTRY);
@@ -2290,17 +2842,24 @@ spdk_reduce_vol_readv(struct spdk_reduce_vol *vol,
 	logical_map_index = offset / vol->logical_blocks_per_chunk;
 	overlapped = _check_overlap(vol, logical_map_index);
 
-	if (!overlapped && vol->pm_logical_map[logical_map_index] == REDUCE_EMPTY_MAP_ENTRY) {
-		/*
-		 * This chunk hasn't been allocated.  So treat the data as all
-		 * zeroes for this chunk - do the memset and immediately complete
-		 * the operation.
-		 */
-		for (i = 0; i < iovcnt; i++) {
-			memset(iov[i].iov_base, 0, iov[i].iov_len);
+	/* If we use builtin metadata, chunk allocated detection needs async read backend.
+	 * and get the metadata async and check the chunk allocated status, maybe late,
+	 * there may be another write about the chunk.
+	 * So we need insert the overlap tree, then check the chunk allocated status.
+	 */
+	if (!vol->params.meta_builtin) {
+		if (!overlapped && vol->pm_logical_map[logical_map_index] == REDUCE_EMPTY_MAP_ENTRY) {
+			/*
+			 * This chunk hasn't been allocated.  So treat the data as all
+			 * zeroes for this chunk - do the memset and immediately complete
+			 * the operation.
+			 */
+			for (i = 0; i < iovcnt; i++) {
+				memset(iov[i].iov_base, 0, iov[i].iov_len);
+			}
+			cb_fn(cb_arg, 0);
+			return;
 		}
-		cb_fn(cb_arg, 0);
-		return;
 	}
 
 	req = TAILQ_FIRST(&vol->free_requests);
@@ -2330,11 +2889,60 @@ spdk_reduce_vol_readv(struct spdk_reduce_vol *vol,
 }
 
 static void
+_reduce_meta_read_logical_map_for_writev(void *_meta_req, int error)
+{
+	struct reduce_meta_request *meta_req = _meta_req;
+	struct spdk_reduce_vol_request *req = meta_req->restore_ctx.req_ctx.req;
+	struct spdk_reduce_vol *vol = req->vol;
+
+	if (error != 0) {
+		req->reduce_errno = error;
+		_reduce_vol_complete_req(req, req->reduce_errno);
+		return;
+	}
+
+	/* read the meta elem */
+	req->chunk_map_index = *(uint64_t *)_reduce_get_meta_elem_addr(meta_req);
+	req->read_chunk_map_index = req->chunk_map_index;
+	_reduce_metablock_cache_read_done_update(meta_req, error);
+
+	/* restore */
+	if (req->chunk_map_index != REDUCE_EMPTY_MAP_ENTRY) {
+		if ((req->length * vol->params.logical_block_size) < vol->params.chunk_size) {
+			/* Read old chunk, then overwrite with data from this write
+			 *  operation.
+			 */
+			req->rmw = true;
+			_reduce_vol_read_chunk(req, _write_read_done);
+			return;
+		}
+	}
+
+	req->rmw = false;
+
+	_prepare_compress_chunk(req, true);
+	_reduce_vol_compress_chunk(req, _write_compress_done);
+}
+
+static void
 _start_writev_request(struct spdk_reduce_vol_request *req)
 {
 	struct spdk_reduce_vol *vol = req->vol;
+	struct reduce_meta_request *meta_req;
 
 	RB_INSERT(executing_req_tree, &req->vol->executing_requests, req);
+
+	if (vol->params.meta_builtin) {
+		meta_req = _get_init_meta_req(vol, false, REDUCE_MTYPE_LOGICAL_MAP,
+					      _meta_get_mblksn(&vol->params, REDUCE_MTYPE_LOGICAL_MAP, req->logical_map_index),
+					      _meta_get_elem_sn_on_mblk(&vol->params, REDUCE_MTYPE_LOGICAL_MAP, req->logical_map_index),
+					      _reduce_meta_read_logical_map_for_writev);
+		meta_req->restore_ctx.req_ctx.req = req;
+
+		_reduce_metablock_cache_read(meta_req);
+		return;
+	}
+
 	if (vol->pm_logical_map[req->logical_map_index] != REDUCE_EMPTY_MAP_ENTRY) {
 		if ((req->length * vol->params.logical_block_size) < vol->params.chunk_size) {
 			/* Read old chunk, then overwrite with data from this write
@@ -2416,7 +3024,7 @@ _start_unmap_request_full_chunk(void *ctx)
 
 	chunk_map_index = vol->pm_logical_map[req->logical_map_index];
 	if (chunk_map_index != REDUCE_EMPTY_MAP_ENTRY) {
-		_reduce_vol_reset_chunk(vol, chunk_map_index);
+		_reduce_vol_reset_chunk(vol, chunk_map_index, NULL);
 		vol->pm_logical_map[req->logical_map_index] = REDUCE_EMPTY_MAP_ENTRY;
 		_reduce_persist(vol, &vol->pm_logical_map[req->logical_map_index], sizeof(uint64_t));
 	}
