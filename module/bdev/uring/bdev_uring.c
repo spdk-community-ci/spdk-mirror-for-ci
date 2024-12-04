@@ -530,7 +530,7 @@ bdev_uring_check_zoned_support(struct bdev_uring *uring, const char *name, const
 	}
 
 	/* Perform check on block devices only */
-	if (stat(filename, &sb) == 0 && S_ISBLK(sb.st_mode)) {
+	if (stat(filename, &sb) == 0 && !S_ISBLK(sb.st_mode)) {
 		return 0;
 	}
 
