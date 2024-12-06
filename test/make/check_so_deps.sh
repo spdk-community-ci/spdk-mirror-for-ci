@@ -88,9 +88,14 @@ function check_header_filenames() {
 }
 
 function get_release() {
-	local tag
+	local tag version varr
 
-	tag=$(git describe --tags --abbrev=0 --exclude=LTS --exclude="*-pre" $1)
+	IFS='.-' read -ra varr < "$rootdir/VERSION"
+	version="v${varr[0]}.${varr[1]}"
+	((varr[2] > 0)) && version+=${varr[2]}
+	version+=${varr[3]:+-${varr[3]}}
+
+	tag=$(git describe --tags --abbrev=0 --exclude=LTS --exclude="*-pre" "$version")
 	echo "${tag:0:6}"
 }
 
