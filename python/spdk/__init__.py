@@ -2,4 +2,4 @@
 #  Copyright (C) 2021 Intel Corporation.
 #  All rights reserved.
 
-__version__ = "25.1rc0"
+from .version import __version__
