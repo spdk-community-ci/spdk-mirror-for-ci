@@ -69,12 +69,20 @@ struct comp_io_channel {
 	struct spdk_io_channel_iter	*iter;	/* used with for_each_channel in reset */
 };
 
+/* Records the unmap operation split status */
+struct comp_unmap_split {
+	uint64_t	current_offset_blocks;
+	uint64_t	remaining_num_blocks;
+	uint64_t	optimal_io_boundary;
+};
+
 /* Per I/O context for the compression vbdev. */
 struct comp_bdev_io {
 	struct comp_io_channel		*comp_ch;		/* used in completion handling */
 	struct vbdev_compress		*comp_bdev;		/* vbdev associated with this IO */
 	struct spdk_bdev_io_wait_entry	bdev_io_wait;		/* for bdev_io_wait */
 	struct spdk_bdev_io		*orig_io;		/* the original IO */
+	struct comp_unmap_split		split_io;		/* save unmap op split io */
 	int				status;			/* save for completion on orig thread */
 };
 
@@ -226,187 +234,76 @@ comp_read_get_buf_cb(struct spdk_io_channel *ch, struct spdk_bdev_io *bdev_io, b
 	spdk_thread_exec_msg(comp_bdev->reduce_thread, _comp_submit_read, bdev_io);
 }
 
-struct partial_chunk_info {
-	uint64_t chunk_idx;
-	uint64_t block_offset;
-	uint64_t block_length;
-};
+static void _comp_submit_unmap_split(void *ctx);
 
-/*
- * It's a structure used to hold information needed during the execution of an unmap operation.
- */
-struct compress_unmap_split_ctx {
-	struct spdk_bdev_io *bdev_io;
-	int32_t status;
-	uint32_t logical_blocks_per_chunk;
-	/* The first chunk that can be fully covered by the unmap bdevio interval */
-	uint64_t full_chunk_idx_b;
-	/* The last chunk that can be fully covered by the unmap bdevio interval */
-	uint64_t full_chunk_idx_e;
-	uint64_t num_full_chunks;
-	uint64_t num_full_chunks_consumed;
-	uint32_t num_partial_chunks;
-	uint32_t num_partial_chunks_consumed;
-	/* Used to hold the partial chunk information. There will only be less than or equal to two,
-	because chunks that cannot be fully covered will only appear at the beginning or end or both two. */
-	struct partial_chunk_info partial_chunk_info[2];
-};
-
-static void _comp_unmap_subcmd_done_cb(void *ctx, int error);
-
-/*
- * This function processes the unmap operation for both full and partial chunks in a
- * compressed block device. It iteratively submits unmap requests until all the chunks
- * have been unmapped or an error occurs.
- */
-static void
-_comp_submit_unmap_split(void *ctx)
-{
-	struct compress_unmap_split_ctx *split_ctx = ctx;
-	struct spdk_bdev_io *bdev_io = split_ctx->bdev_io;
-	struct vbdev_compress *comp_bdev = SPDK_CONTAINEROF(bdev_io->bdev, struct vbdev_compress,
-					   comp_bdev);
-	struct partial_chunk_info *partial_chunk = NULL;
-	uint64_t chunk_idx = 0;
-	uint64_t block_offset = 0;
-	uint64_t block_length = 0;
-
-	if (split_ctx->status != 0 ||
-	    (split_ctx->num_full_chunks_consumed == split_ctx->num_full_chunks &&
-	     split_ctx->num_partial_chunks_consumed == split_ctx->num_partial_chunks)) {
-		reduce_rw_blocks_cb(bdev_io, split_ctx->status);
-		free(split_ctx);
-		return;
-	}
-
-	if (split_ctx->num_full_chunks_consumed < split_ctx->num_full_chunks) {
-		chunk_idx = split_ctx->full_chunk_idx_b + split_ctx->num_full_chunks_consumed;
-		block_offset = chunk_idx * split_ctx->logical_blocks_per_chunk;
-		block_length = split_ctx->logical_blocks_per_chunk;
-
-		split_ctx->num_full_chunks_consumed++;
-		spdk_reduce_vol_unmap(comp_bdev->vol,
-				      block_offset, block_length,
-				      _comp_unmap_subcmd_done_cb, split_ctx);
-	} else if (split_ctx->num_partial_chunks_consumed < split_ctx->num_partial_chunks) {
-		partial_chunk = &split_ctx->partial_chunk_info[split_ctx->num_partial_chunks_consumed];
-		block_offset = partial_chunk->chunk_idx * split_ctx->logical_blocks_per_chunk +
-			       partial_chunk->block_offset;
-		block_length = partial_chunk->block_length;
-
-		split_ctx->num_partial_chunks_consumed++;
-		spdk_reduce_vol_unmap(comp_bdev->vol,
-				      block_offset, block_length,
-				      _comp_unmap_subcmd_done_cb, split_ctx);
-	} else {
-		assert(false);
-	}
-}
-
-/*
- * When mkfs or fstrim, large unmap requests may be generated.
- * Large request will be split into multiple subcmds and processed recursively.
- * Run too many subcmds recursively may cause stack overflow or monopolize the thread,
- * delaying other tasks. To avoid this, next subcmd need to be processed asynchronously
+/* When mkfs or fstrim, large unmap requests may be generated.
+ * Large request will be split into multiple small unmap op and processed recursively.
+ * Run too many small unmap op recursively may cause stack overflow or monopolize the thread,
+ * delaying other tasks. To avoid this, next unmap op need to be processed asynchronously
  * by 'spdk_thread_send_msg'.
  */
 static void
-_comp_unmap_subcmd_done_cb(void *ctx, int error)
+_comp_submit_unmap_split_done(void *arg, int reduce_errno)
 {
-	struct compress_unmap_split_ctx *split_ctx = ctx;
+	struct spdk_bdev_io *bdev_io = arg;
+	struct comp_bdev_io *io_ctx = (struct comp_bdev_io *)bdev_io->driver_ctx;
+	struct spdk_io_channel *ch = spdk_io_channel_from_ctx(io_ctx->comp_ch);
+	struct spdk_thread *orig_thread;
 
-	split_ctx->status = error;
-	spdk_thread_send_msg(spdk_get_thread(), _comp_submit_unmap_split, split_ctx);
+	if (spdk_unlikely(reduce_errno != 0)) {
+		reduce_rw_blocks_cb(bdev_io, reduce_errno);
+		return;
+	}
+
+	orig_thread = spdk_io_channel_get_thread(ch);
+
+	if (spdk_unlikely(io_ctx->split_io.remaining_num_blocks > 0)) {
+		spdk_thread_send_msg(orig_thread, _comp_submit_unmap_split, bdev_io);
+		return;
+	}
+	assert(io_ctx->split_io.remaining_num_blocks == 0);
+
+	reduce_rw_blocks_cb(bdev_io, reduce_errno);
 }
 
-/*
- * This function splits the unmap operation into full and partial chunks based on the
- * block range specified in the 'spdk_bdev_io' structure. It calculates the start and end
- * chunks, as well as any partial chunks at the beginning or end of the range, and prepares
- * a context (compress_unmap_split_ctx) to handle these chunks. The unmap operation is
- * then submitted for processing through '_comp_submit_unmap_split'.
- * some cases to handle:
- * 1. start and end chunks are different
- * 1.1 start and end chunks are full
- * 1.2 start and end chunks are partial
- * 1.3 start or  end chunk  is full and the other is partial
- * 2. start and end chunks are the same
- * 2.1 full
- * 2.2 partial
- */
+static void
+_comp_submit_unmap_split(void *ctx)
+{
+	struct spdk_bdev_io *bdev_io = ctx;
+	struct comp_bdev_io *io_ctx = (struct comp_bdev_io *)bdev_io->driver_ctx;
+	struct comp_unmap_split *split_io = &io_ctx->split_io;
+	struct vbdev_compress *comp_bdev = SPDK_CONTAINEROF(bdev_io->bdev, struct vbdev_compress,
+					   comp_bdev);
+	uint64_t offset_blocks, num_blocks;
+
+	offset_blocks = split_io->current_offset_blocks;
+	num_blocks = split_io->optimal_io_boundary - (offset_blocks %
+			split_io->optimal_io_boundary);
+	num_blocks = spdk_min(num_blocks, split_io->remaining_num_blocks);
+
+	split_io->current_offset_blocks += num_blocks;
+	split_io->remaining_num_blocks -= num_blocks;
+
+	spdk_reduce_vol_unmap(comp_bdev->vol, offset_blocks, num_blocks,
+			      _comp_submit_unmap_split_done, bdev_io);
+}
+
 static void
 _comp_submit_unmap(void *ctx)
 {
 	struct spdk_bdev_io *bdev_io = ctx;
+	struct comp_bdev_io *io_ctx = (struct comp_bdev_io *)bdev_io->driver_ctx;
 	struct vbdev_compress *comp_bdev = SPDK_CONTAINEROF(bdev_io->bdev, struct vbdev_compress,
 					   comp_bdev);
-	const struct spdk_reduce_vol_params *vol_params = spdk_reduce_vol_get_params(comp_bdev->vol);
-	struct compress_unmap_split_ctx *split_ctx;
-	struct partial_chunk_info *partial_chunk;
-	uint32_t logical_blocks_per_chunk;
-	uint64_t start_chunk, end_chunk, start_offset, end_tail;
+	const struct spdk_reduce_vol_params *params = spdk_reduce_vol_get_params(comp_bdev->vol);
 
-	logical_blocks_per_chunk = vol_params->chunk_size / vol_params->logical_block_size;
-	start_chunk = bdev_io->u.bdev.offset_blocks / logical_blocks_per_chunk;
-	end_chunk = (bdev_io->u.bdev.offset_blocks + bdev_io->u.bdev.num_blocks - 1) /
-		    logical_blocks_per_chunk;
-	start_offset = bdev_io->u.bdev.offset_blocks % logical_blocks_per_chunk;
-	end_tail = (bdev_io->u.bdev.offset_blocks + bdev_io->u.bdev.num_blocks) %
-		   logical_blocks_per_chunk;
+	assert(params->chunk_size % params->logical_block_size == 0);
+	io_ctx->split_io.optimal_io_boundary = params->chunk_size / params->logical_block_size;
 
-	split_ctx = calloc(1, sizeof(struct compress_unmap_split_ctx));
-	if (split_ctx == NULL) {
-		reduce_rw_blocks_cb(bdev_io, -ENOMEM);
-		return;
-	}
-	partial_chunk = split_ctx->partial_chunk_info;
-	split_ctx->bdev_io = bdev_io;
-	split_ctx->logical_blocks_per_chunk = logical_blocks_per_chunk;
+	io_ctx->split_io.current_offset_blocks = bdev_io->u.bdev.offset_blocks;
+	io_ctx->split_io.remaining_num_blocks = bdev_io->u.bdev.num_blocks;
 
-	if (start_chunk < end_chunk) {
-		if (start_offset != 0) {
-			partial_chunk[split_ctx->num_partial_chunks].chunk_idx = start_chunk;
-			partial_chunk[split_ctx->num_partial_chunks].block_offset = start_offset;
-			partial_chunk[split_ctx->num_partial_chunks].block_length = logical_blocks_per_chunk
-					- start_offset;
-			split_ctx->num_partial_chunks++;
-			split_ctx->full_chunk_idx_b = start_chunk + 1;
-		} else {
-			split_ctx->full_chunk_idx_b = start_chunk;
-		}
-
-		if (end_tail != 0) {
-			partial_chunk[split_ctx->num_partial_chunks].chunk_idx = end_chunk;
-			partial_chunk[split_ctx->num_partial_chunks].block_offset = 0;
-			partial_chunk[split_ctx->num_partial_chunks].block_length = end_tail;
-			split_ctx->num_partial_chunks++;
-			split_ctx->full_chunk_idx_e = end_chunk - 1;
-		} else {
-			split_ctx->full_chunk_idx_e = end_chunk;
-		}
-
-		split_ctx->num_full_chunks = end_chunk - start_chunk + 1 - split_ctx->num_partial_chunks;
-
-		if (split_ctx->num_full_chunks) {
-			assert(split_ctx->full_chunk_idx_b != UINT64_MAX && split_ctx->full_chunk_idx_e != UINT64_MAX);
-			assert(split_ctx->full_chunk_idx_e - split_ctx->full_chunk_idx_b + 1 == split_ctx->num_full_chunks);
-		} else {
-			assert(split_ctx->full_chunk_idx_b - split_ctx->full_chunk_idx_e == 1);
-		}
-	} else if (start_offset != 0 || end_tail != 0) {
-		partial_chunk[0].chunk_idx = start_chunk;
-		partial_chunk[0].block_offset = start_offset;
-		partial_chunk[0].block_length =
-			bdev_io->u.bdev.num_blocks;
-		split_ctx->num_partial_chunks = 1;
-	} else {
-		split_ctx->full_chunk_idx_b = start_chunk;
-		split_ctx->full_chunk_idx_e = end_chunk;
-		split_ctx->num_full_chunks = 1;
-	}
-	assert(split_ctx->num_partial_chunks <= SPDK_COUNTOF(split_ctx->partial_chunk_info));
-
-	_comp_submit_unmap_split(split_ctx);
+	_comp_submit_unmap_split(bdev_io);
 }
 
 /* Called when someone above submits IO to this vbdev. */
