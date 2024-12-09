@@ -77,7 +77,11 @@ main(int argc, char **argv)
 	}
 
 	printf("Starting SPDK post initialization...\n");
+#ifdef __FreeBSD__
+	ret = spdk_env_dpdk_post_init(true);
+#else
 	ret = spdk_env_dpdk_post_init(false);
+#endif
 	if (ret < 0) {
 		fprintf(stderr, "Failed to initialize SPDK\n");
 		return -1;
