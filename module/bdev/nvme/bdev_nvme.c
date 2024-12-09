@@ -7051,7 +7051,7 @@ struct discovery_entry_ctx {
 
 struct discovery_ctx {
 	char					*name;
-	spdk_bdev_nvme_start_discovery_fn	start_cb_fn;
+	spdk_bdev_nvme_start_discovery_cb	start_cb_fn;
 	spdk_bdev_nvme_stop_discovery_fn	stop_cb_fn;
 	void					*cb_ctx;
 	struct spdk_nvme_probe_ctx		*probe_ctx;
@@ -7614,13 +7614,13 @@ start_discovery_poller(void *arg)
 }
 
 int
-bdev_nvme_start_discovery(struct spdk_nvme_transport_id *trid,
-			  const char *base_name,
-			  struct spdk_nvme_ctrlr_opts *drv_opts,
-			  struct spdk_bdev_nvme_ctrlr_opts *bdev_opts,
-			  uint64_t attach_timeout,
-			  bool from_mdns,
-			  spdk_bdev_nvme_start_discovery_fn cb_fn, void *cb_ctx)
+spdk_bdev_nvme_start_discovery(struct spdk_nvme_transport_id *trid,
+			       const char *base_name,
+			       struct spdk_nvme_ctrlr_opts *drv_opts,
+			       struct spdk_bdev_nvme_ctrlr_opts *bdev_opts,
+			       uint64_t attach_timeout,
+			       bool from_mdns,
+			       spdk_bdev_nvme_start_discovery_cb cb_fn, void *cb_ctx)
 {
 	struct discovery_ctx *ctx;
 	struct discovery_entry_ctx *discovery_entry_ctx;
@@ -9046,7 +9046,7 @@ bdev_nvme_config_json(struct spdk_json_write_ctx *w)
 }
 
 struct spdk_nvme_ctrlr *
-bdev_nvme_get_ctrlr(struct spdk_bdev *bdev)
+spdk_bdev_nvme_get_ctrlr(struct spdk_bdev *bdev)
 {
 	struct nvme_bdev *nbdev;
 	struct nvme_ns *nvme_ns;

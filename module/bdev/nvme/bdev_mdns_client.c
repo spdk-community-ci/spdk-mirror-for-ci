@@ -89,10 +89,10 @@ mdns_bdev_nvme_start_discovery(void *_entry_ctx)
 	struct mdns_discovery_entry_ctx *entry_ctx = _entry_ctx;
 
 	assert(_entry_ctx);
-	status = bdev_nvme_start_discovery(&entry_ctx->trid, entry_ctx->name,
-					   &entry_ctx->ctx->drv_opts,
-					   &entry_ctx->ctx->bdev_opts,
-					   0, true, NULL, NULL);
+	status = spdk_bdev_nvme_start_discovery(&entry_ctx->trid, entry_ctx->name,
+						&entry_ctx->ctx->drv_opts,
+						&entry_ctx->ctx->bdev_opts,
+						0, true, NULL, NULL);
 	if (status) {
 		SPDK_ERRLOG("Error starting discovery for name %s addr %s port %s subnqn %s &trid %p\n",
 			    entry_ctx->ctx->name, entry_ctx->trid.traddr, entry_ctx->trid.trsvcid,

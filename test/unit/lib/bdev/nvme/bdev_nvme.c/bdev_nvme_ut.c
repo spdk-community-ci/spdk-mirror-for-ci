@@ -2169,7 +2169,7 @@ test_attach_ctrlr(void)
 
 	nbdev = nvme_ctrlr_get_ns(nvme_ctrlr, 1)->bdev;
 	SPDK_CU_ASSERT_FATAL(nbdev != NULL);
-	CU_ASSERT(bdev_nvme_get_ctrlr(&nbdev->disk) == ctrlr);
+	CU_ASSERT(spdk_bdev_nvme_get_ctrlr(&nbdev->disk) == ctrlr);
 
 	rc = bdev_nvme_delete("nvme0", &g_any_path, NULL, NULL);
 	CU_ASSERT(rc == 0);
