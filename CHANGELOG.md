@@ -16,8 +16,9 @@ to `multipath` field in spdk_bdev_nvme_ctrlr_opts structure passed as a paramete
 If multipathing shall be enabled for nvme bdev, `bdev_opts.multipath` shall be set to `true`. When
 `bdev_opts.multipath` is set to `false`, failover mode is enabled.
 
-Added public APIs `spdk_bdev_nvme_get_opts` and `spdk_bdev_nvme_set_opts` to get default bdev nvme
-options and set them respectively.
+Added public APIs `spdk_bdev_nvme_get_opts`, `spdk_bdev_nvme_set_opts`, `spdk_bdev_nvme_start_discovery`
+and `spdk_bdev_nvme_get_ctrlr` to get default bdev nvme options, set them, start discovery for NVMe bdevs
+and get the controller pointer associated with a bdev respectively.
 
 ### env
 

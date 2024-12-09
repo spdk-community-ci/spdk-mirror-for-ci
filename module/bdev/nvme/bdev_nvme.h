@@ -24,7 +24,6 @@ extern struct spdk_thread *g_bdev_nvme_init_thread;
 
 #define NVME_MAX_CONTROLLERS 1024
 
-typedef void (*spdk_bdev_nvme_start_discovery_fn)(void *ctx, int status);
 typedef void (*spdk_bdev_nvme_stop_discovery_fn)(void *ctx);
 
 struct nvme_async_probe_ctx {
@@ -285,10 +284,6 @@ struct nvme_ns *nvme_ctrlr_get_next_active_ns(struct nvme_ctrlr *nvme_ctrlr, str
 struct spdk_nvme_qpair *bdev_nvme_get_io_qpair(struct spdk_io_channel *ctrlr_io_ch);
 int bdev_nvme_set_hotplug(bool enabled, uint64_t period_us, spdk_msg_fn cb, void *cb_ctx);
 
-int bdev_nvme_start_discovery(struct spdk_nvme_transport_id *trid, const char *base_name,
-			      struct spdk_nvme_ctrlr_opts *drv_opts, struct spdk_bdev_nvme_ctrlr_opts *bdev_opts,
-			      uint64_t timeout, bool from_mdns,
-			      spdk_bdev_nvme_start_discovery_fn cb_fn, void *cb_ctx);
 int bdev_nvme_stop_discovery(const char *name, spdk_bdev_nvme_stop_discovery_fn cb_fn,
 			     void *cb_ctx);
 void bdev_nvme_get_discovery_info(struct spdk_json_write_ctx *w);
@@ -305,8 +300,6 @@ typedef void (*bdev_nvme_set_keys_cb)(void *ctx, int status);
 
 int bdev_nvme_set_keys(const char *name, const char *dhchap_key, const char *dhchap_ctrlr_key,
 		       bdev_nvme_set_keys_cb cb_fn, void *cb_ctx);
-
-struct spdk_nvme_ctrlr *bdev_nvme_get_ctrlr(struct spdk_bdev *bdev);
 
 typedef void (*bdev_nvme_delete_done_fn)(void *ctx, int rc);
 

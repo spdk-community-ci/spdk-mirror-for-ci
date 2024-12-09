@@ -10,6 +10,7 @@
 #define SPDK_MODULE_BDEV_NVME_H_
 
 #include "spdk/nvme.h"
+#include "spdk/bdev_module.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -17,6 +18,7 @@ extern "C" {
 
 typedef void (*spdk_bdev_nvme_create_cb)(void *ctx, size_t bdev_count, int rc);
 typedef void (*spdk_bdev_nvme_set_multipath_policy_cb)(void *cb_arg, int rc);
+typedef void (*spdk_bdev_nvme_start_discovery_cb)(void *ctx, int status);
 
 enum spdk_bdev_nvme_multipath_policy {
 	BDEV_NVME_MP_POLICY_ACTIVE_PASSIVE,
@@ -126,6 +128,37 @@ int spdk_bdev_nvme_create(struct spdk_nvme_transport_id *trid,
 			  void *cb_ctx,
 			  struct spdk_nvme_ctrlr_opts *drv_opts,
 			  struct spdk_bdev_nvme_ctrlr_opts *bdev_opts);
+
+/**
+ * Start discovery for NVMe bdev.
+ *
+ * \param trid Transport ID for nvme controller.
+ * \param base_name Base name for the nvme subsystem.
+ * \param drv_opts NVMe driver options.
+ * \param bdev_opts NVMe bdev options.
+ * \param timeout Time to wait until the discovery and all discovered NVM subsystems are attached
+ * \param from_mdns Use Multicast DNS for NVMe subsystems discovery
+ * \param cb_fn Function to be called back after completion.
+ * \param cb_ctx Context to pass to cb_fn.
+ * \return 0 on success, negative errno on failure.
+ */
+
+int spdk_bdev_nvme_start_discovery(struct spdk_nvme_transport_id *trid,
+				   const char *base_name,
+				   struct spdk_nvme_ctrlr_opts *drv_opts,
+				   struct spdk_bdev_nvme_ctrlr_opts *bdev_opts,
+				   uint64_t timeout,
+				   bool from_mdns,
+				   spdk_bdev_nvme_start_discovery_cb cb_fn,
+				   void *cb_ctx);
+
+/**
+ * Retrieve the NVMe controller associated with a block device.
+ *
+ * \param bdev NVMe block device.
+ * \return pointer to the NVMe controller.
+ */
+struct spdk_nvme_ctrlr *spdk_bdev_nvme_get_ctrlr(struct spdk_bdev *bdev);
 
 /**
  * Set multipath policy of the NVMe bdev.
