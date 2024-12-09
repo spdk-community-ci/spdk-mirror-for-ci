@@ -1076,7 +1076,7 @@ rpc_bdev_nvme_apply_firmware(struct spdk_jsonrpc_request *request,
 	}
 	bdev = spdk_bdev_desc_get_bdev(firm_ctx->desc);
 
-	if ((firm_ctx->ctrlr = bdev_nvme_get_ctrlr(bdev)) == NULL) {
+	if ((firm_ctx->ctrlr = spdk_bdev_nvme_get_ctrlr(bdev)) == NULL) {
 		spdk_jsonrpc_send_error_response_fmt(request, SPDK_JSONRPC_ERROR_INTERNAL_ERROR,
 						     "Controller information for %s were not found.",
 						     firm_ctx->req.bdev_name);
@@ -1682,7 +1682,7 @@ rpc_bdev_nvme_start_discovery(struct spdk_jsonrpc_request *request,
 	struct spdk_nvme_transport_id trid = {};
 	size_t len, maxlen;
 	int rc;
-	spdk_bdev_nvme_start_discovery_fn cb_fn;
+	spdk_bdev_nvme_start_discovery_cb cb_fn;
 	void *cb_ctx;
 
 	ctx = calloc(1, sizeof(*ctx));
@@ -1760,8 +1760,8 @@ rpc_bdev_nvme_start_discovery(struct spdk_jsonrpc_request *request,
 	ctx->request = request;
 	cb_fn = ctx->req.wait_for_attach ? rpc_bdev_nvme_start_discovery_done : NULL;
 	cb_ctx = ctx->req.wait_for_attach ? request : NULL;
-	rc = bdev_nvme_start_discovery(&trid, ctx->req.name, &ctx->req.opts, &ctx->req.bdev_opts,
-				       ctx->req.attach_timeout_ms, false, cb_fn, cb_ctx);
+	rc = spdk_bdev_nvme_start_discovery(&trid, ctx->req.name, &ctx->req.opts, &ctx->req.bdev_opts,
+					    ctx->req.attach_timeout_ms, false, cb_fn, cb_ctx);
 	if (rc) {
 		spdk_jsonrpc_send_error_response(request, rc, spdk_strerror(-rc));
 	} else if (!ctx->req.wait_for_attach) {

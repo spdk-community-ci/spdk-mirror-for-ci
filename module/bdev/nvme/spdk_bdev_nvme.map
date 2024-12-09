@@ -5,8 +5,10 @@
         spdk_bdev_nvme_create;
         spdk_bdev_nvme_set_multipath_policy;
         spdk_bdev_nvme_get_default_ctrlr_opts;
-	spdk_bdev_nvme_get_opts;
-	spdk_bdev_nvme_set_opts;
+		spdk_bdev_nvme_get_opts;
+		spdk_bdev_nvme_set_opts;
+		spdk_bdev_nvme_start_discovery;
+		spdk_bdev_nvme_get_ctrlr;
 
 	# Everything else
         local: *;
