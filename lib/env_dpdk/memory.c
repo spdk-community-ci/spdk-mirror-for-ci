@@ -794,10 +794,6 @@ mem_map_init(bool legacy_mem)
 		return -ENOMEM;
 	}
 
-	if (!g_huge_pages) {
-		return 0;
-	}
-
 	if (!g_legacy_mem) {
 		/**
 		 * To prevent DPDK complaining, only register the callback when
@@ -1716,6 +1712,7 @@ void
 mem_disable_huge_pages(void)
 {
 	g_huge_pages = false;
+	mem_map_use_page_shift(SHIFT_4KB);
 }
 
 void
