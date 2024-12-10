@@ -413,12 +413,12 @@ trace_register_description(const struct spdk_trace_tpoint_opts *opts)
 
 	assert(opts->tpoint_id < SPDK_TRACE_MAX_TPOINT_ID);
 
+	tpoint = &g_trace_file->tpoint[opts->tpoint_id];
+	assert(tpoint->tpoint_id == 0);
+
 	if (strnlen(opts->name, sizeof(tpoint->name)) == sizeof(tpoint->name)) {
 		SPDK_ERRLOG("name (%s) too long\n", opts->name);
 	}
-
-	tpoint = &g_trace_file->tpoint[opts->tpoint_id];
-	assert(tpoint->tpoint_id == 0);
 
 	snprintf(tpoint->name, sizeof(tpoint->name), "%s", opts->name);
 	tpoint->tpoint_id = opts->tpoint_id;
