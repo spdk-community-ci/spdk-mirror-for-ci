@@ -5653,6 +5653,8 @@ bdev_nvme_remove_poller(void *ctx)
 	return SPDK_POLLER_BUSY;
 }
 
+static void set_nvme_hotplug_period_cb(void *_ctx);
+
 static void
 nvme_ctrlr_create_done(struct nvme_ctrlr *nvme_ctrlr,
 		       struct nvme_async_probe_ctx *ctx)
@@ -5675,8 +5677,7 @@ nvme_ctrlr_create_done(struct nvme_ctrlr *nvme_ctrlr,
 	nvme_ctrlr_populate_namespaces(nvme_ctrlr, ctx);
 
 	if (g_hotplug_poller == NULL) {
-		g_hotplug_poller = SPDK_POLLER_REGISTER(bdev_nvme_remove_poller, NULL,
-							NVME_HOTPLUG_POLL_PERIOD_DEFAULT);
+		spdk_thread_send_msg(g_bdev_nvme_init_thread, set_nvme_hotplug_period_cb, NULL);
 	}
 }
 
@@ -6320,11 +6321,15 @@ set_nvme_hotplug_period_cb(void *_ctx)
 	struct set_nvme_hotplug_ctx *ctx = _ctx;
 
 	spdk_poller_unregister(&g_hotplug_poller);
-	if (ctx->enabled) {
+	if (ctx && ctx->enabled) {
 		g_hotplug_poller = SPDK_POLLER_REGISTER(bdev_nvme_hotplug, NULL, ctx->period_us);
 	} else {
 		g_hotplug_poller = SPDK_POLLER_REGISTER(bdev_nvme_remove_poller, NULL,
 							NVME_HOTPLUG_POLL_PERIOD_DEFAULT);
+	}
+
+	if (!ctx) {
+		return;
 	}
 
 	g_nvme_hotplug_poll_period_us = ctx->period_us;
