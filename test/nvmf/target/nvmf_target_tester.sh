@@ -12,6 +12,8 @@ source "$rootdir/test/common/autotest_common.sh"
 source "$rootdir/test/nvmf/common.sh"
 
 nqn=nqn.2016-06.io.spdk:cnode1
+pri_hostnqn="nqn.2016-06.io.spdk:host0"
+sec_hostnqn="nqn.2016-06.io.spdk:host1"
 
 function cleanup() {
 	[[ -n "$initiator_pid" ]] && killprocess $initiator_pid || :
@@ -40,7 +42,8 @@ function run_nvmf_initiator() {
 		traddr:$NVMF_FIRST_TARGET_IP \
 		adrfam:IPv4 \
 		trsvcid:$NVMF_PORT \
-		trtype:$TEST_TRANSPORT" &
+		trtype:$TEST_TRANSPORT \
+		hostnqn:$pri_hostnqn" -q $sec_hostnqn &
 	initiator_pid=$!
 }
 

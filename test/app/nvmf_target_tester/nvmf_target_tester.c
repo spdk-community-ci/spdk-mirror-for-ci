@@ -5,7 +5,6 @@
 #include "spdk/stdinc.h"
 #include "spdk/string.h"
 #include "spdk/event.h"
-#include "spdk/nvme.h"
 #include "module/bdev/nvme/bdev_nvme.h"
 
 struct bdev_context_t {
@@ -24,22 +23,43 @@ struct bdev_context_t {
 
 enum resv_state {
 	REGISTER,
-	ACQUIRE,
+	ACQUIRE_SUCCESS,
+	ACQUIRE_FAIL,
+	PREEMPT_ACQUIRE,
 	IO_SUCCESS,
+	IO_FAIL,
 	RELEASE,
-	UNREGISTER
+	UNREGISTER_PRI_HOST,
+	UNREGISTER_SEC_HOST
+};
+
+enum multi_host_resv_stage {
+	PRI_HOST_RESV,
+	SEC_HOST_RESV,
+	PRI_HOST_RESV_PREEMPT,
+	SEC_HOST_RESV_AFTER_PREEMPT,
+	FINALIZE
+};
+
+enum host_config {
+	SINGLE_HOST,
+	MULTI_HOST
 };
 
 struct bdev_resv_ctx {
 	struct bdev_context_t *bdev_ctx_pri_host;
 	struct bdev_context_t *bdev_ctx_sec_host;
+	const char *bdev_names[1];
+	enum host_config host_type;
 	enum resv_state bdev_resv_state;
+	enum multi_host_resv_stage multi_host_pr_stage;
 	bool cmd_success_expected;
 };
 
 static struct spdk_nvme_transport_id g_trid;
 static struct spdk_thread *g_app_thread;
-static char g_hostnqn[SPDK_NVMF_NQN_MAX_LEN + 1];
+static char g_pri_hostnqn[SPDK_NVMF_NQN_MAX_LEN + 1];
+static char g_sec_hostnqn[SPDK_NVMF_NQN_MAX_LEN + 1];
 static bool io_success_expected;
 static bool pr_test_on = false;
 static struct bdev_context_t *g_bdev_context;
@@ -48,6 +68,8 @@ static struct bdev_resv_ctx *g_bdev_pr_ctx;
 
 #define EXT_HOST_ID	((uint8_t[]){0x0f, 0x97, 0xcd, 0x74, 0x8c, 0x80, 0x41, 0x42, \
 				     0x99, 0x0f, 0x65, 0xc4, 0xf0, 0x39, 0x24, 0x20})
+#define SEC_EXT_HOST_ID	((uint8_t[]){0xff, 0x99, 0xef, 0x77, 0x8d, 0x89, 0x44, 0x22, \
+				     0x66, 0xee, 0x66, 0xcc, 0x00, 0x33, 0x22, 0x44})
 #define KEY_1		0xDEADBEAF5A5A5A5B
 #define KEY_2		0xDEADBEAF5A5A5A5A
 #define NR_KEY		0xDEADBEAF5B5B5B5B
@@ -85,6 +107,20 @@ subsystem_init_done(int rc, void *arg)
 }
 
 static void
+bdev_nvme_update_subsystem_nqn(void *arg)
+{
+	struct spdk_bdev *bdev;
+	struct spdk_nvme_ctrlr *nvme_ctrl;
+	const struct spdk_nvme_ctrlr_data *cdata;
+
+	bdev = arg;
+	nvme_ctrl = bdev_nvme_get_ctrlr(bdev);
+	cdata = spdk_nvme_ctrlr_get_data(nvme_ctrl);
+
+	memcpy(g_trid.subnqn, cdata->subnqn, sizeof(g_trid.subnqn));
+}
+
+static void
 usage(const char *program_name)
 {
 	printf("%s [options]", program_name);
@@ -102,6 +138,7 @@ usage(const char *program_name)
 	printf("    Example: -r 'trtype:RDMA adrfam:IPv4 traddr:192.168.100.8 trsvcid:4420'\n");
 
 	printf(" -n         set no_huge to true\n");
+	printf(" -q         secondary host nqn\n");
 	printf(" -H         show this usage\n");
 }
 
@@ -118,7 +155,7 @@ parse_args(int argc, char **argv)
 	spdk_nvme_trid_populate_transport(&g_trid, SPDK_NVME_TRANSPORT_TCP);
 	snprintf(g_trid.subnqn, sizeof(g_trid.subnqn), "%s", SPDK_NVMF_DISCOVERY_NQN);
 
-	while ((op = getopt(argc, argv, "nd:p:r:H")) != -1) {
+	while ((op = getopt(argc, argv, "nr:q:H")) != -1) {
 		switch (op) {
 		case 'n':
 			g_env_opts.no_huge = true;
@@ -136,13 +173,23 @@ parse_args(int argc, char **argv)
 				size_t len;
 				hostnqn += strlen("hostnqn:");
 				len = strcspn(hostnqn, " \t\n");
-				if (len > (sizeof(g_hostnqn) - 1)) {
+				if (len > (sizeof(g_pri_hostnqn) - 1)) {
 					fprintf(stderr, "host NQN is too long\n");
 					return 1;
 				}
-				memcpy(g_hostnqn, hostnqn, len);
-				g_hostnqn[len] = '\0';
+				memcpy(g_pri_hostnqn, hostnqn, len);
+				g_pri_hostnqn[len] = '\0';
 			}
+			break;
+		case 'q':
+			size_t len;
+			len = strcspn(optarg, " \t\n");
+			if (len > (sizeof(g_sec_hostnqn) - 1)) {
+				fprintf(stderr, "host NQN is too long\n");
+				return 1;
+			}
+			memcpy(g_sec_hostnqn, optarg, len);
+			g_sec_hostnqn[len] = '\0';
 			break;
 		case 'H':
 			usage(argv[0]);
@@ -241,23 +288,243 @@ bdev_reservation_release(void *ctx, enum spdk_nvme_reservation_release_action op
 }
 
 static void
-reservation_request_cb_fn(struct spdk_bdev_io *bdev_io, bool success, void *ctx)
+finalizing_bdev_resv(void)
 {
-	if (g_bdev_pr_ctx->bdev_resv_state != IO_SUCCESS) {
-		spdk_bdev_free_io(bdev_io);
-		if (success != g_bdev_pr_ctx->cmd_success_expected) {
-			exit_initiator("bdev reservation request failed", -1);
-			return;
-		}
+	switch (g_bdev_pr_ctx->bdev_resv_state) {
+	case IO_FAIL:
+		g_bdev_pr_ctx->bdev_resv_state = UNREGISTER_PRI_HOST;
+		bdev_reservation_register(g_bdev_pr_ctx->bdev_ctx_pri_host,
+					  SPDK_NVME_RESERVE_UNREGISTER_KEY, true);
+		break;
+	case UNREGISTER_PRI_HOST:
+		g_bdev_pr_ctx->bdev_resv_state = RELEASE;
+		bdev_reservation_release(g_bdev_pr_ctx->bdev_ctx_sec_host,
+					 SPDK_NVME_RESERVE_RELEASE, true);
+		break;
+	case RELEASE:
+		g_bdev_pr_ctx->bdev_resv_state = UNREGISTER_SEC_HOST;
+		bdev_reservation_register(g_bdev_pr_ctx->bdev_ctx_sec_host,
+					  SPDK_NVME_RESERVE_UNREGISTER_KEY, true);
+		break;
+	case UNREGISTER_SEC_HOST:
+		pr_test_on = false;
+		SPDK_NOTICELOG("test_persistent_reservation_multi_host is successful\n");
+		exit_initiator("all test completed successfully", 0);
+		break;
+	default:
+		pr_test_on = false;
+		exit_initiator("invalid reservation command", -EINVAL);
 	}
+}
 
+static void
+check_pri_host_resv_via_preempt(void)
+{
+	switch (g_bdev_pr_ctx->bdev_resv_state) {
+	case IO_FAIL:
+		g_bdev_pr_ctx->bdev_resv_state = PREEMPT_ACQUIRE;
+		bdev_reservation_acquire(g_bdev_pr_ctx->bdev_ctx_pri_host,
+					 SPDK_NVME_RESERVE_PREEMPT, true);
+		break;
+	case PREEMPT_ACQUIRE:
+		g_bdev_pr_ctx->bdev_resv_state = IO_SUCCESS;
+		test_bdev_write(g_bdev_pr_ctx->bdev_ctx_pri_host, true);
+		break;
+	case IO_SUCCESS:
+		g_bdev_pr_ctx->bdev_resv_state = REGISTER;
+		g_bdev_pr_ctx->multi_host_pr_stage = SEC_HOST_RESV_AFTER_PREEMPT;
+		bdev_reservation_register(g_bdev_pr_ctx->bdev_ctx_sec_host,
+					  SPDK_NVME_RESERVE_REGISTER_KEY, true);
+		break;
+	default:
+		pr_test_on = false;
+		exit_initiator("invalid reservation command", -EINVAL);
+	}
+}
+
+static void
+check_sec_host_resv_after_pri_host(void)
+{
 	switch (g_bdev_pr_ctx->bdev_resv_state) {
 	case REGISTER:
-		g_bdev_pr_ctx->bdev_resv_state = ACQUIRE;
+		g_bdev_pr_ctx->bdev_resv_state = ACQUIRE_FAIL;
+		bdev_reservation_acquire(g_bdev_pr_ctx->bdev_ctx_sec_host,
+					 SPDK_NVME_RESERVE_ACQUIRE, false);
+		break;
+	case ACQUIRE_FAIL:
+		g_bdev_pr_ctx->bdev_resv_state = IO_FAIL;
+		test_bdev_write(g_bdev_pr_ctx->bdev_ctx_sec_host, false);
+		break;
+	case IO_FAIL:
+		g_bdev_pr_ctx->bdev_resv_state = RELEASE;
+		bdev_reservation_release(g_bdev_pr_ctx->bdev_ctx_pri_host,
+					 SPDK_NVME_RESERVE_RELEASE, true);
+		break;
+	case RELEASE:
+		g_bdev_pr_ctx->bdev_resv_state = IO_SUCCESS;
+		test_bdev_write(g_bdev_pr_ctx->bdev_ctx_sec_host, true);
+		break;
+	case IO_SUCCESS:
+		g_bdev_pr_ctx->bdev_resv_state = ACQUIRE_SUCCESS;
+		bdev_reservation_acquire(g_bdev_pr_ctx->bdev_ctx_sec_host,
+					 SPDK_NVME_RESERVE_ACQUIRE, true);
+		break;
+	case ACQUIRE_SUCCESS:
+		g_bdev_pr_ctx->bdev_resv_state = IO_FAIL;
+		if (g_bdev_pr_ctx->multi_host_pr_stage == SEC_HOST_RESV) {
+			g_bdev_pr_ctx->multi_host_pr_stage = PRI_HOST_RESV_PREEMPT;
+		} else {
+			g_bdev_pr_ctx->multi_host_pr_stage = FINALIZE;
+		}
+		test_bdev_write(g_bdev_pr_ctx->bdev_ctx_pri_host, false);
+		break;
+	default:
+		pr_test_on = false;
+		exit_initiator("invalid reservation command", -EINVAL);
+	}
+}
+
+static void
+check_pri_host_resv(void)
+{
+	switch (g_bdev_pr_ctx->bdev_resv_state) {
+	case REGISTER:
+		g_bdev_pr_ctx->bdev_resv_state = ACQUIRE_SUCCESS;
 		bdev_reservation_acquire(g_bdev_pr_ctx->bdev_ctx_pri_host,
 					 SPDK_NVME_RESERVE_ACQUIRE, true);
 		break;
-	case ACQUIRE:
+	case ACQUIRE_SUCCESS:
+		g_bdev_pr_ctx->bdev_resv_state = IO_SUCCESS;
+		test_bdev_write(g_bdev_pr_ctx->bdev_ctx_pri_host, true);
+		break;
+	case IO_SUCCESS:
+		g_bdev_pr_ctx->bdev_resv_state = REGISTER;
+		g_bdev_pr_ctx->multi_host_pr_stage = SEC_HOST_RESV;
+		bdev_reservation_register(g_bdev_pr_ctx->bdev_ctx_sec_host,
+					  SPDK_NVME_RESERVE_REGISTER_KEY, true);
+		break;
+	default:
+		pr_test_on = false;
+		exit_initiator("invalid reservation command", -EINVAL);
+	}
+}
+
+static void
+test_pr_multi_host_flow(void)
+{
+	switch (g_bdev_pr_ctx->multi_host_pr_stage) {
+	case PRI_HOST_RESV:
+		check_pri_host_resv();
+		break;
+	case SEC_HOST_RESV:
+		check_sec_host_resv_after_pri_host();
+		break;
+	case PRI_HOST_RESV_PREEMPT:
+		check_pri_host_resv_via_preempt();
+		break;
+	case SEC_HOST_RESV_AFTER_PREEMPT:
+		check_sec_host_resv_after_pri_host();
+		break;
+	case FINALIZE:
+		finalizing_bdev_resv();
+		break;
+	}
+}
+
+static void
+connect_sec_host_cb(void *ctx, size_t bdev_count, int rc)
+{
+	uint32_t buf_align;
+	struct spdk_bdev *bdev = NULL;
+	struct bdev_context_t *bdev_ctx;
+
+	if (rc) {
+		exit_initiator("failed to create the bdev", rc);
+		return;
+	}
+
+	bdev_ctx = g_bdev_pr_ctx->bdev_ctx_sec_host;
+	bdev = spdk_bdev_get_by_name(g_bdev_pr_ctx->bdev_names[0]);
+	if (bdev == NULL) {
+		exit_initiator("could not find the bdev", -ENODEV);
+		return;
+	}
+	bdev_ctx->bdev = bdev;
+	bdev_ctx->bdev_name = bdev->name;
+
+	SPDK_NOTICELOG("opening the bdev from sec host %s\n", bdev->name);
+	rc = spdk_bdev_open_ext(bdev->name, true, nvmf_bdev_event_cb, NULL,
+				&bdev_ctx->bdev_desc);
+	if (rc) {
+		exit_initiator("could not open bdev", rc);
+		return;
+	}
+
+	/* Open I/O channel */
+	bdev_ctx->bdev_io_channel = spdk_bdev_get_io_channel(bdev_ctx->bdev_desc);
+	if (!bdev_ctx->bdev_io_channel) {
+		exit_initiator("could not create bdev I/O channel!", -EIO);
+		return;
+	}
+
+	/* Allocate memory for the io buffer */
+	bdev_ctx->buff_size = spdk_bdev_get_block_size(bdev_ctx->bdev) *
+			      spdk_bdev_get_write_unit_size(bdev_ctx->bdev);
+	buf_align = spdk_bdev_get_buf_align(bdev_ctx->bdev);
+	bdev_ctx->buff = spdk_dma_zmalloc(bdev_ctx->buff_size, buf_align, NULL);
+	if (!bdev_ctx->buff) {
+		exit_initiator("failed to allocate buffer", -ENOMEM);
+		return;
+	}
+
+	g_bdev_pr_ctx->bdev_ctx_sec_host->resv_key = KEY_2;
+	g_bdev_pr_ctx->host_type = MULTI_HOST;
+	g_bdev_pr_ctx->multi_host_pr_stage = PRI_HOST_RESV;
+	g_bdev_pr_ctx->bdev_resv_state = REGISTER;
+	bdev_reservation_register(g_bdev_pr_ctx->bdev_ctx_pri_host,
+				  SPDK_NVME_RESERVE_REGISTER_KEY, true);
+}
+
+static void
+test_persistent_reservation_multi_host(void)
+{
+	int rc;
+	struct bdev_context_t *bdev_ctx;
+	struct spdk_nvme_ctrlr_opts ctrlr_opts;
+	struct spdk_bdev_nvme_ctrlr_opts bdev_opts = {};
+
+	bdev_ctx = calloc(1, sizeof(*bdev_ctx));
+	if (!bdev_ctx) {
+		exit_initiator("unable to allocate memory", -ENOMEM);
+		return;
+	}
+
+	g_bdev_pr_ctx->bdev_ctx_sec_host = bdev_ctx;
+	spdk_nvme_ctrlr_get_default_ctrlr_opts(&ctrlr_opts, sizeof(ctrlr_opts));
+	bdev_nvme_update_subsystem_nqn(g_bdev_context->bdev);
+	memcpy(ctrlr_opts.extended_host_id, SEC_EXT_HOST_ID, sizeof(ctrlr_opts.extended_host_id));
+	if (g_sec_hostnqn[0] != '\0') {
+		memcpy(ctrlr_opts.hostnqn, g_sec_hostnqn, sizeof(ctrlr_opts.hostnqn));
+	}
+
+	rc = spdk_bdev_nvme_create(&g_trid, "SEC_HOST", g_bdev_pr_ctx->bdev_names, 1,
+				   connect_sec_host_cb, NULL, &ctrlr_opts, &bdev_opts);
+	if (rc) {
+		exit_initiator("failed to crreate the bdev by secondary host", rc);
+		return;
+	}
+}
+
+static void
+test_pr_single_host_flow(void)
+{
+	switch (g_bdev_pr_ctx->bdev_resv_state) {
+	case REGISTER:
+		g_bdev_pr_ctx->bdev_resv_state = ACQUIRE_SUCCESS;
+		bdev_reservation_acquire(g_bdev_pr_ctx->bdev_ctx_pri_host,
+					 SPDK_NVME_RESERVE_ACQUIRE, true);
+		break;
+	case ACQUIRE_SUCCESS:
 		g_bdev_pr_ctx->bdev_resv_state = IO_SUCCESS;
 		test_bdev_write(g_bdev_pr_ctx->bdev_ctx_pri_host, true);
 		break;
@@ -267,14 +534,38 @@ reservation_request_cb_fn(struct spdk_bdev_io *bdev_io, bool success, void *ctx)
 					 SPDK_NVME_RESERVE_RELEASE, true);
 		break;
 	case RELEASE:
-		g_bdev_pr_ctx->bdev_resv_state = UNREGISTER;
+		g_bdev_pr_ctx->bdev_resv_state = UNREGISTER_PRI_HOST;
 		bdev_reservation_register(g_bdev_pr_ctx->bdev_ctx_pri_host,
 					  SPDK_NVME_RESERVE_UNREGISTER_KEY, true);
 		break;
-	case UNREGISTER:
-		pr_test_on = false;
+	case UNREGISTER_PRI_HOST:
 		SPDK_NOTICELOG("test_persistent_reservation_single_host is successful\n");
-		exit_initiator("all test completed", 0);
+		test_persistent_reservation_multi_host();
+		break;
+	default:
+		pr_test_on = false;
+		exit_initiator("invalid reservation command", -EINVAL);
+	}
+}
+
+static void
+reservation_request_cb_fn(struct spdk_bdev_io *bdev_io, bool success, void *ctx)
+{
+	if (g_bdev_pr_ctx->bdev_resv_state != IO_FAIL && g_bdev_pr_ctx->bdev_resv_state != IO_SUCCESS) {
+		spdk_bdev_free_io(bdev_io);
+		if (success != g_bdev_pr_ctx->cmd_success_expected) {
+			exit_initiator("expected bdev reservation request failed", -1);
+			return;
+		}
+	}
+
+	switch (g_bdev_pr_ctx->host_type) {
+	case SINGLE_HOST:
+		test_pr_single_host_flow();
+		break;
+	case MULTI_HOST:
+		test_pr_multi_host_flow();
+		break;
 	}
 }
 
@@ -291,6 +582,7 @@ test_persistent_reservation_single_host(void)
 	g_bdev_context->resv_key = KEY_1;
 	g_bdev_pr_ctx->bdev_ctx_pri_host = g_bdev_context;
 	g_bdev_pr_ctx->bdev_resv_state = REGISTER;
+	g_bdev_pr_ctx->host_type = SINGLE_HOST;
 	bdev_reservation_register(g_bdev_pr_ctx->bdev_ctx_pri_host,
 				  SPDK_NVME_RESERVE_REGISTER_KEY, true);
 }
@@ -331,7 +623,7 @@ test_bdev_read(void *ctx)
 
 	bdev_ctx = ctx;
 	/* Zero the buffer so that we can use it for reading */
-	memset(g_bdev_context->buff, 0, g_bdev_context->buff_size);
+	memset(bdev_ctx->buff, 0, bdev_ctx->buff_size);
 
 	SPDK_NOTICELOG("reading from bdev\n");
 	rc = spdk_bdev_read(bdev_ctx->bdev_desc, bdev_ctx->bdev_io_channel,
@@ -439,15 +731,21 @@ test_discovery_and_connect(void)
 {
 	int rc;
 	struct spdk_nvme_ctrlr_opts ctrlr_opts;
+	struct spdk_bdev_nvme_opts opts;
 	struct spdk_bdev_nvme_ctrlr_opts bdev_opts = {};
 
 	spdk_nvme_ctrlr_get_default_ctrlr_opts(&ctrlr_opts, sizeof(ctrlr_opts));
-	if (g_hostnqn[0] != '\0') {
-		memcpy(ctrlr_opts.hostnqn, g_hostnqn, sizeof(ctrlr_opts.hostnqn));
+	if (g_pri_hostnqn[0] != '\0') {
+		memcpy(ctrlr_opts.hostnqn, g_pri_hostnqn, sizeof(ctrlr_opts.hostnqn));
 	}
 	memcpy(ctrlr_opts.extended_host_id, EXT_HOST_ID, sizeof(ctrlr_opts.extended_host_id));
 
-	rc = bdev_nvme_start_discovery(&g_trid, ctrlr_opts.hostnqn, &ctrlr_opts, &bdev_opts,
+	/* setting below flag to enable registering two bdevs from two hosts in single spdk env */
+	spdk_bdev_nvme_get_opts(&opts, sizeof(opts));
+	opts.generate_random_uuids = true;
+	spdk_bdev_nvme_set_opts(&opts);
+
+	rc = bdev_nvme_start_discovery(&g_trid, "PRI_HOST", &ctrlr_opts, &bdev_opts,
 				       0, false, discovery_and_connect_cb_fn, NULL);
 
 	if (rc) {
