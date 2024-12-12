@@ -2537,6 +2537,11 @@ bdev_nvme_reset_destroy_qpair_done(struct nvme_ctrlr *nvme_ctrlr, void *ctx, int
 
 	NVME_CTRLR_INFOLOG(nvme_ctrlr, "qpairs were deleted.\n");
 
+	if (nvme_ctrlr->destruct) {
+		bdev_nvme_reset_ctrlr_complete(nvme_ctrlr, status == 0);
+		return;
+	}
+
 	if (!spdk_nvme_ctrlr_is_fabrics(nvme_ctrlr->ctrlr)) {
 		bdev_nvme_reconnect_ctrlr(nvme_ctrlr);
 	} else {
@@ -2588,10 +2593,6 @@ _bdev_nvme_reset_ctrlr(void *ctx)
 static int
 bdev_nvme_reset_ctrlr_unsafe(struct nvme_ctrlr *nvme_ctrlr, spdk_msg_fn *msg_fn)
 {
-	if (nvme_ctrlr->destruct) {
-		return -ENXIO;
-	}
-
 	if (nvme_ctrlr->resetting) {
 		NVME_CTRLR_NOTICELOG(nvme_ctrlr, "Unable to perform reset, already in progress.\n");
 		return -EBUSY;

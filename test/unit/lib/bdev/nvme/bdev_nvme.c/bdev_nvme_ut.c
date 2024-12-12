@@ -1504,20 +1504,16 @@ test_reset_ctrlr(void)
 	/* Reset starts from thread 1. */
 	set_thread(1);
 
-	/* Case 1: ctrlr is already being destructed. */
-	nvme_ctrlr->destruct = true;
+	/* Case 1: reset is in progress. */
 
-	rc = bdev_nvme_reset_ctrlr(nvme_ctrlr);
-	CU_ASSERT(rc == -ENXIO);
-
-	/* Case 2: reset is in progress. */
 	nvme_ctrlr->destruct = false;
 	nvme_ctrlr->resetting = true;
 
 	rc = bdev_nvme_reset_ctrlr(nvme_ctrlr);
 	CU_ASSERT(rc == -EBUSY);
 
-	/* Case 3: reset completes successfully. */
+	/* Case 2: reset completes successfully. */
+	spdk_delay_us(1);
 	nvme_ctrlr->resetting = false;
 	curr_trid->last_failed_tsc = spdk_get_ticks();
 	ctrlr.is_failed = true;
@@ -1561,7 +1557,37 @@ test_reset_ctrlr(void)
 	CU_ASSERT(nvme_ctrlr->resetting == false);
 	CU_ASSERT(curr_trid->last_failed_tsc == 0);
 
+	/* Case 3: ctrlr is already being destructed. */
+	nvme_ctrlr->destruct = true;
+
+	rc = bdev_nvme_reset_ctrlr(nvme_ctrlr);
+	CU_ASSERT(rc == 0);
+	CU_ASSERT(nvme_ctrlr->resetting == true);
+	CU_ASSERT(ctrlr_ch1->qpair != NULL);
+	CU_ASSERT(ctrlr_ch2->qpair != NULL);
+
+	poll_thread_times(0, 3);
+	CU_ASSERT(ctrlr_ch1->qpair->qpair == NULL);
+	CU_ASSERT(ctrlr_ch2->qpair->qpair != NULL);
+
+	poll_thread_times(0, 1);
+	poll_thread_times(1, 1);
+	CU_ASSERT(ctrlr_ch1->qpair->qpair == NULL);
+	CU_ASSERT(ctrlr_ch2->qpair->qpair == NULL);
+
+	poll_thread_times(0, 2);
+
+	poll_thread_times(0, 1);
+	poll_thread_times(1, 1);
+	poll_thread_times(0, 1);
+
+	assert(nvme_ctrlr->resetting == false);
+
+	CU_ASSERT(nvme_ctrlr->resetting == false);
+	CU_ASSERT(nvme_ctrlr->destruct == true);
+
 	/* Case 4: ctrlr is already removed. */
+	nvme_ctrlr->destruct = false;
 	ctrlr.is_removed = true;
 
 	rc = bdev_nvme_reset_ctrlr(nvme_ctrlr);
@@ -1650,9 +1676,17 @@ test_race_between_reset_and_destruct_ctrlr(void)
 	CU_ASSERT(nvme_ctrlr->destruct == true);
 	CU_ASSERT(nvme_ctrlr->resetting == false);
 
-	/* New reset request is rejected. */
+	/* New reset request doesn't change anything. */
 	rc = bdev_nvme_reset_ctrlr(nvme_ctrlr);
-	CU_ASSERT(rc == -ENXIO);
+	CU_ASSERT(rc == 0);
+
+	poll_threads();
+	spdk_delay_us(g_opts.nvme_adminq_poll_period_us);
+	poll_threads();
+
+	CU_ASSERT(nvme_ctrlr_get_by_name("nvme0") == nvme_ctrlr);
+	CU_ASSERT(nvme_ctrlr->destruct == true);
+	CU_ASSERT(nvme_ctrlr->resetting == false);
 
 	/* Additional polling called spdk_io_device_unregister() to ctrlr,
 	 * However there are two channels and destruct is not completed yet.
@@ -7200,8 +7234,13 @@ test_ctrlr_op_rpc(void)
 			  ut_ctrlr_op_rpc_cb, &ctrlr_op_rc);
 
 	poll_threads();
+	spdk_delay_us(g_opts.nvme_adminq_poll_period_us);
+	poll_threads();
 
-	CU_ASSERT(ctrlr_op_rc == -ENXIO);
+	CU_ASSERT(nvme_ctrlr->resetting == false);
+	CU_ASSERT(curr_trid->last_failed_tsc == 0);
+	CU_ASSERT(ctrlr.is_failed == false);
+	CU_ASSERT(ctrlr_op_rc == 0);
 
 	/* Case 2: reset is in progress. */
 	nvme_ctrlr->destruct = false;
